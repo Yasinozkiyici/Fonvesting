@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
+  <title>EigenLayer</title>
+  <defs>
+    <linearGradient id="eigenGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="50%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#0b1f4b"/>
+    </linearGradient>
+  </defs>
+  <rect width="96" height="96" rx="18" fill="#020617"/>
+  <path d="M30 24h36l12 24-12 24H30L18 48Z" fill="url(#eigenGradient)" />
+  <path d="M38 32h20l6 16-6 16H38l-6-16Z" fill="#0ea5e9" opacity="0.65"/>
+</svg>

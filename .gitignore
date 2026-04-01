@@ -1,0 +1,27 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.pnpm-store/
+*.tsbuildinfo
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Database
+prisma/*.db
+prisma/*.db-journal
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor
+.DS_Store
+.vscode/

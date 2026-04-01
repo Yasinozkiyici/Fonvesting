@@ -1,0 +1,63 @@
+# Generated files
+next-env.d.ts
+**/*.d.ts
+.next/
+out/
+build/
+dist/
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build output
+.nuxt
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build artifacts
+*.tsbuildinfo
+

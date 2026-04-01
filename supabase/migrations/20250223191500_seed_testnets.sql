@@ -1,0 +1,46 @@
+insert into public.testnets (
+  "slug",
+  "name",
+  "network",
+  "status",
+  "difficulty",
+  "estTimeMinutes",
+  "rewardType",
+  "kycRequired",
+  "tags",
+  "tasksCount",
+  "updatedAt",
+  "totalRaisedUSD",
+  "hasDashboard"
+)
+values
+  ('arbitrum-odyssey', 'Arbitrum Odyssey', 'Arbitrum', 'LIVE', 'EASY', 120, 'NFT', false, '["quests","nft"]'::jsonb, 3, now(), 1500000, true),
+  ('polygon-zkevm-pioneer', 'Polygon zkEVM Pioneer', 'Polygon', 'LIVE', 'MEDIUM', 240, 'MATIC', false, '["zk-evm","scaling"]'::jsonb, 3, now(), 3200000, true),
+  ('zksync-contributors', 'ZkSync Contributors', 'ZkSync', 'LIVE', 'EASY', 90, 'Points', true, '["education","content"]'::jsonb, 2, now(), 1800000, true),
+  ('base-builder-camp', 'Base Builder Camp', 'Base', 'LIVE', 'MEDIUM', 180, 'USDC', false, '["op-stack","superchain"]'::jsonb, 4, now(), 2800000, true),
+  ('optimism-superchain-quests', 'Optimism Superchain Quests', 'Optimism', 'LIVE', 'MEDIUM', 150, 'OP', false, '["quests","governance"]'::jsonb, 5, now(), 2600000, true),
+  ('scroll-zkevm-sprint', 'Scroll zkEVM Sprint', 'Scroll', 'LIVE', 'MEDIUM', 210, 'ETH', false, '["zk-evm","research"]'::jsonb, 4, now(), 3100000, true),
+  ('linea-voyage', 'Linea Voyage', 'Linea', 'UPCOMING', 'MEDIUM', 180, 'Linea Points', false, '["voyage","quests"]'::jsonb, 3, now(), 2750000, true),
+  ('starknet-ignite', 'Starknet Ignite', 'Starknet', 'LIVE', 'HARD', 240, 'STRK', false, '["cairo","zk"]'::jsonb, 4, now(), 3500000, true),
+  ('celestia-da-expedition', 'Celestia DA Expedition', 'Celestia', 'LIVE', 'HARD', 300, 'TIA', false, '["data-availability","rollups"]'::jsonb, 3, now(), 4200000, false),
+  ('eigenlayer-operators-guild', 'EigenLayer Operators Guild', 'EigenLayer', 'LIVE', 'HARD', 360, 'Points', true, '["restaking","operators"]'::jsonb, 5, now(), 5000000, true),
+  ('avalanche-evergreen', 'Avalanche Evergreen', 'Avalanche', 'LIVE', 'MEDIUM', 200, 'AVAX', false, '["subnets","enterprise"]'::jsonb, 3, now(), 2950000, true),
+  ('solana-hyperdrive', 'Solana Hyperdrive', 'Solana', 'LIVE', 'HARD', 180, 'SOL', false, '["validators","performance"]'::jsonb, 4, now(), 3300000, true),
+  ('near-horizon', 'NEAR Horizon', 'NEAR', 'LIVE', 'MEDIUM', 160, 'USDC', false, '["wasm","accelerator"]'::jsonb, 3, now(), 2100000, true),
+  ('aptos-move-station', 'Aptos Move Station', 'Aptos', 'LIVE', 'MEDIUM', 150, 'APT', false, '["move","developer"]'::jsonb, 3, now(), 2400000, true),
+  ('sui-builder-trial', 'Sui Builder Trial', 'Sui', 'LIVE', 'MEDIUM', 150, 'SUI', false, '["move","objects"]'::jsonb, 3, now(), 2300000, true),
+  ('cosmos-gon', 'Cosmos Game of NFTs', 'Cosmos', 'LIVE', 'HARD', 280, 'ATOM', false, '["ibc","nft"]'::jsonb, 4, now(), 2750000, false)
+on conflict ("slug") do update
+set
+  "name" = excluded."name",
+  "network" = excluded."network",
+  "status" = excluded."status",
+  "difficulty" = excluded."difficulty",
+  "estTimeMinutes" = excluded."estTimeMinutes",
+  "rewardType" = excluded."rewardType",
+  "kycRequired" = excluded."kycRequired",
+  "tags" = excluded."tags",
+  "tasksCount" = excluded."tasksCount",
+  "updatedAt" = now(),
+  "totalRaisedUSD" = excluded."totalRaisedUSD",
+  "hasDashboard" = excluded."hasDashboard";

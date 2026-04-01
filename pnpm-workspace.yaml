@@ -1,0 +1,10 @@
+packages:
+  - testnet-hub
+
+ignoredBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - '@sentry/cli'
+  - esbuild
+  - prisma
+  - unrs-resolver

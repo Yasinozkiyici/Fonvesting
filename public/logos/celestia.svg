@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title">
+  <title>Celestia</title>
+  <defs>
+    <radialGradient id="celestiaGradient" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#fde68a"/>
+      <stop offset="40%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </radialGradient>
+  </defs>
+  <rect width="96" height="96" rx="18" fill="#1f102e"/>
+  <circle cx="48" cy="48" r="30" fill="url(#celestiaGradient)" />
+  <path d="M48 26a22 22 0 1 0 22 22A22 22 0 0 0 48 26Zm0 6a16 16 0 1 1-16 16A16 16 0 0 1 48 32Z" fill="#f1f5f9" opacity="0.85"/>
+</svg>

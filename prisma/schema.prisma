@@ -1,0 +1,331 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// BIST MARKETCAP - VERİTABANI ŞEMASI
+// ============================================
+
+// Sektörler (BIST Sektör Endeksleri)
+model Sector {
+  id          String   @id @default(cuid())
+  code        String   @unique // XUSIN, XBANK, XGIDA vb.
+  name        String   // Sınai, Bankacılık, Gıda vb.
+  description String?
+  color       String?  // UI rengi
+  iconUrl     String?
+  
+  stocks      Stock[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([code])
+}
+
+// Endeksler (BIST100, BIST30, BIST50 vb.)
+model Index {
+  id          String   @id @default(cuid())
+  code        String   @unique // XU100, XU030, XU050
+  name        String   // BIST 100, BIST 30
+  description String?
+  
+  // Son değerler
+  lastValue   Float    @default(0)
+  change      Float    @default(0)
+  changePercent Float  @default(0)
+  volume      Float    @default(0)
+  
+  stocks      StockIndex[]
+  priceHistory IndexPriceHistory[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([code])
+}
+
+// Hisse Senetleri
+model Stock {
+  id              String   @id @default(cuid())
+  symbol          String   @unique // THYAO, GARAN, ASELS
+  name            String   // Türk Hava Yolları A.O.
+  shortName       String?  // THY
+  
+  // Şirket Bilgileri
+  description     String?
+  logoUrl         String?
+  websiteUrl      String?
+  
+  // Sektör ilişkisi
+  sectorId        String?
+  sector          Sector?  @relation(fields: [sectorId], references: [id])
+  
+  // Piyasa Bilgileri
+  marketCap       Float    @default(0)  // Piyasa değeri (TL)
+  sharesOutstanding Float  @default(0)  // Dolaşımdaki hisse sayısı
+  freeFloat       Float    @default(0)  // Halka açıklık oranı (%)
+  
+  // Son Fiyat Bilgileri
+  lastPrice       Float    @default(0)
+  previousClose   Float    @default(0)
+  change          Float    @default(0)
+  changePercent   Float    @default(0)
+  dayHigh         Float    @default(0)
+  dayLow          Float    @default(0)
+  dayOpen         Float    @default(0)
+  volume          Float    @default(0)  // İşlem hacmi (lot)
+  turnover        Float    @default(0)  // İşlem hacmi (TL)
+  
+  // 52 Hafta
+  week52High      Float    @default(0)
+  week52Low       Float    @default(0)
+  
+  // Temel Analiz
+  peRatio         Float?   // Fiyat/Kazanç
+  pbRatio         Float?   // Fiyat/Defter Değeri
+  eps             Float?   // Hisse Başına Kar
+  dividendYield   Float?   // Temettü Verimi (%)
+  
+  // İlişkiler
+  indices         StockIndex[]
+  priceHistory    PriceHistory[]
+  dividends       Dividend[]
+  financials      FinancialStatement[]
+  news            StockNews[]
+  watchlistItems  WatchlistItem[]
+  
+  isActive        Boolean  @default(true)
+  isTrading       Boolean  @default(true) // İşleme açık mı?
+  
+  lastTradeAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([symbol])
+  @@index([sectorId])
+  @@index([marketCap(sort: Desc)])
+  @@index([changePercent(sort: Desc)])
+}
+
+// Hisse-Endeks İlişkisi (Many-to-Many)
+model StockIndex {
+  id        String   @id @default(cuid())
+  stockId   String
+  indexId   String
+  weight    Float    @default(0) // Endeks içindeki ağırlık (%)
+  
+  stock     Stock    @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  index     Index    @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([stockId, indexId])
+  @@index([stockId])
+  @@index([indexId])
+}
+
+// Hisse Fiyat Geçmişi (Günlük OHLCV)
+model PriceHistory {
+  id        String   @id @default(cuid())
+  stockId   String
+  
+  date      DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float    // İşlem hacmi (lot)
+  turnover  Float    @default(0) // İşlem hacmi (TL)
+  
+  stock     Stock    @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  
+  @@unique([stockId, date])
+  @@index([stockId, date(sort: Desc)])
+}
+
+// Endeks Fiyat Geçmişi
+model IndexPriceHistory {
+  id        String   @id @default(cuid())
+  indexId   String
+  
+  date      DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  
+  index     Index    @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  
+  @@unique([indexId, date])
+  @@index([indexId, date(sort: Desc)])
+}
+
+// Temettü Bilgileri
+model Dividend {
+  id              String   @id @default(cuid())
+  stockId         String
+  
+  announcementDate DateTime // İlan tarihi
+  exDividendDate  DateTime? // Temettü hakkı düşme tarihi
+  paymentDate     DateTime? // Ödeme tarihi
+  
+  grossAmount     Float    // Brüt temettü (TL/hisse)
+  netAmount       Float?   // Net temettü (TL/hisse)
+  dividendType    String   // CASH, STOCK, MIXED
+  
+  stock           Stock    @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([stockId, announcementDate(sort: Desc)])
+}
+
+// Finansal Tablolar (Özet)
+model FinancialStatement {
+  id           String   @id @default(cuid())
+  stockId      String
+  
+  period       String   // 2024Q1, 2024Q2, 2024FY
+  periodType   String   // QUARTERLY, ANNUAL
+  
+  revenue      Float?   // Gelir
+  netIncome    Float?   // Net Kar
+  totalAssets  Float?   // Toplam Varlıklar
+  totalEquity  Float?   // Özsermaye
+  totalDebt    Float?   // Toplam Borç
+  
+  stock        Stock    @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  
+  createdAt    DateTime @default(now())
+  
+  @@unique([stockId, period])
+  @@index([stockId, period(sort: Desc)])
+}
+
+// Haberler
+model News {
+  id           String   @id @default(cuid())
+  title        String
+  summary      String?
+  content      String?
+  source       String?  // Kaynak (KAP, Reuters vb.)
+  sourceUrl    String?
+  imageUrl     String?
+  
+  category     String?  // GENERAL, ANNOUNCEMENT, ANALYSIS
+  isImportant  Boolean  @default(false)
+  
+  publishedAt  DateTime
+  
+  stocks       StockNews[]
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@index([publishedAt(sort: Desc)])
+  @@index([category, publishedAt(sort: Desc)])
+}
+
+// Hisse-Haber İlişkisi
+model StockNews {
+  id        String   @id @default(cuid())
+  stockId   String
+  newsId    String
+  
+  stock     Stock    @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  news      News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
+  
+  @@unique([stockId, newsId])
+  @@index([stockId])
+  @@index([newsId])
+}
+
+// Piyasa Özet Verileri (Günlük snapshot)
+model MarketSnapshot {
+  id              String   @id @default(cuid())
+  
+  date            DateTime @unique
+  
+  // BIST100 Özet
+  bist100Value    Float
+  bist100Change   Float
+  bist100Volume   Float
+  
+  // Piyasa Genel
+  totalMarketCap  Float    // Toplam piyasa değeri
+  totalVolume     Float    // Toplam işlem hacmi
+  
+  advancers       Int      @default(0) // Yükselen
+  decliners       Int      @default(0) // Düşen
+  unchanged       Int      @default(0) // Değişmeyen
+  
+  // Döviz Kurları (Referans)
+  usdTry          Float?
+  eurTry          Float?
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([date(sort: Desc)])
+}
+
+// ============================================
+// KULLANICI SİSTEMİ (Gelecek için hazır)
+// ============================================
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  passwordHash  String?
+  avatarUrl     String?
+  
+  isActive      Boolean  @default(true)
+  isVerified    Boolean  @default(false)
+  
+  watchlists    Watchlist[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([email])
+}
+
+model Watchlist {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String   @default("Takip Listem")
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items       WatchlistItem[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+}
+
+model WatchlistItem {
+  id          String   @id @default(cuid())
+  watchlistId String
+  stockId     String
+  
+  alertPrice  Float?   // Fiyat alarmı
+  note        String?
+  
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  stock       Stock     @relation(fields: [stockId], references: [id], onDelete: Cascade)
+  
+  addedAt     DateTime @default(now())
+  
+  @@unique([watchlistId, stockId])
+  @@index([watchlistId])
+  @@index([stockId])
+}
