@@ -29,6 +29,7 @@ jobs:
       - name: Run database migrations (deploy)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
         run: pnpm db:migrate:deploy
 
       - name: Deploy to Vercel (Production)
