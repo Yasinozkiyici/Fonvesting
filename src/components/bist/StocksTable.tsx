@@ -230,10 +230,12 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
   };
 
   const formatPrice = (n: number) =>
-    `₺${n.toLocaleString("tr-TR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+    n > 0
+      ? `₺${n.toLocaleString("tr-TR", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
+      : "—";
 
   const formatMarketCap = (n: number) => (n > 0 ? `₺${formatNumber(n)}` : "—");
 
@@ -635,7 +637,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                     </td>
 
                     <td className="px-6 py-5 text-right">
-                      <ChangeBadge value={stock.changePercent} />
+                      <ChangeBadge value={stock.changePercent} hasData={stock.lastPrice > 0} />
                     </td>
 
                     <td className="hidden px-6 py-5 text-right text-sm font-medium tabular-nums lg:table-cell" style={{ color: "var(--text-secondary)" }}>
@@ -719,7 +721,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                         {formatPrice(stock.lastPrice)}
                       </p>
                       <div className="mt-1">
-                        <ChangeBadge value={stock.changePercent} />
+                        <ChangeBadge value={stock.changePercent} hasData={stock.lastPrice > 0} />
                       </div>
                     </div>
                   </div>
@@ -919,7 +921,21 @@ function StockIdentityCell({ stock, compact = false }: { stock: Stock; compact?:
   );
 }
 
-function ChangeBadge({ value }: { value: number }) {
+function ChangeBadge({ value, hasData = true }: { value: number; hasData?: boolean }) {
+  if (!hasData) {
+    return (
+      <span
+        className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium"
+        style={{
+          borderColor: "var(--border-default)",
+          background: "var(--bg-surface)",
+          color: "var(--text-muted)",
+        }}
+      >
+        —
+      </span>
+    );
+  }
   const positive = value >= 0;
   return (
     <span

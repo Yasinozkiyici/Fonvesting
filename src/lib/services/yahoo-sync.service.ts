@@ -207,6 +207,16 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }): Pro
       const liveSymbolsCount = Object.keys(quotes).length;
       const updatedAt = new Date();
 
+      // Veri alınamayan sembolleri logla
+      const missingSymbols = allSymbols.filter((s) => !quotes[s]);
+      if (missingSymbols.length > 0) {
+        console.warn(
+          `[yahoo-sync] ${missingSymbols.length} sembol için Yahoo Finance verisi alınamadı:`,
+          missingSymbols.slice(0, 20).join(", "),
+          missingSymbols.length > 20 ? `... ve ${missingSymbols.length - 20} tane daha` : ""
+        );
+      }
+
       await processInBatches(allSymbols, DB_BATCH_SIZE, async (symbol) => {
         try {
           const stock = stocksBySymbol.get(symbol);

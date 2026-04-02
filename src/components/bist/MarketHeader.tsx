@@ -97,7 +97,7 @@ export default function MarketHeader() {
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="hidden md:grid grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="card p-5 space-y-3">
               <div className="skeleton h-4 w-28" />
@@ -109,6 +109,15 @@ export default function MarketHeader() {
             </div>
           ))}
         </div>
+        <div className="md:hidden card p-4 space-y-3">
+          <div className="skeleton h-4 w-28" />
+          <div className="grid grid-cols-3 gap-2">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="skeleton h-16 w-full rounded-xl" />
+            ))}
+          </div>
+          <div className="skeleton h-6 w-36 rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -116,6 +125,17 @@ export default function MarketHeader() {
   if (!data) return error ? <div className="p-4" style={{ color: "var(--text-muted)" }}>{error}</div> : null;
 
   const isPositive = (data.bist100?.changePercent ?? 0) >= 0;
+  const topGainer = data.topGainers?.[0];
+  const topLoser = data.topLosers?.[0];
+  // Mobilde en fazla hareket eden sektörleri öne çıkaralım (mutlak değişim büyüklüğüne göre).
+  const topSectors = [...sectors]
+    .sort((a, b) => Math.abs(b.avgChange) - Math.abs(a.avgChange))
+    .slice(0, 3);
+
+  const scrollToStocks = () => {
+    const el = document.getElementById("stocks-table");
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   return (
     <div className="space-y-5">
       {/* Hero Card - BIST 100 Index */}
@@ -218,8 +238,122 @@ export default function MarketHeader() {
         </div>
       </div>
 
-      {/* Summary Cards Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Mobile: Single Quick Summary Card */}
+      <div className="md:hidden card card-hover">
+        <div className="p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-title" style={{ color: "var(--text-primary)" }}>
+                Hızlı Özet
+              </h3>
+              <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                Yükselen, düşen ve sektör ipuçları
+              </p>
+            </div>
+
+            <button
+              onClick={scrollToStocks}
+              className="inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-xs font-semibold transition"
+              style={{ background: "var(--accent)", color: "#fff" }}
+            >
+              Tabloya Git
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div
+              className="rounded-xl border p-2"
+              style={{
+                background: "var(--success-bg)",
+                borderColor: "var(--success-border)",
+                color: "var(--success)",
+              }}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Yükselen
+              </p>
+              <div className="mt-1 flex flex-col gap-1">
+                <span className="text-sm font-bold tabular-nums">{topGainer?.symbol ?? "—"}</span>
+                <span className="text-xs font-semibold tabular-nums">
+                  {topGainer ? `+${topGainer.changePercent.toFixed(2)}%` : "—"}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="rounded-xl border p-2"
+              style={{
+                background: "var(--danger-bg)",
+                borderColor: "var(--danger-border)",
+                color: "var(--danger)",
+              }}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Düşen
+              </p>
+              <div className="mt-1 flex flex-col gap-1">
+                <span className="text-sm font-bold tabular-nums">{topLoser?.symbol ?? "—"}</span>
+                <span className="text-xs font-semibold tabular-nums">
+                  {topLoser ? `${topLoser.changePercent.toFixed(2)}%` : "—"}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="rounded-xl border p-2"
+              style={{
+                background: "var(--accent-bg)",
+                borderColor: "var(--border-subtle)",
+                color: "var(--accent)",
+              }}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                Sektör
+              </p>
+              <div className="mt-1 flex flex-col gap-1">
+                <span className="text-sm font-bold tabular-nums">
+                  {topSectors[0]?.code?.slice(0, 2) ?? "—"}
+                </span>
+                <span
+                  className="text-xs font-semibold tabular-nums"
+                  style={{ color: topSectors[0] && topSectors[0].avgChange >= 0 ? "var(--success)" : "var(--danger)" }}
+                >
+                  {topSectors[0] ? `${topSectors[0].avgChange >= 0 ? "+" : ""}${topSectors[0].avgChange.toFixed(2)}%` : "—"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              Sektörler
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {topSectors.map((sector) => {
+                const isUp = sector.avgChange >= 0;
+                return (
+                  <span
+                    key={sector.id}
+                    className="inline-flex items-center rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums"
+                    style={{
+                      background: "var(--bg-hover)",
+                      borderColor: "var(--border-subtle)",
+                      color: isUp ? "var(--success)" : "var(--danger)",
+                    }}
+                    title={`${sector.name} (${sector.stockCount} hisse)`}
+                  >
+                    {sector.code.slice(0, 2)} {isUp ? "+" : ""}
+                    {sector.avgChange.toFixed(2)}%
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Summary Cards Row (Desktop/Tablet) */}
+      <div className="hidden md:grid grid-cols-3 gap-4">
         {/* Top Gainers */}
         <MoverCard 
           title="En Çok Yükselen"

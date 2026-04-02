@@ -22,7 +22,7 @@ export default function Page() {
       <main className="flex-1 mx-auto w-full max-w-[1400px] px-4 sm:px-6 lg:px-8 py-8">
         <MarketHeader />
         
-        <div className="mt-8">
+        <div id="stocks-table" className="mt-8">
           <Suspense fallback={<div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>Tablo yukleniyor...</div>}>
             <StocksTable enableSectorFilter={false} />
           </Suspense>
