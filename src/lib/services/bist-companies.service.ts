@@ -15,9 +15,14 @@ const BIST_LIST_URL =
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 let cache: { expiresAt: number; data: BistCompany[] } | null = null;
 
+const SOURCE_TO_CURRENT_SYMBOL: Record<string, string> = {
+  KOZAA: "TRMET",
+  KOZAL: "TRALT",
+};
+
 function normalizeSymbol(symbol: string) {
   const clean = symbol.trim().toUpperCase().replace(/\.IS$/, "");
-  return clean;
+  return SOURCE_TO_CURRENT_SYMBOL[clean] ?? clean;
 }
 
 export async function fetchAllBistCompanies(): Promise<BistCompany[]> {
