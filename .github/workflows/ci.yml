@@ -330,7 +330,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run predeploy check
-        run: tsx scripts/predeploy-check.ts
+        run: pnpm exec tsx scripts/predeploy-check.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
