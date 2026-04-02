@@ -72,6 +72,8 @@ jobs:
           if not isinstance(data, dict) or "liveSymbolsCount" not in data or "totalSymbols" not in data:
             print("Uyarı: Response içinde stats yok. Vercel büyük ihtimalle eski kodu çalıştırıyor (redeploy gerek).")
             print("Response keys:", list(data.keys()) if isinstance(data, dict) else type(data))
+            if isinstance(data, dict):
+              print("Error:", data.get("error"), "| message:", data.get("message"))
             sys.exit(1)
           print("Stats:", {"liveSymbolsCount": data.get("liveSymbolsCount"), "totalSymbols": data.get("totalSymbols")})
           PY
