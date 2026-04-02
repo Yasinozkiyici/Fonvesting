@@ -127,6 +127,7 @@ export default function MarketHeader() {
   const isPositive = (data.bist100?.changePercent ?? 0) >= 0;
   const topGainer = data.topGainers?.[0];
   const topLoser = data.topLosers?.[0];
+  const featuredStocks = (data.topGainers ?? []).slice(0, 2);
   // Mobilde en fazla hareket eden sektörleri öne çıkaralım (mutlak değişim büyüklüğüne göre).
   const topSectors = [...sectors]
     .sort((a, b) => Math.abs(b.avgChange) - Math.abs(a.avgChange))
@@ -312,7 +313,7 @@ export default function MarketHeader() {
               </p>
               <div className="mt-1 flex flex-col gap-1">
                 <span className="text-sm font-bold tabular-nums">
-                  {topSectors[0]?.code?.slice(0, 2) ?? "—"}
+                  {topSectors[0]?.name ?? "—"}
                 </span>
                 <span
                   className="text-xs font-semibold tabular-nums"
@@ -342,11 +343,38 @@ export default function MarketHeader() {
                     }}
                     title={`${sector.name} (${sector.stockCount} hisse)`}
                   >
-                    {sector.code.slice(0, 2)} {isUp ? "+" : ""}
+                    {sector.name} {isUp ? "+" : ""}
                     {sector.avgChange.toFixed(2)}%
                   </span>
                 );
               })}
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              Öne Çıkan Hisseler
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {featuredStocks.length > 0 ? (
+                featuredStocks.map((stock) => (
+                  <span
+                    key={stock.symbol}
+                    className="inline-flex items-center rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums"
+                    style={{
+                      background: "var(--success-bg)",
+                      borderColor: "var(--success-border)",
+                      color: "var(--success)",
+                    }}
+                  >
+                    {stock.symbol} +{stock.changePercent.toFixed(2)}%
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  Hisse verisi yok
+                </span>
+              )}
             </div>
           </div>
         </div>
