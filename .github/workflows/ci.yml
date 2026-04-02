@@ -383,6 +383,7 @@ jobs:
           production: true
 
       - name: Run database migrations
+        if: ${{ secrets.DATABASE_URL != '' }}
         run: pnpm db:migrate:deploy
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -436,6 +437,7 @@ jobs:
           production: false
 
       - name: Run database migrations (Staging)
+        if: ${{ secrets.STAGING_DATABASE_URL != '' }}
         run: pnpm db:migrate:deploy
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
