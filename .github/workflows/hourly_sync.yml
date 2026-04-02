@@ -62,3 +62,17 @@ jobs:
           echo "Endpoint response:"
           cat /tmp/cron-sync-response.json
 
+          # Deploy'un güncel kodu alıp almadığını anlamak için stats anahtarlarını kontrol ediyoruz.
+          # Eğer `yahoo-sync.service` güncellenmediyse burada sadece {ok,synced} dönebilir.
+          python3 - <<'PY'
+          import json, sys
+          p = "/tmp/cron-sync-response.json"
+          with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+          if not isinstance(data, dict) or "liveSymbolsCount" not in data or "totalSymbols" not in data:
+            print("Uyarı: Response içinde stats yok. Vercel büyük ihtimalle eski kodu çalıştırıyor (redeploy gerek).")
+            print("Response keys:", list(data.keys()) if isinstance(data, dict) else type(data))
+            sys.exit(1)
+          print("Stats:", {"liveSymbolsCount": data.get("liveSymbolsCount"), "totalSymbols": data.get("totalSymbols")})
+          PY
+
