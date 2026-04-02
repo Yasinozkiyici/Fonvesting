@@ -147,6 +147,47 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
       .finally(() => setLoading(false));
   }, [page, pageSize, sortField, sortDir, search, selectedSector, selectedIndex]);
 
+  // 7 günlük sparkline'ları lazy yükle (serverless/rate-limit için sınırlı sembol).
+  useEffect(() => {
+    if (!data?.items?.length) return;
+
+    const controller = new AbortController();
+    const symbols = data.items
+      .map((s) => s.symbol)
+      .filter(Boolean)
+      .slice(0, 15);
+
+    const qs = encodeURIComponent(symbols.join(","));
+    fetch(`/api/sparklines?symbols=${qs}`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((payload: any) => {
+        if (!payload || payload.ok !== true || !payload.items) return;
+        const map = payload.items as Record<string, { points: number[]; trend: "up" | "down" | "flat" }>;
+
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            items: prev.items.map((it) => {
+              const spark = map[it.symbol];
+              if (!spark?.points?.length) return it;
+              return {
+                ...it,
+                sparkline: spark.points,
+                sparklineTrend: spark.trend ?? it.sparklineTrend,
+              };
+            }),
+          };
+        });
+      })
+      .catch((e) => {
+        if (e?.name === "AbortError") return;
+        console.error(e);
+      });
+
+    return () => controller.abort();
+  }, [data?.items]);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDir(sortDir === "desc" ? "asc" : "desc");

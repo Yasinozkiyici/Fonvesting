@@ -18,8 +18,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const stats = await syncYahooStocksIfStale({ force: true });
-    return NextResponse.json({ ok: true, synced: true, ...stats });
+    const stats = await syncYahooStocksIfStale({ force: false });
+    const synced = stats.liveSymbolsCount > 0;
+    return NextResponse.json({ ok: true, synced, ...stats });
   } catch (error) {
     console.error("[cron-sync] failed:", error);
     const message = error instanceof Error ? error.message : String(error);

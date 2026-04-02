@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
     prisma.stock.count({ where }),
   ]);
 
-  // Sparkline data is generated on client-side from changePercent trend
+  // Sparkline verisi ayrı endpoint'ten (lazy) çekilir.
   const itemsWithSparklines = items.map((item) => ({
     ...item,
     sparkline: [],

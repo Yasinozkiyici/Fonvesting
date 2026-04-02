@@ -10,10 +10,16 @@ coverage/
 .env
 .env.local
 .env.*.local
+.env.vercel.*
 
 # Database
 prisma/*.db
 prisma/*.db-journal
+
+# Local tooling
+.cursor/
+prisma_backup/
+scripts/__pycache__/
 
 # Logs
 *.log

@@ -2,7 +2,7 @@ name: Hourly BIST Sync (Vercel Trigger)
 
 on:
   schedule:
-    - cron: '0 * * * *' # Her saat başı
+    - cron: '0 */4 * * *' # 4 saatte bir
   workflow_dispatch:
 
 jobs:

@@ -31,10 +31,14 @@ export default function Header() {
           {/* Logo */}
           <Link href="/" className="flex items-center flex-shrink-0 group">
             <img
-              src="/images/bistmarketcap-logo.png"
+              src="/images/bist-icon.png"
               alt="BISTMarketCap"
-              className="h-8 w-auto"
+              className="h-8 w-8"
             />
+            <span className="ml-2 brand-text select-none">
+              <span className="brand-bist">BIST</span>
+              <span className="brand-marketcap">MarketCap</span>
+            </span>
           </Link>
 
           {/* Navigation - Desktop */}
