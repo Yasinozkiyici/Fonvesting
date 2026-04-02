@@ -251,7 +251,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
               Tüm Hisseler
             </h2>
             <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-              Borsa İstanbul'da işlem gören {data?.total || 0} hisse senedi
+              Borsa İstanbul&apos;da işlem gören {data?.total || 0} hisse senedi
             </p>
           </div>
 
