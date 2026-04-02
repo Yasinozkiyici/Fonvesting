@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { syncYahooStocksIfStale } from "@/lib/services/yahoo-sync.service";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 function isAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return false;
@@ -15,8 +18,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    await syncYahooStocksIfStale({ force: true });
-    return NextResponse.json({ ok: true, synced: true });
+    const stats = await syncYahooStocksIfStale({ force: true });
+    return NextResponse.json({ ok: true, synced: true, ...stats });
   } catch (error) {
     console.error("[cron-sync] failed:", error);
     return NextResponse.json({ ok: false, error: "sync_failed" }, { status: 500 });

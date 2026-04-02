@@ -12,43 +12,58 @@ const yahooFinance = new YahooFinance({
 const MAX_LISTED_EQUITIES = 521;
 
 let lastSyncAt = 0;
-let inFlightSync: Promise<void> | null = null;
+type YahooSyncStats = {
+  liveSymbolsCount: number;
+  totalSymbols: number;
+};
+
+let inFlightSync: Promise<YahooSyncStats> | null = null;
 const MAX_REASONABLE_MARKET_CAP_TRY = 20_000_000_000_000; // 20 Trilyon TL
 
 const SECTORS = [
-  { code: "XUSIN", name: "BIST Sınai", description: "BIST Sınai Endeksi", color: "#10B981" },
-  { code: "XSINS", name: "BIST Sınai Ağırlık Sınırlamalı", description: "BIST Sınai Ağırlık Sınırlamalı Endeksi", color: "#34D399" },
-  { code: "XUHIZ", name: "BIST Hizmet", description: "BIST Hizmet Endeksi", color: "#06B6D4" },
-  { code: "XUMAL", name: "BIST Mali", description: "BIST Mali Endeksi", color: "#0EA5E9" },
-  { code: "XUTEK", name: "BIST Teknoloji", description: "BIST Teknoloji Endeksi", color: "#6366F1" },
-  { code: "XTKS", name: "BIST Teknoloji Ağırlık Sınırlı", description: "BIST Teknoloji Ağırlık Sınırlı Endeksi", color: "#818CF8" },
-  { code: "XBANK", name: "BIST Banka", description: "BIST Banka Endeksi", color: "#3B82F6" },
-  { code: "XAKUR", name: "BIST Aracı Kurumlar", description: "BIST Aracı Kurumlar Endeksi", color: "#2563EB" },
-  { code: "XBLSM", name: "BIST Bilişim", description: "BIST Bilişim Endeksi", color: "#7C3AED" },
-  { code: "XELKT", name: "BIST Elektrik", description: "BIST Elektrik Endeksi", color: "#F97316" },
-  { code: "XFINK", name: "BIST Fin. Kir. Faktoring", description: "BIST Finansal Kiralama ve Faktoring Endeksi", color: "#0284C7" },
-  { code: "XGMYO", name: "BIST Gayrimenkul Y.O", description: "BIST Gayrimenkul Yatırım Ortaklığı Endeksi", color: "#A855F7" },
-  { code: "XGYOS", name: "BIST Gayrimenkul Y.O. Ağırlık", description: "BIST Gayrimenkul Y.O. Ağırlık Endeksi", color: "#C084FC" },
-  { code: "XGIDA", name: "BIST Gıda İçecek", description: "BIST Gıda İçecek Endeksi", color: "#F59E0B" },
-  { code: "XHOLD", name: "BIST Holding ve Yatırım", description: "BIST Holding ve Yatırım Endeksi", color: "#8B5CF6" },
-  { code: "XILTM", name: "BIST İletişim", description: "BIST İletişim Endeksi", color: "#EC4899" },
-  { code: "XINSA", name: "BIST İnşaat", description: "BIST İnşaat Endeksi", color: "#84CC16" },
-  { code: "XKAGT", name: "BIST Orman Kağıt Basım", description: "BIST Orman Kağıt Basım Endeksi", color: "#65A30D" },
-  { code: "XKMYA", name: "BIST Kimya Petrol Plastik", description: "BIST Kimya Petrol Plastik Endeksi", color: "#EA580C" },
-  { code: "XMADN", name: "BIST Madencilik", description: "BIST Madencilik Endeksi", color: "#B45309" },
-  { code: "XYORT", name: "BIST Menkul Kıym. Y.O.", description: "BIST Menkul Kıymet Yatırım Ortaklığı Endeksi", color: "#0891B2" },
-  { code: "XMANA", name: "BIST Metal Ana", description: "BIST Metal Ana Endeksi", color: "#64748B" },
-  { code: "XMESY", name: "BIST Metal Eşya Makina", description: "BIST Metal Eşya Makina Endeksi", color: "#0F766E" },
-  { code: "XSGRT", name: "BIST Sigorta", description: "BIST Sigorta Endeksi", color: "#0EA5E9" },
-  { code: "XSPOR", name: "BIST Spor", description: "BIST Spor Endeksi", color: "#DC2626" },
-  { code: "XTAST", name: "BIST Taş Toprak", description: "BIST Taş Toprak Endeksi", color: "#D97706" },
-  { code: "XTEKS", name: "BIST Tekstil Deri", description: "BIST Tekstil Deri Endeksi", color: "#DB2777" },
-  { code: "XTRCT", name: "BIST Ticaret", description: "BIST Ticaret Endeksi", color: "#16A34A" },
-  { code: "XTRZM", name: "BIST Turizm", description: "BIST Turizm Endeksi", color: "#14B8A6" },
-  { code: "XULAS", name: "BIST Ulaştırma", description: "BIST Ulaştırma Endeksi", color: "#0D9488" },
+  {
+    code: "XUMAL",
+    name: "Mali Endeks",
+    description: "Bankalar, GYO'lar, Sigorta ve Holdingler",
+    color: "#3B82F6",
+  },
+  {
+    code: "XUSIN",
+    name: "Sınai Endeks",
+    description: "Üretim, Enerji, Kimya ve Sanayi",
+    color: "#10B981",
+  },
+  {
+    code: "XUHIZ",
+    name: "Hizmetler Endeksi",
+    description: "Perakende, Ulaştırma, Turizm ve Telekom",
+    color: "#06B6D4",
+  },
+  {
+    code: "XUTEK",
+    name: "Teknoloji Endeksi",
+    description: "Yazılım ve Bilişim",
+    color: "#6366F1",
+  },
 ] as const;
 
 async function ensureSeedSectors() {
+  const allowedCodes = SECTORS.map((sector) => sector.code);
+  const removableSectors = await prisma.sector.findMany({
+    where: { code: { notIn: allowedCodes } },
+    select: { id: true },
+  });
+
+  if (removableSectors.length > 0) {
+    await prisma.stock.updateMany({
+      where: { sectorId: { in: removableSectors.map((sector) => sector.id) } },
+      data: { sectorId: null },
+    });
+    await prisma.sector.deleteMany({
+      where: { code: { notIn: allowedCodes } },
+    });
+  }
+
   await Promise.all(
     SECTORS.map((sector) =>
       prisma.sector.upsert({
@@ -95,16 +110,17 @@ function sanitizeMarketCap(value: number | null): number | null {
   return value;
 }
 
-export async function syncYahooStocksIfStale(options?: { force?: boolean }) {
+export async function syncYahooStocksIfStale(options?: { force?: boolean }): Promise<YahooSyncStats> {
   const force = options?.force ?? false;
   await ensureSeedSectors();
   await ensureIndices();
 
   const existingStockCount = await prisma.stock.count({ where: { isActive: true } });
-  if (!shouldSyncNow(force) && existingStockCount >= 300) return;
+  if (!shouldSyncNow(force) && existingStockCount >= 300) {
+    return { liveSymbolsCount: 0, totalSymbols: existingStockCount };
+  }
   if (inFlightSync) {
-    await inFlightSync;
-    return;
+    return await inFlightSync;
   }
 
   inFlightSync = (async () => {
@@ -162,7 +178,7 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }) {
 
       if (stocks.length === 0) {
         lastSyncAt = Date.now();
-        return;
+        return { liveSymbolsCount: 0, totalSymbols: allSymbols.length };
       }
 
       const sectors = await prisma.sector.findMany({
@@ -173,6 +189,7 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }) {
       const stocksBySymbol = new Map(stocks.map((s) => [s.symbol, s]));
       const companyBySymbol = new Map(companies.map((company) => [company.symbol, company]));
       const quotes = await fetchBistQuotes(allSymbols);
+      const liveSymbolsCount = Object.keys(quotes).length;
       const updatedAt = new Date();
 
       await Promise.all(
@@ -261,7 +278,16 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }) {
         }
 
         if (relationData.length > 0) {
-          await prisma.stockIndex.createMany({ data: relationData });
+          const uniqueRelationData = Array.from(
+            new Map(
+              relationData.map((relation) => [
+                `${relation.stockId}:${relation.indexId}`,
+                relation,
+              ])
+            ).values()
+          );
+
+          await prisma.stockIndex.createMany({ data: uniqueRelationData });
         }
       }
 
@@ -345,9 +371,28 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }) {
       const activeCount = await prisma.stock.count({ where: { isActive: true } });
       const unchanged = Math.max(0, activeCount - advancers - decliners);
 
-      await prisma.marketSnapshot.create({
-        data: {
+      await prisma.marketSnapshot.upsert({
+        where: { date: updatedAt },
+        create: {
           date: updatedAt,
+          bist100Value,
+          bist100Change,
+          bist100Volume,
+          totalMarketCap: totals._sum.marketCap ?? 0,
+          totalVolume: totals._sum.volume ?? 0,
+          advancers,
+          decliners,
+          unchanged,
+          usdTry:
+            typeof usdTryQuote.regularMarketPrice === "number"
+              ? usdTryQuote.regularMarketPrice
+              : null,
+          eurTry:
+            typeof eurTryQuote.regularMarketPrice === "number"
+              ? eurTryQuote.regularMarketPrice
+              : null,
+        },
+        update: {
           bist100Value,
           bist100Change,
           bist100Volume,
@@ -369,12 +414,14 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }) {
 
       lastSyncAt = Date.now();
       console.info(`[yahoo-sync] Completed. Updated ${allSymbols.length} stocks.`);
+      return { liveSymbolsCount, totalSymbols: allSymbols.length };
     } catch (error) {
       console.error("[yahoo-sync] Failed:", error);
+      throw error;
     } finally {
       inFlightSync = null;
     }
   })();
 
-  await inFlightSync;
+  return await inFlightSync;
 }
