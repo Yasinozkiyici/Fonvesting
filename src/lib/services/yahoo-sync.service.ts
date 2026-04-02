@@ -10,6 +10,7 @@ const yahooFinance = new YahooFinance({
   suppressNotices: ["yahooSurvey"],
 });
 const MAX_LISTED_EQUITIES = 521;
+const DB_BATCH_SIZE = 4; // Prisma connection pool limitine takılmamak için düşük eşzamanlılık.
 
 let lastSyncAt = 0;
 type YahooSyncStats = {
@@ -92,6 +93,17 @@ async function ensureIndices() {
   });
 }
 
+async function processInBatches<T>(
+  items: readonly T[],
+  batchSize: number,
+  fn: (item: T) => Promise<void>,
+) {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map((item) => fn(item)));
+  }
+}
+
 function resolveSyncIntervalMs() {
   const hours = Number(process.env.YAHOO_SYNC_INTERVAL_HOURS ?? "4");
   if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_SYNC_INTERVAL_MS;
@@ -137,9 +149,10 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }): Pro
         data: { isActive: false },
       });
 
-      await Promise.all(
-        companies.map((company) =>
-          prisma.stock.upsert({
+      // Vercel/Serverless ortamlarında paralel upsert çok bağlantı açıp pool'u şişirebiliyor.
+      await processInBatches(companies, DB_BATCH_SIZE, async (company) => {
+        try {
+          await prisma.stock.upsert({
             where: { symbol: company.symbol },
             update: { isActive: true },
             create: {
@@ -150,9 +163,11 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }): Pro
               isActive: true,
               isTrading: true,
             },
-          })
-        )
-      );
+          });
+        } catch (e) {
+          console.error("[yahoo-sync] stock upsert failed:", company.symbol, e);
+        }
+      });
 
       const stocks = await prisma.stock.findMany({
         where: { isActive: true },
@@ -192,8 +207,8 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }): Pro
       const liveSymbolsCount = Object.keys(quotes).length;
       const updatedAt = new Date();
 
-      await Promise.all(
-        allSymbols.map(async (symbol) => {
+      await processInBatches(allSymbols, DB_BATCH_SIZE, async (symbol) => {
+        try {
           const stock = stocksBySymbol.get(symbol);
           if (!stock) return;
 
@@ -250,8 +265,10 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }): Pro
               lastTradeAt: updatedAt,
             },
           });
-        })
-      );
+        } catch (e) {
+          console.error("[yahoo-sync] stock update failed:", symbol, e);
+        }
+      });
 
       const [bist100Index, bist30Index] = await Promise.all([
         prisma.index.findUnique({ where: { code: "XU100" }, select: { id: true } }),
