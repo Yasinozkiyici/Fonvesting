@@ -29,7 +29,9 @@ jobs:
       - name: Run database migrations (deploy)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          # Prisma şemasındaki `directUrl` için non-empty değer gerekir.
+          # GitHub Secrets'ta `DIRECT_URL` yoksa, `DATABASE_URL` ile aynı veriyoruz.
+          DIRECT_URL: ${{ secrets.DATABASE_URL }}
         run: pnpm db:migrate:deploy
 
       - name: Deploy to Vercel (Production)
