@@ -40,10 +40,24 @@ jobs:
           fi
 
           echo "Borsa açık: Vercel cron endpoint'i çağrılıyor..."
-          curl -fsS \
+          # PRODUCTION_URL sonunda `/` varsa temizle, yoksa Vercel yönlendirme yapabiliyor.
+          PRODUCTION_URL="${PRODUCTION_URL%/}"
+          TARGET_URL="${PRODUCTION_URL}/api/jobs/sync"
+
+          # Vercel bazen canonical domain/https redirect yapar; redirect'i takip etmezsek endpoint çalışmaz.
+          HTTP_CODE="$(curl -sSL \
             -H "Authorization: Bearer ${CRON_SECRET}" \
-            "${PRODUCTION_URL}/api/jobs/sync" \
-            -o /tmp/cron-sync-response.json
+            "${TARGET_URL}" \
+            -o /tmp/cron-sync-response.json \
+            -w "%{http_code}")"
+
+          echo "HTTP status: ${HTTP_CODE}"
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "Endpoint çağrısı başarısız oldu."
+            echo "Endpoint raw response:"
+            cat /tmp/cron-sync-response.json
+            exit 1
+          fi
 
           echo "Endpoint response:"
           cat /tmp/cron-sync-response.json
