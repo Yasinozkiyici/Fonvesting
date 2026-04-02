@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: '20'
   PNPM_VERSION: '9'
@@ -99,13 +103,14 @@ jobs:
       - name: Start application
         run: pnpm start &
         env:
+          PORT: "3001"
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Wait for application
-        run: npx wait-on http://localhost:3001
+        run: npx wait-on --timeout 60000 http://localhost:3001
 
       - name: Run E2E tests
         run: pnpm e2e
@@ -148,13 +153,14 @@ jobs:
       - name: Start application
         run: pnpm start &
         env:
+          PORT: "3001"
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Wait for application
-        run: npx wait-on http://localhost:3001
+        run: npx wait-on --timeout 60000 http://localhost:3001
 
       - name: Run accessibility tests
         run: pnpm e2e --grep "Accessibility Tests"
@@ -186,13 +192,14 @@ jobs:
       - name: Start application
         run: pnpm start &
         env:
+          PORT: "3001"
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Wait for application
-        run: npx wait-on http://localhost:3001
+        run: npx wait-on --timeout 60000 http://localhost:3001
 
       - name: Run Lighthouse CI
         run: pnpm lighthouse:ci
