@@ -8,7 +8,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  PNPM_VERSION: '8'
+  PNPM_VERSION: '9'
 
 jobs:
   # TypeScript ve Linting Kontrolleri
@@ -111,7 +111,7 @@ jobs:
         run: pnpm e2e
 
       - name: Upload E2E test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playwright-report
@@ -198,7 +198,7 @@ jobs:
         run: pnpm lighthouse:ci
 
       - name: Upload Lighthouse reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: lighthouse-reports
