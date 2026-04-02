@@ -66,6 +66,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
   const searchParams = useSearchParams();
   const [data, setData] = useState<StocksResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState<SortField>("marketCap");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -120,6 +121,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(pageSize),
@@ -130,9 +132,18 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
     });
 
     fetch(`/api/stocks?${params}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) {
+          const text = await r.text().catch(() => "");
+          throw new Error(`Stocks API error: HTTP ${r.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+        }
+        return r.json();
+      })
       .then(setData)
-      .catch(console.error)
+      .catch((e) => {
+        console.error(e);
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
   }, [page, pageSize, sortField, sortDir, search, selectedSector, selectedIndex]);
 
@@ -552,7 +563,14 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                 </tr>
               ))
             ) : (
-              data?.items.map((stock, index) => {
+              error ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-6 text-center" style={{ color: "var(--text-muted)" }}>
+                    {error}
+                  </td>
+                </tr>
+              ) : (
+                data?.items?.map((stock, index) => {
                 const rank = (page - 1) * pageSize + index + 1;
                 const isPositive = stock.changePercent >= 0;
 
@@ -601,7 +619,8 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                     </td>
                   </tr>
                 );
-              })
+                })
+              )
             )}
           </tbody>
         </table>
@@ -634,7 +653,10 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
           </div>
         ) : (
           <div className="space-y-3 p-4">
-            {data?.items.map((stock, index) => {
+            {error ? (
+              <div style={{ color: "var(--text-muted)" }}>{error}</div>
+            ) : (
+              data?.items?.map((stock, index) => {
               const rank = (page - 1) * pageSize + index + 1;
 
               return (
@@ -706,7 +728,8 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                   </div>
                 </div>
               );
-            })}
+              })
+            )}
           </div>
         )}
       </div>

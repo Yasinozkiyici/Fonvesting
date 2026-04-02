@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Header from "@/components/Header";
 import Footer from "@/components/bist/Footer";
 import StocksTable from "@/components/bist/StocksTable";
@@ -25,7 +26,9 @@ export default function StocksPage() {
             Borsa Istanbul&apos;da islem goren tum sirketleri buradan filtreleyebilirsin.
           </p>
         </div>
-        <StocksTable />
+        <Suspense fallback={<div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>Tablo yukleniyor...</div>}>
+          <StocksTable />
+        </Suspense>
       </main>
 
       <Footer />

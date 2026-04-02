@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { syncYahooStocksIfStale } from "@/lib/services/yahoo-sync.service";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET() {
-  await syncYahooStocksIfStale();
 
   const [sectors, sectorStats] = await Promise.all([
     prisma.sector.findMany({

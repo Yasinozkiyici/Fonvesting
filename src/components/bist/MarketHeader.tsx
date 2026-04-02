@@ -46,17 +46,32 @@ export default function MarketHeader() {
   const [data, setData] = useState<MarketData | null>(null);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/market").then((r) => r.json()),
-      fetch("/api/sectors").then((r) => r.json()),
-    ])
+    const fetchJson = async (url: string) => {
+      const r = await fetch(url);
+      const text = await r.text();
+      if (!r.ok) {
+        throw new Error(`API error: HTTP ${r.status} - ${text.slice(0, 200)}`);
+      }
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(`API invalid JSON: HTTP ${r.status}`);
+      }
+    };
+
+    Promise.all([fetchJson("/api/market"), fetchJson("/api/sectors")])
       .then(([marketData, sectorsData]) => {
         setData(marketData);
         setSectors(sectorsData);
+        setError(null);
       })
-      .catch(console.error)
+      .catch((e) => {
+        console.error(e);
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -98,7 +113,7 @@ export default function MarketHeader() {
     );
   }
 
-  if (!data) return null;
+  if (!data) return error ? <div className="p-4" style={{ color: "var(--text-muted)" }}>{error}</div> : null;
 
   const isPositive = (data.bist100?.changePercent ?? 0) >= 0;
   return (
@@ -167,12 +182,12 @@ export default function MarketHeader() {
               <StatBlock 
                 icon={<BarChart3 className="w-4 h-4" />}
                 label="Piyasa Değeri"
-                value={data.formatted.totalMarketCap}
+                value={data.formatted?.totalMarketCap ?? "-"}
               />
               <StatBlock 
                 icon={<Activity className="w-4 h-4" />}
                 label="İşlem Hacmi"
-                value={data.formatted.totalTurnover}
+                value={data.formatted?.totalTurnover ?? "-"}
               />
               <StatBlock 
                 icon={<DollarSign className="w-4 h-4" />}
@@ -209,7 +224,7 @@ export default function MarketHeader() {
         <MoverCard 
           title="En Çok Yükselen"
           icon={<TrendingUp className="w-4 h-4" />}
-          items={data.topGainers.slice(0, 4)}
+          items={data.topGainers?.slice(0, 4) ?? []}
           type="gainer"
         />
 
@@ -217,7 +232,7 @@ export default function MarketHeader() {
         <MoverCard 
           title="En Çok Düşen"
           icon={<TrendingDown className="w-4 h-4" />}
-          items={data.topLosers.slice(0, 4)}
+          items={data.topLosers?.slice(0, 4) ?? []}
           type="loser"
         />
 

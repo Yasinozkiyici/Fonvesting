@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Header from "@/components/Header";
 import MarketHeader from "@/components/bist/MarketHeader";
 import StocksTable from "@/components/bist/StocksTable";
@@ -22,7 +23,9 @@ export default function Page() {
         <MarketHeader />
         
         <div className="mt-8">
-          <StocksTable enableSectorFilter={false} />
+          <Suspense fallback={<div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>Tablo yukleniyor...</div>}>
+            <StocksTable enableSectorFilter={false} />
+          </Suspense>
         </div>
       </main>
       

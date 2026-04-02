@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { syncYahooStocksIfStale } from "@/lib/services/yahoo-sync.service";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function formatNumber(n: number): string {
   const abs = Math.abs(n);
@@ -19,7 +21,6 @@ function formatTL(n: number): string {
 
 export async function GET() {
   try {
-    await syncYahooStocksIfStale();
 
     const [stocks, snapshot, bist100] = await Promise.all([
       prisma.stock.findMany({
@@ -114,7 +115,7 @@ export async function GET() {
 
     return NextResponse.json(payload, {
       headers: {
-        "Cache-Control": "s-maxage=30, stale-while-revalidate=60",
+        "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
       },
     });
   } catch (e) {

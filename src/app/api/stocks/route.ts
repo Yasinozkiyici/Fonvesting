@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { fetchBistSparklines } from "@/lib/services/yahoo-finance.service";
-import { syncYahooStocksIfStale } from "@/lib/services/yahoo-sync.service";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  await syncYahooStocksIfStale({ force: searchParams.get("refresh") === "1" });
+  const { searchParams } = req.nextUrl;
 
   const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
   const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "100")));
@@ -75,11 +75,11 @@ export async function GET(req: NextRequest) {
     prisma.stock.count({ where }),
   ]);
 
-  const sparklines = await fetchBistSparklines(items.map((item) => item.symbol));
+  // Sparkline data is generated on client-side from changePercent trend
   const itemsWithSparklines = items.map((item) => ({
     ...item,
-    sparkline: sparklines[item.symbol]?.points ?? [],
-    sparklineTrend: sparklines[item.symbol]?.trend ?? "flat",
+    sparkline: [],
+    sparklineTrend: item.changePercent > 0 ? "up" : item.changePercent < 0 ? "down" : "flat",
   }));
 
   return NextResponse.json(
@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
     },
     {
       headers: {
-        "Cache-Control": "s-maxage=30, stale-while-revalidate=60",
+        "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
       },
     }
   );

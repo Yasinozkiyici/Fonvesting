@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
 import Footer from "@/components/bist/Footer";
@@ -68,7 +68,9 @@ export default function IndicesPage() {
           ))}
         </div>
 
-        <StocksTable />
+        <Suspense fallback={<div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>Tablo yukleniyor...</div>}>
+          <StocksTable />
+        </Suspense>
       </main>
 
       <Footer />
