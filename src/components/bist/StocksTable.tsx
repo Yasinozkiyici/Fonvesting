@@ -152,10 +152,11 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
     if (!data?.items?.length) return;
 
     const controller = new AbortController();
+    const maxSymbols = Math.min(20, pageSize); // /api/sparklines route limitine uyumlu
     const symbols = data.items
       .map((s) => s.symbol)
       .filter(Boolean)
-      .slice(0, 15);
+      .slice(0, maxSymbols);
 
     const qs = encodeURIComponent(symbols.join(","));
     fetch(`/api/sparklines?symbols=${qs}`, { signal: controller.signal })
