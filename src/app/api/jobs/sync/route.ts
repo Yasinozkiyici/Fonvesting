@@ -22,6 +22,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, synced: true, ...stats });
   } catch (error) {
     console.error("[cron-sync] failed:", error);
-    return NextResponse.json({ ok: false, error: "sync_failed" }, { status: 500 });
+    const message = error instanceof Error ? error.message : String(error);
+    // Not: Bu mesajı güvenlik sebebiyle sadece error.message olarak döndürüyoruz.
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "sync_failed",
+        message,
+      },
+      { status: 500 }
+    );
   }
 }
