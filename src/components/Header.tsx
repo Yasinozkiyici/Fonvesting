@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { TrendingUp, Search, Menu, X, Sun, Moon } from "lucide-react";
+import { Search, Menu, X, Sun, Moon } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 
 export default function Header() {
@@ -29,22 +29,12 @@ export default function Header() {
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2.5 flex-shrink-0 group">
-            <div className="relative">
-              <div 
-                className="w-8 h-8 rounded-lg flex items-center justify-center transition-shadow"
-                style={{
-                  background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-muted) 100%)',
-                  boxShadow: '0 2px 8px var(--accent-bg)',
-                }}
-              >
-                <TrendingUp className="w-4 h-4 text-white" />
-              </div>
-            </div>
-            <div className="flex items-baseline gap-0.5">
-              <span className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>BIST</span>
-              <span className="text-base font-bold" style={{ color: 'var(--accent)' }}>MarketCap</span>
-            </div>
+          <Link href="/" className="flex items-center flex-shrink-0 group">
+            <img
+              src="/images/bistmarketcap-logo.png"
+              alt="BISTMarketCap"
+              className="h-8 w-auto"
+            />
           </Link>
 
           {/* Navigation - Desktop */}

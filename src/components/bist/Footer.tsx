@@ -1,6 +1,6 @@
 "use client";
 
-import { TrendingUp, ExternalLink, Github, Twitter, Linkedin } from "lucide-react";
+import { ExternalLink, Github, Twitter, Linkedin } from "lucide-react";
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
@@ -26,18 +26,11 @@ export default function Footer() {
           {/* Brand */}
           <div className="md:col-span-2">
             <div className="flex items-center gap-2.5 mb-4">
-              <div 
-                className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{
-                  background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-muted) 100%)',
-                }}
-              >
-                <TrendingUp className="w-4 h-4 text-white" />
-              </div>
-              <div className="flex items-baseline gap-0.5">
-                <span className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>BIST</span>
-                <span className="text-base font-bold" style={{ color: 'var(--accent)' }}>MarketCap</span>
-              </div>
+              <img
+                src="/images/bistmarketcap-logo.png"
+                alt="BISTMarketCap"
+                className="h-8 w-auto"
+              />
             </div>
             <p 
               className="text-sm leading-relaxed max-w-sm mb-5"
