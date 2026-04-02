@@ -15,7 +15,7 @@ function parseSymbols(req: NextRequest): string[] {
 
 export async function GET(req: NextRequest) {
   const symbols = parseSymbols(req);
-  const limit = Math.min(20, symbols.length);
+  const limit = Math.min(50, symbols.length);
   const limited = symbols.slice(0, limit);
 
   if (limited.length === 0) {
