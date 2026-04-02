@@ -291,48 +291,64 @@ export async function syncYahooStocksIfStale(options?: { force?: boolean }): Pro
         }
       }
 
+      async function safeQuote(
+        symbol: string,
+        fields: string[],
+      ): Promise<Record<string, unknown>> {
+        try {
+          return (await yahooFinance.quote(symbol, { fields })) as Record<string, unknown>;
+        } catch (e) {
+          console.error("[yahoo-sync] quote failed:", symbol, e);
+          return {};
+        }
+      }
+
       const [xu100Quote, xu030Quote, usdTryQuote, eurTryQuote] = await Promise.all([
-        yahooFinance.quote("XU100.IS", {
-          fields: [
-            "regularMarketPrice",
-            "regularMarketChange",
-            "regularMarketChangePercent",
-            "regularMarketVolume",
-          ],
-        }),
-        yahooFinance.quote("XU030.IS", {
-          fields: [
-            "regularMarketPrice",
-            "regularMarketChange",
-            "regularMarketChangePercent",
-            "regularMarketVolume",
-          ],
-        }),
-        yahooFinance.quote("TRY=X", { fields: ["regularMarketPrice"] }),
-        yahooFinance.quote("EURTRY=X", { fields: ["regularMarketPrice"] }),
+        safeQuote("XU100.IS", [
+          "regularMarketPrice",
+          "regularMarketChange",
+          "regularMarketChangePercent",
+          "regularMarketVolume",
+        ]),
+        safeQuote("XU030.IS", [
+          "regularMarketPrice",
+          "regularMarketChange",
+          "regularMarketChangePercent",
+          "regularMarketVolume",
+        ]),
+        safeQuote("TRY=X", ["regularMarketPrice"]),
+        safeQuote("EURTRY=X", ["regularMarketPrice"]),
       ]);
 
       const bist100Value =
-        typeof xu100Quote.regularMarketPrice === "number" ? xu100Quote.regularMarketPrice : 0;
+        typeof xu100Quote.regularMarketPrice === "number" ? (xu100Quote.regularMarketPrice as number) : 0;
       const bist100Change =
-        typeof xu100Quote.regularMarketChange === "number" ? xu100Quote.regularMarketChange : 0;
+        typeof xu100Quote.regularMarketChange === "number"
+          ? (xu100Quote.regularMarketChange as number)
+          : 0;
       const bist100ChangePercent =
         typeof xu100Quote.regularMarketChangePercent === "number"
-          ? xu100Quote.regularMarketChangePercent
+          ? (xu100Quote.regularMarketChangePercent as number)
           : 0;
       const bist100Volume =
-        typeof xu100Quote.regularMarketVolume === "number" ? xu100Quote.regularMarketVolume : 0;
+        typeof xu100Quote.regularMarketVolume === "number"
+          ? (xu100Quote.regularMarketVolume as number)
+          : 0;
 
       const bist30Value =
-        typeof xu030Quote.regularMarketPrice === "number" ? xu030Quote.regularMarketPrice : 0;
+        typeof xu030Quote.regularMarketPrice === "number" ? (xu030Quote.regularMarketPrice as number) : 0;
       const bist30Change =
-        typeof xu030Quote.regularMarketChange === "number" ? xu030Quote.regularMarketChange : 0;
+        typeof xu030Quote.regularMarketChange === "number"
+          ? (xu030Quote.regularMarketChange as number)
+          : 0;
       const bist30ChangePercent =
         typeof xu030Quote.regularMarketChangePercent === "number"
-          ? xu030Quote.regularMarketChangePercent
+          ? (xu030Quote.regularMarketChangePercent as number)
           : 0;
       const bist30Volume =
-        typeof xu030Quote.regularMarketVolume === "number" ? xu030Quote.regularMarketVolume : 0;
+        typeof xu030Quote.regularMarketVolume === "number"
+          ? (xu030Quote.regularMarketVolume as number)
+          : 0;
 
       await prisma.index.updateMany({
         where: { code: "XU100" },
