@@ -724,47 +724,34 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-3 gap-3 border-t pt-3" style={{ borderColor: "var(--table-border)" }}>
-                    <div>
+                  <div
+                    className="mt-3 grid grid-cols-3 gap-3 border-t pt-3"
+                    style={{ borderColor: "var(--table-border)" }}
+                  >
+                    <div className="min-w-0">
                       <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                         Sektor
                       </p>
-                      <p className="mt-1 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                      <p className="mt-1 text-xs font-medium truncate" style={{ color: "var(--text-secondary)" }} title={stock.sector?.name ?? ""}>
                         {stock.sector?.name ?? "—"}
                       </p>
                     </div>
-                    <div>
+
+                    <div className="min-w-0">
                       <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                        F/K
+                        Piyasa Değeri
                       </p>
-                      <p className="mt-1 text-xs font-medium tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                        {stock.peRatio?.toFixed(1) ?? "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                        Piy. Degeri
-                      </p>
-                      <p className="mt-1 text-xs font-medium tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                      <p className="mt-1 text-xs font-medium tabular-nums truncate" style={{ color: "var(--text-secondary)" }}>
                         {formatMarketCap(stock.marketCap)}
                       </p>
                     </div>
-                    <div className="col-span-3 mt-1 flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                          Hacim
-                        </p>
-                        <p className="text-xs font-medium tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                          ₺{formatVolume(stock.volume)}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                          7 Gun
-                        </p>
-                        <div className="ml-auto mt-1 h-6 w-16">
-                          <Sparkline trend={stock.sparklineTrend} points={stock.sparkline} />
-                        </div>
+
+                    <div className="flex flex-col items-end">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                        7 Gun
+                      </p>
+                      <div className="mt-1 h-6 w-16">
+                        <Sparkline trend={stock.sparklineTrend} points={stock.sparkline} />
                       </div>
                     </div>
                   </div>
