@@ -101,39 +101,39 @@ export async function fetchBistQuotes(symbols: readonly string[]): Promise<Recor
   const result: Record<string, YahooBistQuote> = {};
   const symbolBatches = chunk(yahooSymbols, BATCH_SIZE);
 
-  await Promise.all(
-    symbolBatches.map(async (batch) => {
-      try {
-        const quotes = await yahooFinance.quote(batch, {
-          return: "array",
-          fields: [...QUOTE_FIELDS],
-        });
+  // Vercel/Serverless ortamlarında paralel batch isteği çok olunca rate-limit/timeout yaşanabiliyor.
+  // Bu yüzden batch'leri sırayla çekiyoruz.
+  for (const batch of symbolBatches) {
+    try {
+      const quotes = await yahooFinance.quote(batch, {
+        return: "array",
+        fields: [...QUOTE_FIELDS],
+      });
 
-        for (const q of quotes) {
-          const yahooSymbol = String(q.symbol || "").toUpperCase();
-          if (!yahooSymbol) continue;
-          const symbol = toBistBaseSymbol(yahooSymbol);
+      for (const q of quotes) {
+        const yahooSymbol = String(q.symbol || "").toUpperCase();
+        if (!yahooSymbol) continue;
+        const symbol = toBistBaseSymbol(yahooSymbol);
 
-          result[symbol] = {
-            symbol,
-            yahooSymbol,
-            shortName: typeof q.shortName === "string" ? q.shortName : null,
-            longName: typeof q.longName === "string" ? q.longName : null,
-            trailingPE: toNullableNumber(q.trailingPE),
-            regularMarketPrice: toNullableNumber(q.regularMarketPrice),
-            regularMarketChangePercent: toNullableNumber(q.regularMarketChangePercent),
-            marketCap: toNullableNumber(q.marketCap),
-            regularMarketVolume: toNullableNumber(q.regularMarketVolume),
-            fiftyTwoWeekHigh: toNullableNumber(q.fiftyTwoWeekHigh),
-            fiftyTwoWeekLow: toNullableNumber(q.fiftyTwoWeekLow),
-          };
-        }
-      } catch (error) {
-        // Batch bazlı hata yutulur, API ayakta kalır.
-        console.error("Yahoo batch fetch failed:", batch, error);
+        result[symbol] = {
+          symbol,
+          yahooSymbol,
+          shortName: typeof q.shortName === "string" ? q.shortName : null,
+          longName: typeof q.longName === "string" ? q.longName : null,
+          trailingPE: toNullableNumber(q.trailingPE),
+          regularMarketPrice: toNullableNumber(q.regularMarketPrice),
+          regularMarketChangePercent: toNullableNumber(q.regularMarketChangePercent),
+          marketCap: toNullableNumber(q.marketCap),
+          regularMarketVolume: toNullableNumber(q.regularMarketVolume),
+          fiftyTwoWeekHigh: toNullableNumber(q.fiftyTwoWeekHigh),
+          fiftyTwoWeekLow: toNullableNumber(q.fiftyTwoWeekLow),
+        };
       }
-    })
-  );
+    } catch (error) {
+      // Batch bazlı hata yutulur, senkron yine devam eder.
+      console.error("Yahoo batch fetch failed:", batch, error);
+    }
+  }
 
   saveCache(yahooSymbols, result);
   return result;
@@ -164,14 +164,14 @@ export async function fetchBistSparklines(
           });
           const closes = Array.isArray(chart?.quotes)
             ? chart.quotes
-                .map((q: { close?: number }) => q?.close)
+                .map((q) => q?.close)
                 .filter((n: unknown): n is number => typeof n === "number" && Number.isFinite(n))
             : [];
 
           if (closes.length >= 2) {
             const symbol = toBistBaseSymbol(yahooSymbol);
-            const first = closes[0];
-            const last = closes[closes.length - 1];
+            const first = closes[0]!;
+            const last = closes[closes.length - 1]!;
             const trend: "up" | "down" | "flat" = last > first ? "up" : last < first ? "down" : "flat";
             result[symbol] = { points: closes, trend };
           }
