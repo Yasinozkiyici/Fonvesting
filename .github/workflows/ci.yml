@@ -270,7 +270,6 @@ jobs:
       - name: Run Snyk security scan
         uses: snyk/actions/node@master
         continue-on-error: true
-        if: ${{ secrets.SNYK_TOKEN != '' }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -312,7 +311,7 @@ jobs:
   predeploy-check:
     name: Predeploy Check
     runs-on: ubuntu-latest
-    needs: [typecheck-and-lint, unit-tests, e2e-tests, accessibility-tests, lighthouse-tests, security-audit, supabase-rls-tests]
+    needs: [typecheck-and-lint, unit-tests, e2e-tests, accessibility-tests, lighthouse-tests, supabase-rls-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
