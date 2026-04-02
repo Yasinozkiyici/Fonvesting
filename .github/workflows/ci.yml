@@ -375,12 +375,13 @@ jobs:
 
       - name: Deploy to Vercel
         uses: amondnet/vercel-action@v25
+        if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           working-directory: ./
-          production: true
+          vercel-args: '--prod'
 
       - name: Run database migrations
         if: ${{ secrets.DATABASE_URL != '' }}
@@ -389,6 +390,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Health check
+        if: ${{ secrets.PRODUCTION_URL != '' }}
         run: |
           sleep 30
           curl -f ${{ secrets.PRODUCTION_URL }}/api/health || exit 1
@@ -429,12 +431,13 @@ jobs:
 
       - name: Deploy to Vercel (Staging)
         uses: amondnet/vercel-action@v25
+        if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
           vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           working-directory: ./
-          production: false
+          vercel-args: ''
 
       - name: Run database migrations (Staging)
         if: ${{ secrets.STAGING_DATABASE_URL != '' }}
@@ -443,6 +446,7 @@ jobs:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
       - name: Health check (Staging)
+        if: ${{ secrets.STAGING_URL != '' }}
         run: |
           sleep 30
           curl -f ${{ secrets.STAGING_URL }}/api/health || exit 1
