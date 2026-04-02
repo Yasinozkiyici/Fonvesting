@@ -11,6 +11,10 @@ const yahooFinance = new YahooFinance({
 });
 const MAX_LISTED_EQUITIES = 521;
 const DB_BATCH_SIZE = 4; // Prisma connection pool limitine takılmamak için düşük eşzamanlılık.
+const LEGACY_SYMBOL_MAPPINGS: ReadonlyArray<{ from: string; to: string }> = [
+  { from: "KOZAA", to: "TRMET" },
+  { from: "KOZAL", to: "TRALT" },
+];
 
 let lastSyncAt = 0;
 type YahooSyncStats = {
@@ -104,6 +108,35 @@ async function processInBatches<T>(
   }
 }
 
+async function migrateLegacySymbols() {
+  for (const mapping of LEGACY_SYMBOL_MAPPINGS) {
+    const [fromStock, toStock] = await Promise.all([
+      prisma.stock.findUnique({ where: { symbol: mapping.from }, select: { id: true } }),
+      prisma.stock.findUnique({ where: { symbol: mapping.to }, select: { id: true } }),
+    ]);
+
+    if (!fromStock) continue;
+
+    if (toStock) {
+      // Hedef sembol zaten varsa eski sembolü pasife al.
+      await prisma.stock.update({
+        where: { id: fromStock.id },
+        data: { isActive: false },
+      });
+      continue;
+    }
+
+    // Hedef sembol yoksa kaydı yeni sembole taşı.
+    await prisma.stock.update({
+      where: { id: fromStock.id },
+      data: {
+        symbol: mapping.to,
+        shortName: mapping.to,
+      },
+    });
+  }
+}
+
 function resolveSyncIntervalMs() {
   const hours = Number(process.env.YAHOO_SYNC_INTERVAL_HOURS ?? "4");
   if (!Number.isFinite(hours) || hours <= 0) return DEFAULT_SYNC_INTERVAL_MS;
@@ -124,6 +157,7 @@ function sanitizeMarketCap(value: number | null): number | null {
 
 export async function syncYahooStocksIfStale(options?: { force?: boolean }): Promise<YahooSyncStats> {
   const force = options?.force ?? false;
+  await migrateLegacySymbols();
   await ensureSeedSectors();
   await ensureIndices();
 
