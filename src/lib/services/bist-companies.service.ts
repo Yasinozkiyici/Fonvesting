@@ -20,6 +20,11 @@ const SOURCE_TO_CURRENT_SYMBOL: Record<string, string> = {
   KOZAL: "TRALT",
 };
 
+const CURRENT_TO_LOGO_SYMBOL: Record<string, string> = {
+  TRMET: "KOZAA",
+  TRALT: "KOZAL",
+};
+
 function normalizeSymbol(symbol: string) {
   const clean = symbol.trim().toUpperCase().replace(/\.IS$/, "");
   return SOURCE_TO_CURRENT_SYMBOL[clean] ?? clean;
@@ -41,11 +46,13 @@ export async function fetchAllBistCompanies(): Promise<BistCompany[]> {
   const data = raw
     .filter((item) => item?.symbol && item?.name)
     .map((item) => {
-      const symbol = normalizeSymbol(item.symbol!);
+      const sourceSymbol = item.symbol!.trim().toUpperCase().replace(/\.IS$/, "");
+      const symbol = normalizeSymbol(sourceSymbol);
+      const logoSymbol = CURRENT_TO_LOGO_SYMBOL[symbol] ?? sourceSymbol;
       return {
         symbol,
         name: item.name!.trim(),
-        logoUrl: `https://cdn.jsdelivr.net/gh/ahmeterenodaci/Istanbul-Stock-Exchange--BIST--including-symbols-and-logos/logos/${symbol}.png`,
+        logoUrl: `https://cdn.jsdelivr.net/gh/ahmeterenodaci/Istanbul-Stock-Exchange--BIST--including-symbols-and-logos/logos/${logoSymbol}.png`,
       };
     });
 
