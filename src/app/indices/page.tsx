@@ -24,7 +24,7 @@ export default function IndicesPage() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="relative isolate flex min-h-screen flex-col">
       <div className="gradient-mesh">
         <div className="mesh-layer-1" />
         <div className="mesh-layer-2" />
@@ -32,53 +32,55 @@ export default function IndicesPage() {
         <div className="noise" />
       </div>
 
-      <Header />
+      <div className="relative z-10 flex min-h-screen flex-col">
+        <Header />
 
-      <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
-            Fon türleri
-          </h1>
-          <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-            Yatırım fonları (0) ve emeklilik fonları (1) listelerini ayırın. Kartlardaki tutar toplam portföy büyüklüğüdür.
-          </p>
-        </div>
+        <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
+          <div className="mb-6">
+            <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
+              Fon türleri
+            </h1>
+            <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
+              Yatırım fonları (0) ve emeklilik fonları (1) listelerini ayırın. Kartlardaki tutar toplam portföy büyüklüğüdür.
+            </p>
+          </div>
 
-        <div className="mb-6 grid gap-3 sm:grid-cols-2">
-          {types.map((t) => (
-            <Link
-              key={t.code}
-              href={`/indices?index=${encodeURIComponent(t.code)}`}
-              className="rounded-xl border p-4 transition"
-              style={{
-                borderColor: "var(--border-default)",
-                background: "var(--card-bg)",
-                color: "var(--text-primary)",
-              }}
-            >
-              <p className="text-sm font-semibold">{t.name}</p>
-              <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                {t.stockCount} fon
-              </p>
-              <p className="mt-2 text-sm tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                ₺{t.value.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
-              </p>
-            </Link>
-          ))}
-        </div>
+          <div className="mb-6 grid gap-3 sm:grid-cols-2">
+            {types.map((t) => (
+              <Link
+                key={t.code}
+                href={`/indices?index=${encodeURIComponent(t.code)}`}
+                className="rounded-xl border p-4 transition"
+                style={{
+                  borderColor: "var(--border-default)",
+                  background: "var(--card-bg)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <p className="text-sm font-semibold">{t.name}</p>
+                <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                  {t.stockCount} fon
+                </p>
+                <p className="mt-2 text-sm tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                  ₺{t.value.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
+                </p>
+              </Link>
+            ))}
+          </div>
 
-        <Suspense
-          fallback={
-            <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-              Tablo yükleniyor...
-            </div>
-          }
-        >
-          <FundsTable />
-        </Suspense>
-      </main>
+          <Suspense
+            fallback={
+              <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+                Tablo yükleniyor...
+              </div>
+            }
+          >
+            <FundsTable />
+          </Suspense>
+        </main>
 
-      <Footer />
+        <Footer />
+      </div>
     </div>
   );
 }

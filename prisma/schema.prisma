@@ -55,9 +55,31 @@ model Fund {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   priceHistory   FundPriceHistory[]
+  dailySnapshots FundDailySnapshot[]
   watchlistItems WatchlistItem[]
   @@index([portfolioSize(sort: Desc)])
   @@index([dailyReturn(sort: Desc)])
+  @@index([categoryId])
+}
+
+/** Günlük senkron sonrası /api/funds/scores yanıtı — anında okuma için (hesap sunucuda bir kez). */
+model ScoresApiCache {
+  cacheKey  String   @id
+  payload   Json
+  updatedAt DateTime @updatedAt
+}
+
+/** History backfill / incremental cursor: kapsanan tarih aralığını ve son koşumu izler. */
+model HistorySyncState {
+  key                 String   @id
+  status              String   @default("IDLE")
+  earliestHistoryDate DateTime?
+  latestHistoryDate   DateTime?
+  lastStartedAt       DateTime?
+  lastCompletedAt     DateTime?
+  details             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model FundPriceHistory {
@@ -71,6 +93,43 @@ model FundPriceHistory {
   fund          Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
   @@unique([fundId, date])
   @@index([fundId, date(sort: Desc)])
+}
+
+/** Günlük serving katmanı: ana sayfa ve skor cache bu tablodan okunur. */
+model FundDailySnapshot {
+  id                   String   @id @default(cuid())
+  date                 DateTime
+  fundId               String
+  code                 String
+  name                 String
+  shortName            String?
+  logoUrl              String?
+  categoryCode         String?
+  categoryName         String?
+  fundTypeCode         Int?
+  fundTypeName         String?
+  riskLevel            String
+  lastPrice            Float    @default(0)
+  dailyReturn          Float    @default(0)
+  monthlyReturn        Float    @default(0)
+  yearlyReturn         Float    @default(0)
+  portfolioSize        Float    @default(0)
+  investorCount        Int      @default(0)
+  alpha                Float    @default(0)
+  sparkline            Json
+  scores               Json
+  metrics              Json
+  finalScoreBest       Float    @default(0)
+  finalScoreLowRisk    Float    @default(0)
+  finalScoreHighReturn Float    @default(0)
+  finalScoreStable     Float    @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  fund                 Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  @@unique([fundId, date])
+  @@index([date(sort: Desc)])
+  @@index([date(sort: Desc), categoryCode])
+  @@index([date(sort: Desc), finalScoreBest(sort: Desc)])
 }
 
 model MarketSnapshot {

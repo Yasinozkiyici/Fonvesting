@@ -57,7 +57,6 @@ export async function GET(req: NextRequest) {
           logoUrl: true,
           portfolioSize: true,
           lastPrice: true,
-          previousPrice: true,
           dailyReturn: true,
           investorCount: true,
           category: { select: { code: true, name: true, color: true } },
@@ -66,29 +65,39 @@ export async function GET(req: NextRequest) {
       prisma.fund.count({ where }),
     ]);
 
-    const legacy = items.map((f) => ({
-      id: f.id,
-      symbol: f.code,
-      name: f.name,
-      shortName: f.shortName,
-      logoUrl: f.logoUrl,
-      marketCap: f.portfolioSize,
-      lastPrice: f.lastPrice,
-      previousClose: f.previousPrice,
-      change: f.lastPrice - f.previousPrice,
-      changePercent: f.dailyReturn,
-      dayHigh: f.lastPrice,
-      dayLow: f.lastPrice,
-      volume: f.investorCount,
-      turnover: f.portfolioSize,
-      peRatio: null as number | null,
-      sparkline: [] as number[],
-      sparklineTrend:
-        f.dailyReturn > 0 ? ("up" as const) : f.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
-      sector: f.category
-        ? { code: f.category.code, name: f.category.name, color: f.category.color }
-        : null,
-    }));
+    const legacy = items.map((f) => {
+      const r = f.dailyReturn / 100;
+      const derivedPrev =
+        f.dailyReturn !== 0 &&
+        Number.isFinite(f.dailyReturn) &&
+        Math.abs(f.dailyReturn) < 99.9 &&
+        f.lastPrice > 0
+          ? f.lastPrice / (1 + r)
+          : null;
+      return {
+        id: f.id,
+        symbol: f.code,
+        name: f.name,
+        shortName: f.shortName,
+        logoUrl: f.logoUrl,
+        marketCap: f.portfolioSize,
+        lastPrice: f.lastPrice,
+        previousClose: null as number | null,
+        change: derivedPrev != null ? f.lastPrice - derivedPrev : 0,
+        changePercent: f.dailyReturn,
+        dayHigh: f.lastPrice,
+        dayLow: f.lastPrice,
+        volume: f.investorCount,
+        turnover: f.portfolioSize,
+        peRatio: null as number | null,
+        sparkline: [] as number[],
+        sparklineTrend:
+          f.dailyReturn > 0 ? ("up" as const) : f.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+        sector: f.category
+          ? { code: f.category.code, name: f.category.name, color: f.category.color }
+          : null,
+      };
+    });
 
     return NextResponse.json({
       items: legacy,

@@ -68,12 +68,75 @@ export const RANKING_WEIGHTS: Record<RankingMode, RankingWeights> = {
  */
 export function normalizePercentile(value: number, allValues: number[], higherIsBetter: boolean = true): number {
   if (allValues.length === 0) return 50;
-  
+
   const sorted = [...allValues].sort((a, b) => a - b);
-  const rank = sorted.filter(v => v < value).length;
+  const rank = sorted.filter((v) => v < value).length;
   const percentile = (rank / sorted.length) * 100;
-  
+
   return higherIsBetter ? percentile : 100 - percentile;
+}
+
+/** Önceden sıralanmış dizi üzerinde “value”dan küçük değer sayısı (O(log n)). */
+function countStrictlyLessThan(sortedAsc: number[], value: number): number {
+  let lo = 0;
+  let hi = sortedAsc.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const x = sortedAsc[mid] as number;
+    if (x < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function percentileFromSortedAsc(value: number, sortedAsc: number[], higherIsBetter: boolean): number {
+  if (sortedAsc.length === 0) return 50;
+  const rank = countStrictlyLessThan(sortedAsc, value);
+  const percentile = (rank / sortedAsc.length) * 100;
+  return higherIsBetter ? percentile : 100 - percentile;
+}
+
+/** Tüm fonlar için skor hesabında bir kez oluşturulur; tekrarlayan O(n log n) sıralamaları önler. */
+export interface NormalizationContext {
+  sortedReturns: number[];
+  sortedVolatility: number[];
+  sortedDrawdown: number[];
+  sortedSharpe: number[];
+  sortedSortino: number[];
+}
+
+export function buildNormalizationContext(allMetrics: FundMetrics[]): NormalizationContext {
+  const sortAsc = (xs: number[]) => [...xs].sort((a, b) => a - b);
+  return {
+    sortedReturns: sortAsc(allMetrics.map((m) => m.annualizedReturn)),
+    sortedVolatility: sortAsc(allMetrics.map((m) => m.volatility)),
+    sortedDrawdown: sortAsc(allMetrics.map((m) => m.maxDrawdown)),
+    sortedSharpe: sortAsc(allMetrics.map((m) => m.sharpeRatio)),
+    sortedSortino: sortAsc(allMetrics.map((m) => m.sortinoRatio)),
+  };
+}
+
+export function calculateNormalizedScoresWithContext(
+  metrics: FundMetrics,
+  ctx: NormalizationContext
+): NormalizedScores {
+  const returnScore = percentileFromSortedAsc(metrics.annualizedReturn, ctx.sortedReturns, true);
+  const volScore = percentileFromSortedAsc(metrics.volatility, ctx.sortedVolatility, false);
+  const ddScore = percentileFromSortedAsc(metrics.maxDrawdown, ctx.sortedDrawdown, false);
+  const riskScore = 100 - (volScore * 0.6 + ddScore * 0.4);
+  const stabilityScore = volScore * 0.6 + ddScore * 0.4;
+  const sharpeScore = percentileFromSortedAsc(metrics.sharpeRatio, ctx.sortedSharpe, true);
+  const sortinoScore = percentileFromSortedAsc(metrics.sortinoRatio, ctx.sortedSortino, true);
+  const drawdownScore = percentileFromSortedAsc(metrics.maxDrawdown, ctx.sortedDrawdown, false);
+
+  return {
+    returnScore: Math.round(returnScore),
+    riskScore: Math.round(riskScore),
+    stabilityScore: Math.round(stabilityScore),
+    sharpeScore: Math.round(sharpeScore),
+    sortinoScore: Math.round(sortinoScore),
+    drawdownScore: Math.round(drawdownScore),
+  };
 }
 
 /**
@@ -100,38 +163,7 @@ export function calculateNormalizedScores(
   metrics: FundMetrics,
   allMetrics: FundMetrics[]
 ): NormalizedScores {
-  const allReturns = allMetrics.map(m => m.annualizedReturn);
-  const allVolatility = allMetrics.map(m => m.volatility);
-  const allDrawdown = allMetrics.map(m => m.maxDrawdown);
-  const allSharpe = allMetrics.map(m => m.sharpeRatio);
-  const allSortino = allMetrics.map(m => m.sortinoRatio);
-  
-  // Return score: higher return = higher score
-  const returnScore = normalizePercentile(metrics.annualizedReturn, allReturns, true);
-  
-  // Risk score: based on volatility (higher vol = higher risk)
-  const volScore = normalizePercentile(metrics.volatility, allVolatility, false);
-  const ddScore = normalizePercentile(metrics.maxDrawdown, allDrawdown, false);
-  const riskScore = 100 - (volScore * 0.6 + ddScore * 0.4);
-  
-  // Stability score: inverse of risk
-  const stabilityScore = volScore * 0.6 + ddScore * 0.4;
-  
-  // Sharpe and Sortino scores
-  const sharpeScore = normalizePercentile(metrics.sharpeRatio, allSharpe, true);
-  const sortinoScore = normalizePercentile(metrics.sortinoRatio, allSortino, true);
-  
-  // Drawdown score (lower drawdown = higher score)
-  const drawdownScore = normalizePercentile(metrics.maxDrawdown, allDrawdown, false);
-  
-  return {
-    returnScore: Math.round(returnScore),
-    riskScore: Math.round(riskScore),
-    stabilityScore: Math.round(stabilityScore),
-    sharpeScore: Math.round(sharpeScore),
-    sortinoScore: Math.round(sortinoScore),
-    drawdownScore: Math.round(drawdownScore),
-  };
+  return calculateNormalizedScoresWithContext(metrics, buildNormalizationContext(allMetrics));
 }
 
 /**
@@ -258,8 +290,8 @@ export function getRiskLevelInfo(level: RiskLevel): {
         label: "Çok Düşük",
         labelShort: "Çok Düşük",
         color: "rgb(16, 185, 129)",
-        bg: "rgba(16, 185, 129, 0.1)",
-        border: "rgba(16, 185, 129, 0.2)",
+        bg: "rgba(16, 185, 129, 0.065)",
+        border: "rgba(16, 185, 129, 0.14)",
         numericLevel: 1,
       };
     case "low":
@@ -267,8 +299,8 @@ export function getRiskLevelInfo(level: RiskLevel): {
         label: "Düşük",
         labelShort: "Düşük",
         color: "rgb(34, 197, 94)",
-        bg: "rgba(34, 197, 94, 0.1)",
-        border: "rgba(34, 197, 94, 0.2)",
+        bg: "rgba(34, 197, 94, 0.065)",
+        border: "rgba(34, 197, 94, 0.14)",
         numericLevel: 2,
       };
     case "medium":
@@ -276,8 +308,8 @@ export function getRiskLevelInfo(level: RiskLevel): {
         label: "Orta",
         labelShort: "Orta",
         color: "rgb(245, 158, 11)",
-        bg: "rgba(245, 158, 11, 0.1)",
-        border: "rgba(245, 158, 11, 0.2)",
+        bg: "rgba(245, 158, 11, 0.065)",
+        border: "rgba(245, 158, 11, 0.14)",
         numericLevel: 4,
       };
     case "high":
@@ -285,8 +317,8 @@ export function getRiskLevelInfo(level: RiskLevel): {
         label: "Yüksek",
         labelShort: "Yüksek",
         color: "rgb(249, 115, 22)",
-        bg: "rgba(249, 115, 22, 0.1)",
-        border: "rgba(249, 115, 22, 0.2)",
+        bg: "rgba(249, 115, 22, 0.065)",
+        border: "rgba(249, 115, 22, 0.14)",
         numericLevel: 5,
       };
     case "very_high":
@@ -294,8 +326,8 @@ export function getRiskLevelInfo(level: RiskLevel): {
         label: "Çok Yüksek",
         labelShort: "Çok Yüksek",
         color: "rgb(239, 68, 68)",
-        bg: "rgba(239, 68, 68, 0.1)",
-        border: "rgba(239, 68, 68, 0.2)",
+        bg: "rgba(239, 68, 68, 0.065)",
+        border: "rgba(239, 68, 68, 0.14)",
         numericLevel: 7,
       };
   }

@@ -1,98 +1,29 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { unstable_cache } from "next/cache";
+import { getMarketSummaryFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-function formatNumber(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000_000_000) return (n / 1_000_000_000_000).toFixed(2) + " Trilyon";
-  if (abs >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + " Milyar";
-  if (abs >= 1_000_000) return (n / 1_000_000).toFixed(2) + " Milyon";
-  if (abs >= 1_000) return (n / 1_000).toFixed(2) + " Bin";
-  return n.toFixed(2);
+/** Piyasa özeti sık değişmez; kısa önbellek tekrar istekleri ve soğuk DB yükünü azaltır. */
+/** Veri günde bir kez güncelleniyor; CDN/process önbelleği 24 saat. */
+const CACHE_SEC = 86_400;
+
+async function computeMarketPayload() {
+  return getMarketSummaryFromDailySnapshot();
 }
 
-function formatTL(n: number): string {
-  return "₺" + formatNumber(n);
-}
+const getCachedMarket = unstable_cache(computeMarketPayload, ["api-market-v1"], {
+  revalidate: CACHE_SEC,
+});
 
 export async function GET() {
   try {
-    const [
-      fundCount,
-      sums,
-      nonZeroReturnAvg,
-      advancers,
-      decliners,
-      snapshot,
-      topGainers,
-      topLosers,
-    ] = await Promise.all([
-      prisma.fund.count({ where: { isActive: true } }),
-      prisma.fund.aggregate({
-        where: { isActive: true },
-        _sum: { portfolioSize: true, investorCount: true },
-      }),
-      prisma.fund.aggregate({
-        where: { isActive: true, dailyReturn: { not: 0 } },
-        _avg: { dailyReturn: true },
-      }),
-      prisma.fund.count({ where: { isActive: true, dailyReturn: { gt: 0 } } }),
-      prisma.fund.count({ where: { isActive: true, dailyReturn: { lt: 0 } } }),
-      prisma.marketSnapshot.findFirst({
-        orderBy: { date: "desc" },
-      }),
-      prisma.fund.findMany({
-        where: { isActive: true, dailyReturn: { gt: 0 } },
-        orderBy: { dailyReturn: "desc" },
-        take: 5,
-        select: {
-          code: true,
-          name: true,
-          shortName: true,
-          lastPrice: true,
-          dailyReturn: true,
-          portfolioSize: true,
-        },
-      }),
-      prisma.fund.findMany({
-        where: { isActive: true, dailyReturn: { lt: 0 } },
-        orderBy: { dailyReturn: "asc" },
-        take: 5,
-        select: {
-          code: true,
-          name: true,
-          shortName: true,
-          lastPrice: true,
-          dailyReturn: true,
-          portfolioSize: true,
-        },
-      }),
-    ]);
-
-    const totalPortfolioSize = sums._sum.portfolioSize ?? 0;
-    const totalInvestorCount = sums._sum.investorCount ?? 0;
-    const unchanged = Math.max(0, fundCount - advancers - decliners);
-    const avgDailyReturn = nonZeroReturnAvg._avg.dailyReturn ?? 0;
-
-    return NextResponse.json({
-      summary: { avgDailyReturn, totalFundCount: fundCount },
-      totalPortfolioSize,
-      totalInvestorCount,
-      fundCount,
-      advancers,
-      decliners,
-      unchanged,
-      usdTry: snapshot?.usdTry ?? null,
-      eurTry: snapshot?.eurTry ?? null,
-      topGainers,
-      topLosers,
-      formatted: {
-        totalPortfolioSize: formatTL(totalPortfolioSize),
-        totalInvestorCount: totalInvestorCount.toLocaleString("tr-TR"),
-      },
-    });
+    const payload = await getCachedMarket();
+    if (!payload) {
+      return NextResponse.json({ error: "market_empty" }, { status: 404 });
+    }
+    return NextResponse.json(payload);
   } catch (e) {
     console.error(e);
     return NextResponse.json({ error: "market_failed" }, { status: 500 });

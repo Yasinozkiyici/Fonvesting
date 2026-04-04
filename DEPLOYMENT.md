@@ -8,6 +8,8 @@ Uygulama **PostgreSQL** kullanır (Vercel’de SQLite dosyası çalışmaz). Yer
 2. `.env` veya `.env.local`: `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting"` (bkz. `.env.example`)
 3. `pnpm install` → `pnpm exec prisma migrate deploy` → isteğe bağlı `pnpm exec prisma db seed`
 4. Eski `DATABASE_URL="file:./dev.db"` satırını kaldırın; aksi halde uygulama hata verir.
+5. Yerelde yapılan değişiklikler otomatik deploy edilmez; sadece local geliştirme akışı (`pnpm dev`) beklenir.
+6. Bu repo için yayın kuralı: kullanıcı açıkça `push deploy et` demeden `git push` veya deploy çalıştırılmaz.
 
 ## GitHub
 
@@ -21,6 +23,7 @@ CI: PostgreSQL servis konteyneri üzerinde `prisma migrate deploy`, `lint`, `nex
    - **`CRON_SECRET`** — güçlü rastgele bir dize (sync/job uçları için).
 3. **Install Command:** `pnpm install` (`vercel.json` içinde tanımlı).
 4. Ortam değişkenlerini ekledikten sonra **Redeploy** yapın.
+5. Git push sonrası otomatik Vercel deploy istemiyorsanız Vercel proje ayarlarından auto-deploy kapatılmalıdır; bu davranış repo içi kodla güvenilir biçimde kapatılamaz.
 
 ### Supabase (özet)
 

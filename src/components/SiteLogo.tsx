@@ -29,7 +29,7 @@ export function SiteLogoLink({ size = "header", className = "" }: SiteLogoLinkPr
   return (
     <Link
       href="/"
-      className={`site-logo-link group flex flex-shrink-0 items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--nav-bg)] ${className}`.trim()}
+      className={`site-logo-link group flex flex-shrink-0 items-center rounded-[6px] px-0 py-0.5 outline-none transition-[opacity,transform] duration-200 ease-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-blue)] active:scale-[0.99] ${className}`.trim()}
       aria-label="Yatirim.io — ana sayfa"
     >
       <SiteLogo size={size} />

@@ -2,7 +2,15 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
+import { deriveFundPerformanceFromHistory } from "@/lib/services/fund-daily-snapshot.service";
+import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.service";
 import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
+import { rebuildFundDailySnapshots } from "@/lib/services/fund-daily-snapshot.service";
+import { warmAllScoresApiCaches } from "@/lib/services/fund-scores-cache.service";
+import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
 function resolvePythonBin(root: string): string {
   const fromEnv = process.env.TEFAS_PYTHON?.trim();
@@ -42,41 +50,313 @@ function projectRoot(): string {
   return process.cwd();
 }
 
-/** TEFAS günlük getiri: API sütunu → satır fiyatları → önceki gün history → DB son kapanış */
+function clampReturn(x: number): number {
+  if (!Number.isFinite(x) || Math.abs(x) > 100) return 0;
+  return x;
+}
+
+function computePct(prev: number, curr: number): number {
+  return ((curr - prev) / prev) * 100;
+}
+
+function isUsablePrice(x: number): boolean {
+  return Number.isFinite(x) && x > 0;
+}
+
+function almostEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < 1e-9;
+}
+
+function normalizeHistorySessionDate(date: Date): Date {
+  return startOfUtcDay(new Date(date.getTime() + TURKEY_UTC_OFFSET_MS));
+}
+
+function sameUtcDay(a: Date, b: Date): boolean {
+  return a.getTime() === b.getTime();
+}
+
+function getDistinctHistorySessions(
+  bars: Array<{ id: string; date: Date; price: number }>
+): Array<{ sessionDate: Date; price: number; historyIds: string[] }> {
+  const sessions = new Map<number, { sessionDate: Date; price: number; historyIds: string[] }>();
+
+  for (const bar of bars) {
+    if (!isUsablePrice(bar.price)) continue;
+    const sessionDate = normalizeHistorySessionDate(bar.date);
+    const key = sessionDate.getTime();
+    const existing = sessions.get(key);
+    if (existing) {
+      existing.historyIds.push(bar.id);
+      continue;
+    }
+    sessions.set(key, { sessionDate, price: bar.price, historyIds: [bar.id] });
+  }
+
+  return [...sessions.values()].sort((a, b) => b.sessionDate.getTime() - a.sessionDate.getTime());
+}
+
+/**
+ * Günlük %: TEFAS sütunu → satır (önceki/son fiyat) → history’de önceki gün → DB’deki son kapanış.
+ * UI ile uyum için |%| > 100 sapmaları 0 sayılır (badge ile aynı eşik).
+ */
 function computeFundDailyMetrics(input: {
   apiDailyReturn: number;
   lastPrice: number;
   rowPreviousPrice: number;
   dbPreviousClose: number;
   historyPreviousPrice: number;
+  existingPreviousPrice: number;
+  existingDailyReturn: number;
+  sameSessionPrice: number;
 }): { dailyReturn: number; previousPrice: number } {
-  const { apiDailyReturn, lastPrice, rowPreviousPrice, dbPreviousClose, historyPreviousPrice } =
-    input;
+  const apiDailyReturn = Number(input.apiDailyReturn);
+  const lastPrice = Number(input.lastPrice);
+  const rowPreviousPrice = Number(input.rowPreviousPrice);
+  const dbPreviousClose = Number(input.dbPreviousClose);
+  const historyPreviousPrice = Number(input.historyPreviousPrice);
+  const existingPreviousPrice = Number(input.existingPreviousPrice);
+  const existingDailyReturn = Number(input.existingDailyReturn);
+  const sameSessionPrice = Number(input.sameSessionPrice);
 
-  const clampReturn = (x: number): number => {
-    if (!Number.isFinite(x) || Math.abs(x) > 50) return 0;
-    return x;
-  };
+  const isSameSessionResync = isUsablePrice(sameSessionPrice);
 
-  const pct = (prev: number, curr: number) => ((curr - prev) / prev) * 100;
+  let previousPrice = 0;
+  if (isSameSessionResync && isUsablePrice(existingPreviousPrice)) {
+    previousPrice = existingPreviousPrice;
+  } else if (isUsablePrice(rowPreviousPrice) && !almostEqual(rowPreviousPrice, lastPrice)) {
+    previousPrice = rowPreviousPrice;
+  } else if (isUsablePrice(dbPreviousClose) && (!isSameSessionResync || !almostEqual(dbPreviousClose, lastPrice))) {
+    previousPrice = dbPreviousClose;
+  } else if (isUsablePrice(historyPreviousPrice)) {
+    previousPrice = historyPreviousPrice;
+  } else if (isUsablePrice(existingPreviousPrice)) {
+    previousPrice = existingPreviousPrice;
+  } else if (isUsablePrice(rowPreviousPrice)) {
+    previousPrice = rowPreviousPrice;
+  }
 
   let dailyReturn = 0;
   if (apiDailyReturn !== 0 && Number.isFinite(apiDailyReturn)) {
     dailyReturn = clampReturn(apiDailyReturn);
-  } else if (rowPreviousPrice > 0 && lastPrice > 0) {
-    dailyReturn = clampReturn(pct(rowPreviousPrice, lastPrice));
-  } else if (historyPreviousPrice > 0 && lastPrice > 0) {
-    dailyReturn = clampReturn(pct(historyPreviousPrice, lastPrice));
-  } else if (dbPreviousClose > 0 && lastPrice > 0) {
-    dailyReturn = clampReturn(pct(dbPreviousClose, lastPrice));
+  } else if (previousPrice > 0 && lastPrice > 0) {
+    dailyReturn = clampReturn(computePct(previousPrice, lastPrice));
+  } else if (isSameSessionResync && Number.isFinite(existingDailyReturn)) {
+    dailyReturn = clampReturn(existingDailyReturn);
   }
 
-  let previousPrice = lastPrice;
-  if (rowPreviousPrice > 0) previousPrice = rowPreviousPrice;
-  else if (historyPreviousPrice > 0) previousPrice = historyPreviousPrice;
-  else if (dbPreviousClose > 0) previousPrice = dbPreviousClose;
-
   return { dailyReturn, previousPrice };
+}
+
+export async function recomputeDailyReturnsFromHistory(options?: {
+  targetSessionDate?: Date;
+}): Promise<{ updatedFunds: number; updatedHistoryRows: number }> {
+  const targetSessionDate = options?.targetSessionDate ?? null;
+  const horizon = new Date((targetSessionDate ?? new Date()).getTime() - 14 * DAY_MS);
+
+  const [funds, historyRows] = await Promise.all([
+    prisma.fund.findMany({
+      where: { isActive: true },
+      select: { id: true, lastPrice: true, previousPrice: true, dailyReturn: true },
+    }),
+    prisma.fundPriceHistory.findMany({
+      where: { date: { gte: horizon } },
+      select: { id: true, fundId: true, date: true, price: true },
+      orderBy: [{ fundId: "asc" }, { date: "desc" }],
+    }),
+  ]);
+
+  const historyByFund = new Map<string, Array<{ id: string; date: Date; price: number }>>();
+  for (const row of historyRows) {
+    const arr = historyByFund.get(row.fundId) ?? [];
+    arr.push(row);
+    historyByFund.set(row.fundId, arr);
+  }
+
+  const fundUpdates: Array<{ id: string; lastPrice: number; previousPrice: number; dailyReturn: number }> = [];
+  const historyUpdates: Array<{ id: string; dailyReturn: number }> = [];
+
+  for (const fund of funds) {
+    const sessions = getDistinctHistorySessions(historyByFund.get(fund.id) ?? []);
+    if (!sessions.length) continue;
+
+    const current =
+      targetSessionDate != null
+        ? sessions.find((session) => sameUtcDay(session.sessionDate, targetSessionDate))
+        : sessions[0];
+    if (!current) continue;
+
+    const previous = sessions.find((session) => session.sessionDate.getTime() < current.sessionDate.getTime());
+    if (!previous || !isUsablePrice(current.price) || !isUsablePrice(previous.price)) continue;
+
+    const dailyReturn = clampReturn(computePct(previous.price, current.price));
+    if (
+      almostEqual(fund.lastPrice, current.price) &&
+      almostEqual(fund.previousPrice, previous.price) &&
+      almostEqual(fund.dailyReturn, dailyReturn)
+    ) {
+      continue;
+    }
+
+    fundUpdates.push({
+      id: fund.id,
+      lastPrice: current.price,
+      previousPrice: previous.price,
+      dailyReturn,
+    });
+
+    for (const historyId of current.historyIds) {
+      historyUpdates.push({ id: historyId, dailyReturn });
+    }
+  }
+
+  const CHUNK = 200;
+  for (let i = 0; i < fundUpdates.length; i += CHUNK) {
+    const slice = fundUpdates.slice(i, i + CHUNK);
+    await prisma.$transaction(
+      slice.map((item) =>
+        prisma.fund.update({
+          where: { id: item.id },
+          data: {
+            lastPrice: item.lastPrice,
+            previousPrice: item.previousPrice,
+            dailyReturn: item.dailyReturn,
+          },
+        })
+      )
+    );
+  }
+
+  for (let i = 0; i < historyUpdates.length; i += CHUNK) {
+    const slice = historyUpdates.slice(i, i + CHUNK);
+    await prisma.$transaction(
+      slice.map((item) =>
+        prisma.fundPriceHistory.update({
+          where: { id: item.id },
+          data: { dailyReturn: item.dailyReturn },
+        })
+      )
+    );
+  }
+
+  return { updatedFunds: fundUpdates.length, updatedHistoryRows: historyUpdates.length };
+}
+
+export async function recomputeFundReturnsFromHistory(options?: {
+  targetSessionDate?: Date;
+}): Promise<{ updatedFunds: number }> {
+  const targetSessionDate = options?.targetSessionDate ?? null;
+  const horizon = new Date((targetSessionDate ?? new Date()).getTime() - 370 * DAY_MS);
+
+  const [funds, historyRows] = await Promise.all([
+    prisma.fund.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        lastPrice: true,
+        previousPrice: true,
+        dailyReturn: true,
+        weeklyReturn: true,
+        monthlyReturn: true,
+        yearlyReturn: true,
+      },
+    }),
+    prisma.fundPriceHistory.findMany({
+      where: { date: { gte: horizon } },
+      select: { fundId: true, date: true, price: true },
+      orderBy: [{ fundId: "asc" }, { date: "asc" }],
+    }),
+  ]);
+
+  const historyByFund = new Map<string, Array<{ date: Date; price: number }>>();
+  for (const row of historyRows) {
+    const arr = historyByFund.get(row.fundId) ?? [];
+    arr.push({ date: row.date, price: row.price });
+    historyByFund.set(row.fundId, arr);
+  }
+
+  const updates = funds
+    .map((fund) => {
+      const performance = deriveFundPerformanceFromHistory(historyByFund.get(fund.id) ?? []);
+      if (!performance.lastPrice) return null;
+      const unchanged =
+        almostEqual(fund.lastPrice, performance.lastPrice) &&
+        almostEqual(fund.previousPrice, performance.previousPrice) &&
+        almostEqual(fund.dailyReturn, performance.dailyReturn) &&
+        almostEqual(fund.weeklyReturn, performance.weeklyReturn) &&
+        almostEqual(fund.monthlyReturn, performance.monthlyReturn) &&
+        almostEqual(fund.yearlyReturn, performance.yearlyReturn);
+      if (unchanged) return null;
+      return {
+        id: fund.id,
+        lastPrice: performance.lastPrice,
+        previousPrice: performance.previousPrice,
+        dailyReturn: performance.dailyReturn,
+        weeklyReturn: performance.weeklyReturn,
+        monthlyReturn: performance.monthlyReturn,
+        yearlyReturn: performance.yearlyReturn,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item != null);
+
+  const CHUNK = 200;
+  for (let i = 0; i < updates.length; i += CHUNK) {
+    const slice = updates.slice(i, i + CHUNK);
+    await prisma.$transaction(
+      slice.map((item) =>
+        prisma.fund.update({
+          where: { id: item.id },
+          data: {
+            lastPrice: item.lastPrice,
+            previousPrice: item.previousPrice,
+            dailyReturn: item.dailyReturn,
+            weeklyReturn: item.weeklyReturn,
+            monthlyReturn: item.monthlyReturn,
+            yearlyReturn: item.yearlyReturn,
+          },
+        })
+      )
+    );
+  }
+
+  return { updatedFunds: updates.length };
+}
+
+export async function rebuildMarketSnapshot(snapshotDate: Date): Promise<void> {
+  const sessionDayStart = startOfUtcDay(snapshotDate);
+  await prisma.$transaction(async (tx) => {
+    const all = await tx.fund.findMany({
+      where: { isActive: true },
+      select: { dailyReturn: true, portfolioSize: true, investorCount: true },
+    });
+    const adv = all.filter((f) => f.dailyReturn > 0).length;
+    const dec = all.filter((f) => f.dailyReturn < 0).length;
+    const unch = Math.max(0, all.length - adv - dec);
+    const rets = all.map((f) => f.dailyReturn).filter((x) => x !== 0);
+    const avg = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
+
+    await tx.marketSnapshot.upsert({
+      where: { date: sessionDayStart },
+      create: {
+        date: sessionDayStart,
+        totalFundCount: all.length,
+        totalPortfolioSize: all.reduce((s, f) => s + f.portfolioSize, 0),
+        totalInvestorCount: all.reduce((s, f) => s + f.investorCount, 0),
+        avgDailyReturn: avg,
+        advancers: adv,
+        decliners: dec,
+        unchanged: unch,
+      },
+      update: {
+        totalFundCount: all.length,
+        totalPortfolioSize: all.reduce((s, f) => s + f.portfolioSize, 0),
+        totalInvestorCount: all.reduce((s, f) => s + f.investorCount, 0),
+        avgDailyReturn: avg,
+        advancers: adv,
+        decliners: dec,
+        unchanged: unch,
+      },
+    });
+  });
 }
 
 async function ensureFundTypes(fundTypeCode: number): Promise<string> {
@@ -99,9 +379,12 @@ export async function runTefasSync(options?: {
   fundTypeCode?: number;
   /** true: kategori/logo pass atlanır (runFullTefasSync son turda bir kez çalıştırır). */
   skipMetadata?: boolean;
+  /** true: market/snapshot/cache rebuild atlanır (full sync sonunda bir kez çalıştırılır). */
+  skipDerivedRebuilds?: boolean;
 }): Promise<TefasSyncResult> {
   const fundTypeCode = options?.fundTypeCode ?? 0;
   const skipMetadata = options?.skipMetadata ?? false;
+  const skipDerivedRebuilds = options?.skipDerivedRebuilds ?? false;
   const started = Date.now();
   const root = projectRoot();
   const script = path.join(root, "scripts", "tefas_export.py");
@@ -179,8 +462,8 @@ export async function runTefasSync(options?: {
 
   const typeId = await ensureFundTypes(payload.fundTypeCode ?? fundTypeCode);
   const now = new Date();
-  const dayStart = new Date(now);
-  dayStart.setHours(0, 0, 0, 0);
+  const parsedSession = "date" in payload && payload.date ? parseTefasSessionDate(payload.date) : null;
+  const sessionDayStart = startOfUtcDay(parsedSession ?? now);
 
   let created = 0;
   let updatedRows = 0;
@@ -195,18 +478,27 @@ export async function runTefasSync(options?: {
       for (const r of slice) {
         const existing = await tx.fund.findUnique({
           where: { code: r.code },
-          select: { id: true, lastPrice: true },
+          select: { id: true, lastPrice: true, previousPrice: true, dailyReturn: true },
         });
         const dbPreviousClose = existing?.lastPrice ?? 0;
 
         let historyPreviousPrice = 0;
+        let sameSessionPrice = 0;
         if (existing?.id) {
-          const h = await tx.fundPriceHistory.findFirst({
-            where: { fundId: existing.id, date: { lt: dayStart } },
+          const recentHistory = await tx.fundPriceHistory.findMany({
+            where: {
+              fundId: existing.id,
+              date: { gte: new Date(sessionDayStart.getTime() - 7 * DAY_MS) },
+            },
             orderBy: { date: "desc" },
-            select: { price: true },
+            take: 8,
+            select: { id: true, date: true, price: true },
           });
-          historyPreviousPrice = h && h.price > 0 ? h.price : 0;
+          const sessions = getDistinctHistorySessions(recentHistory);
+          sameSessionPrice =
+            sessions.find((session) => sameUtcDay(session.sessionDate, sessionDayStart))?.price ?? 0;
+          historyPreviousPrice =
+            sessions.find((session) => session.sessionDate.getTime() < sessionDayStart.getTime())?.price ?? 0;
         }
 
         const { dailyReturn, previousPrice } = computeFundDailyMetrics({
@@ -215,6 +507,9 @@ export async function runTefasSync(options?: {
           rowPreviousPrice: r.previousPrice,
           dbPreviousClose,
           historyPreviousPrice,
+          existingPreviousPrice: existing?.previousPrice ?? 0,
+          existingDailyReturn: existing?.dailyReturn ?? 0,
+          sameSessionPrice,
         });
 
         const fund = await tx.fund.upsert({
@@ -249,10 +544,10 @@ export async function runTefasSync(options?: {
         else created += 1;
 
         await tx.fundPriceHistory.upsert({
-          where: { fundId_date: { fundId: fund.id, date: dayStart } },
+          where: { fundId_date: { fundId: fund.id, date: sessionDayStart } },
           create: {
             fundId: fund.id,
-            date: dayStart,
+            date: sessionDayStart,
             price: r.lastPrice,
             dailyReturn,
             portfolioSize: r.portfolioSize,
@@ -269,40 +564,21 @@ export async function runTefasSync(options?: {
     }, txOpts);
   }
 
-  await prisma.$transaction(async (tx) => {
-    const all = await tx.fund.findMany({
-      where: { isActive: true },
-      select: { dailyReturn: true, portfolioSize: true, investorCount: true },
+  if (!skipDerivedRebuilds) {
+    await recomputeFundReturnsFromHistory({ targetSessionDate: sessionDayStart });
+    await rebuildMarketSnapshot(sessionDayStart);
+    await rebuildFundDailySnapshots(sessionDayStart);
+    await refreshFundHistorySyncState({
+      phase: "daily_sync",
+      sessionDate: sessionDayStart.toISOString(),
     });
-    const adv = all.filter((f) => f.dailyReturn > 0).length;
-    const dec = all.filter((f) => f.dailyReturn < 0).length;
-    const unch = Math.max(0, all.length - adv - dec);
-    const rets = all.map((f) => f.dailyReturn).filter((x) => x !== 0);
-    const avg = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
-
-    await tx.marketSnapshot.upsert({
-      where: { date: dayStart },
-      create: {
-        date: dayStart,
-        totalFundCount: all.length,
-        totalPortfolioSize: all.reduce((s, f) => s + f.portfolioSize, 0),
-        totalInvestorCount: all.reduce((s, f) => s + f.investorCount, 0),
-        avgDailyReturn: avg,
-        advancers: adv,
-        decliners: dec,
-        unchanged: unch,
-      },
-      update: {
-        totalFundCount: all.length,
-        totalPortfolioSize: all.reduce((s, f) => s + f.portfolioSize, 0),
-        totalInvestorCount: all.reduce((s, f) => s + f.investorCount, 0),
-        avgDailyReturn: avg,
-        advancers: adv,
-        decliners: dec,
-        unchanged: unch,
-      },
-    });
-  }, txOpts);
+    try {
+      const warm = await warmAllScoresApiCaches();
+      console.log("[tefas-sync] scores API cache warmed:", warm);
+    } catch (e) {
+      console.error("[tefas-sync] scores API cache warm failed:", e);
+    }
+  }
 
   let metadataNote = "";
   if (!skipMetadata) {
@@ -338,7 +614,7 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
   let totalRows = 0;
   let lastError: string | undefined;
   for (const fundTypeCode of types) {
-    const r = await runTefasSync({ fundTypeCode, skipMetadata: true });
+    const r = await runTefasSync({ fundTypeCode, skipMetadata: true, skipDerivedRebuilds: true });
     totalRows += r.updated;
     if (!r.ok && !r.skipped) {
       return { ok: false, skipped: false, updated: totalRows, message: r.message, types };
@@ -354,6 +630,29 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
     console.log("[tefas-sync] full sync metadata:", meta);
   } catch (e) {
     console.error("[tefas-sync] full sync metadata:", e);
+  }
+
+  try {
+      const latestSession = await prisma.fundPriceHistory.findFirst({
+      orderBy: { date: "desc" },
+      select: { date: true },
+    });
+    if (latestSession?.date) {
+      const snapshotDate = startOfUtcDay(latestSession.date);
+      await recomputeFundReturnsFromHistory({ targetSessionDate: snapshotDate });
+      await rebuildMarketSnapshot(snapshotDate);
+      const snapshot = await rebuildFundDailySnapshots(snapshotDate);
+      console.log("[tefas-sync] daily snapshot rebuilt:", snapshot);
+    }
+  } catch (e) {
+    console.error("[tefas-sync] daily snapshot rebuild failed:", e);
+  }
+
+  try {
+    const warm = await warmAllScoresApiCaches();
+    console.log("[tefas-sync] scores API cache warmed:", warm);
+  } catch (e) {
+    console.error("[tefas-sync] scores API cache warm failed:", e);
   }
 
   return { ok: true, skipped: false, updated: totalRows, types };

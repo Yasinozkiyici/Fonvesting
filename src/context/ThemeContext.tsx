@@ -26,15 +26,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (stored && (stored === "light" || stored === "dark")) {
       setThemeState(stored);
       document.documentElement.setAttribute("data-theme", stored);
+      document.documentElement.style.colorScheme = stored === "dark" ? "dark" : "light";
     } else {
       setThemeState("light");
       document.documentElement.setAttribute("data-theme", "light");
+      document.documentElement.style.colorScheme = "light";
     }
   }, []);
 
   useEffect(() => {
     if (mounted) {
       document.documentElement.setAttribute("data-theme", theme);
+      document.documentElement.style.colorScheme = theme === "dark" ? "dark" : "light";
       localStorage.setItem("theme", theme);
     }
   }, [theme, mounted]);

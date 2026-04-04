@@ -22,20 +22,29 @@ const MODES: { key: RankingMode; label: string }[] = [
 export function RankingModeToggle({ mode, onChange }: RankingToggleProps) {
   return (
     <div
-      className="inline-flex rounded-lg p-0.5 gap-0.5"
-      style={{ background: "var(--bg-muted)" }}
+      role="tablist"
+      aria-label="Sıralama modu"
+      className="ranking-mode-toggle inline-flex max-w-full flex-wrap rounded-[var(--ds-radius-control)] p-px"
+      style={{
+        border: "1px solid var(--ranking-toggle-track-border)",
+        background: "var(--ranking-toggle-track)",
+        gap: 0,
+      }}
     >
       {MODES.map((m) => {
         const isActive = mode === m.key;
         return (
           <button
             key={m.key}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
             onClick={() => onChange(m.key)}
-            className="relative px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+            className="relative min-h-[1.6875rem] rounded-[calc(var(--ds-radius-control)-1px)] px-2 py-px text-[10px] font-medium tracking-[-0.02em] transition-[color,background-color] duration-200 ease-out sm:min-h-[1.8125rem] sm:px-2.5 sm:text-[11px] sm:tracking-[-0.019em]"
             style={{
-              background: isActive ? "var(--bg-surface)" : "transparent",
-              color: isActive ? "var(--accent)" : "var(--text-tertiary)",
-              boxShadow: isActive ? "var(--shadow-sm)" : "none",
+              background: isActive ? "var(--ranking-toggle-active-bg)" : "transparent",
+              color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
+              boxShadow: "none",
             }}
           >
             {m.label}
@@ -57,7 +66,7 @@ interface ScoreBadgeProps {
 export function ScoreBadge({ score, size = "sm" }: ScoreBadgeProps) {
   const getScoreStyle = (s: number) => {
     if (s >= 70) return { bg: "rgba(26, 157, 92, 0.1)", color: "#1a9d5c", border: "rgba(26, 157, 92, 0.15)" };
-    if (s >= 50) return { bg: "rgba(99, 102, 241, 0.08)", color: "#6366f1", border: "rgba(99, 102, 241, 0.12)" };
+    if (s >= 50) return { bg: "rgba(37, 112, 200, 0.1)", color: "#2568c4", border: "rgba(37, 112, 200, 0.16)" };
     if (s >= 30) return { bg: "rgba(245, 158, 11, 0.1)", color: "#d97706", border: "rgba(245, 158, 11, 0.15)" };
     return { bg: "rgba(107, 114, 128, 0.08)", color: "#6b7280", border: "rgba(107, 114, 128, 0.12)" };
   };
@@ -91,7 +100,7 @@ export function RiskBadge({ level }: RiskBadgeProps) {
 
   return (
     <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap"
+      className="inline-flex items-center rounded-[5px] px-2 py-[3px] text-[9.5px] font-medium whitespace-nowrap tracking-[-0.015em]"
       style={{
         background: info.bg,
         color: info.color,
@@ -110,9 +119,11 @@ interface SparklineProps {
   data: number[];
   width?: number;
   height?: number;
+  /** table: ince çizgi, gömülü görünüm; default: klasik mini grafik */
+  variant?: "default" | "table";
 }
 
-export function Sparkline({ data, width = 48, height = 18 }: SparklineProps) {
+export function Sparkline({ data, width = 48, height = 18, variant = "default" }: SparklineProps) {
   if (!data || data.length < 2) {
     return (
       <div
@@ -124,31 +135,59 @@ export function Sparkline({ data, width = 48, height = 18 }: SparklineProps) {
     );
   }
 
+  const padY = variant === "table" ? 3.25 : 2;
+  const innerH = height - padY * 2;
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
+  const verticalPad = variant === "table" ? 1.1 : 0;
 
   const points = data.map((value, i) => {
     const x = (i / (data.length - 1)) * width;
-    const y = height - 2 - ((value - min) / range) * (height - 4);
+    const y = padY + innerH - verticalPad - ((value - min) / range) * (innerH - verticalPad * 2);
     return `${x},${y}`;
   }).join(" ");
 
   const lastValue = data.at(-1) ?? min;
   const firstValue = data[0] ?? min;
   const isUp = lastValue >= firstValue;
-  const color = isUp ? "var(--success)" : "var(--danger)";
+  const color =
+    variant === "table"
+      ? "var(--accent-blue)"
+      : isUp
+        ? "var(--sparkline-stroke-up)"
+        : "var(--sparkline-stroke-down)";
+  const fill =
+    variant === "default" && isUp
+      ? "var(--sparkline-fill-up)"
+      : variant === "default" && !isUp
+        ? "var(--sparkline-fill-down)"
+        : "none";
+  const areaPoints = `0,${height} ${points} ${width},${height}`;
+  const strokeW = variant === "table" ? 0.55 : 1.2;
+  const showFill = variant === "default";
+  const svgClass = variant === "table" ? "sparkline-svg sparkline-svg--table block overflow-visible" : "sparkline-svg block overflow-visible";
 
   return (
-    <svg width={width} height={height} className="overflow-visible">
+    <svg
+      width={width}
+      height={height}
+      className={svgClass}
+      shapeRendering="geometricPrecision"
+      aria-hidden
+    >
+      {showFill ? (
+        <polygon points={areaPoints} fill={fill} stroke="none" opacity={0.9} />
+      ) : null}
       <polyline
         points={points}
         fill="none"
         stroke={color}
-        strokeWidth="1.5"
+        strokeWidth={strokeW}
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity="0.8"
+        opacity={variant === "table" ? 1 : 0.92}
+        vectorEffect="non-scaling-stroke"
       />
     </svg>
   );

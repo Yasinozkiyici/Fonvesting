@@ -1,11 +1,45 @@
 /**
- * İki farklı günün TEFAS verilerini karşılaştırarak dailyReturn hesaplar
- * Ayrıca döviz kurlarını da günceller
+ * Günlük getiri onarımı:
+ * 1) Mümkünse DB history'deki son iki gerçek oturumdan yeniden hesaplar.
+ * 2) History yetersizse TEFAS'tan önceki + güncel iş gününü çekip backfill yapar.
+ * 3) Piyasa özetini tekrar üretir.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { config } from "dotenv";
+import { prisma } from "../src/lib/prisma";
+import { rebuildMarketSnapshot, recomputeDailyReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
+import { parseTefasSessionDate, startOfUtcDay } from "../src/lib/trading-calendar-tr";
+
+config({ path: path.join(process.cwd(), ".env"), quiet: true });
+config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+type ExportRow = {
+  code: string;
+  name: string;
+  lastPrice: number;
+  portfolioSize: number;
+  investorCount: number;
+};
+
+type ExportPayload =
+  | { ok: false; error: string }
+  | { ok: true; empty: true; date?: string; fundTypeCode?: number }
+  | { ok: true; empty?: false; date: string; fundTypeCode: number; rows: ExportRow[] };
+
+function resolvePythonBin(root: string): string {
+  const fromEnv = process.env.TEFAS_PYTHON?.trim();
+  if (fromEnv) return fromEnv;
+  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
+  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
+  if (fs.existsSync(venvUnix)) return venvUnix;
+  if (fs.existsSync(venvWin)) return venvWin;
+  return process.platform === "win32" ? "python" : "python3";
+}
 
 async function fetchExchangeRates(): Promise<{ usdTry: number; eurTry: number } | null> {
   try {
@@ -21,28 +55,42 @@ async function fetchExchangeRates(): Promise<{ usdTry: number; eurTry: number } 
   }
 }
 
-const prisma = new PrismaClient();
-
-function resolvePythonBin(root: string): string {
-  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
-  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  if (fs.existsSync(venvWin)) return venvWin;
-  return process.platform === "win32" ? "python" : "python3";
+function normalizeHistorySessionDate(date: Date): Date {
+  return startOfUtcDay(new Date(date.getTime() + TURKEY_UTC_OFFSET_MS));
 }
 
-type ExportRow = {
-  code: string;
-  name: string;
-  lastPrice: number;
-  portfolioSize: number;
-  investorCount: number;
-};
+function formatDate(d: Date): string {
+  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
+}
 
-type ExportPayload =
-  | { ok: false; error: string }
-  | { ok: true; empty: true }
-  | { ok: true; empty?: false; rows: ExportRow[] };
+function getPreviousWorkday(d: Date): Date {
+  const prev = new Date(d);
+  prev.setDate(prev.getDate() - 1);
+  while (prev.getDay() === 0 || prev.getDay() === 6) {
+    prev.setDate(prev.getDate() - 1);
+  }
+  return prev;
+}
+
+async function getLatestDistinctHistorySessions(): Promise<Date[]> {
+  const rawDates = await prisma.fundPriceHistory.groupBy({
+    by: ["date"],
+    _count: { _all: true },
+    orderBy: { date: "desc" },
+    take: 20,
+  });
+
+  const seen = new Set<number>();
+  const distinct: Date[] = [];
+  for (const row of rawDates) {
+    const normalized = normalizeHistorySessionDate(row.date);
+    const key = normalized.getTime();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(normalized);
+  }
+  return distinct.sort((a, b) => b.getTime() - a.getTime());
+}
 
 function fetchTefasData(date: string, fundType: number): Map<string, ExportRow> | null {
   const root = process.cwd();
@@ -54,7 +102,8 @@ function fetchTefasData(date: string, fundType: number): Map<string, ExportRow> 
       cwd: root,
       encoding: "utf-8",
       maxBuffer: 64 * 1024 * 1024,
-      timeout: 120000,
+      timeout: 180000,
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
     });
     const payload = JSON.parse(out.trim()) as ExportPayload;
     if (!payload.ok || payload.empty || !("rows" in payload)) return null;
@@ -65,160 +114,178 @@ function fetchTefasData(date: string, fundType: number): Map<string, ExportRow> 
     }
     return map;
   } catch (e) {
-    console.error("TEFAS fetch error:", e);
+    console.error(`[daily-return] TEFAS fetch error (${date}, tür ${fundType}):`, e);
     return null;
   }
 }
 
-/** Yatırım (0) + BES (1) tek haritada birleştirilir */
 function fetchTefasDataMerged(date: string): Map<string, ExportRow> | null {
   const merged = new Map<string, ExportRow>();
   let any = false;
   for (const fundType of [0, 1] as const) {
     const part = fetchTefasData(date, fundType);
-    if (part?.size) {
-      any = true;
-      for (const [code, row] of part) merged.set(code, row);
+    if (!part?.size) continue;
+    any = true;
+    for (const [code, row] of part) {
+      merged.set(code, row);
     }
   }
   return any ? merged : null;
 }
 
-function formatDate(d: Date): string {
-  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${d.getFullYear()}`;
-}
-
-function getPreviousWorkday(d: Date): Date {
-  const prev = new Date(d);
-  prev.setDate(prev.getDate() - 1);
-  // Skip weekends
-  while (prev.getDay() === 0 || prev.getDay() === 6) {
-    prev.setDate(prev.getDate() - 1);
-  }
-  return prev;
-}
-
-async function main() {
+async function backfillFromTefasCompare(): Promise<{ updated: number; sessionDate: Date | null }> {
   const today = new Date();
-  // Get last two workdays
   let currentDay = today;
-  // If today is weekend, go back to Friday
   while (currentDay.getDay() === 0 || currentDay.getDay() === 6) {
-    currentDay.setDate(currentDay.getDate() - 1);
+    currentDay = new Date(currentDay.getTime() - DAY_MS);
   }
   const previousDay = getPreviousWorkday(currentDay);
 
   const currentDateStr = formatDate(currentDay);
   const previousDateStr = formatDate(previousDay);
 
-  console.log(`Fetching TEFAS data for ${previousDateStr} (previous) and ${currentDateStr} (current)...`);
+  console.log(`[daily-return] TEFAS karşılaştırma: ${previousDateStr} -> ${currentDateStr}`);
 
-  console.log(`\nFetching ${previousDateStr} (tür 0+1)...`);
   const prevData = fetchTefasDataMerged(previousDateStr);
-  if (!prevData) {
-    console.error("Could not fetch previous day data");
-    process.exit(1);
-  }
-  console.log(`Got ${prevData.size} funds`);
-
-  console.log(`\nFetching ${currentDateStr} (tür 0+1)...`);
   const currData = fetchTefasDataMerged(currentDateStr);
-  if (!currData) {
-    console.error("Could not fetch current day data");
-    process.exit(1);
+  if (!prevData || !currData) {
+    return { updated: 0, sessionDate: null };
   }
-  console.log(`Got ${currData.size} funds`);
 
-  console.log("\nCalculating daily returns and updating database...");
+  const currentSessionDate = parseTefasSessionDate(currentDateStr);
+  const previousSessionDate = parseTefasSessionDate(previousDateStr);
+  if (!currentSessionDate || !previousSessionDate) {
+    return { updated: 0, sessionDate: null };
+  }
+
+  const funds = await prisma.fund.findMany({
+    where: { isActive: true, code: { in: [...currData.keys()] } },
+    select: { id: true, code: true },
+  });
+  const fundByCode = new Map(funds.map((fund) => [fund.code, fund]));
 
   let updated = 0;
-  let skipped = 0;
-
   for (const [code, curr] of currData) {
     const prev = prevData.get(code);
-    if (!prev || prev.lastPrice <= 0 || curr.lastPrice <= 0) {
-      skipped++;
-      continue;
-    }
+    const existing = fundByCode.get(code);
+    if (!prev || !existing || prev.lastPrice <= 0 || curr.lastPrice <= 0) continue;
 
-    const dailyReturn = ((curr.lastPrice - prev.lastPrice) / prev.lastPrice) * 100;
+    const dailyReturn = Number((((curr.lastPrice - prev.lastPrice) / prev.lastPrice) * 100).toFixed(4));
+    if (!Number.isFinite(dailyReturn) || Math.abs(dailyReturn) > 50) continue;
 
-    // Skip unreasonable values
-    if (!Number.isFinite(dailyReturn) || Math.abs(dailyReturn) > 50) {
-      skipped++;
-      continue;
-    }
+    await prisma.$transaction([
+      prisma.fund.update({
+        where: { id: existing.id },
+        data: {
+          lastPrice: curr.lastPrice,
+          previousPrice: prev.lastPrice,
+          dailyReturn,
+          portfolioSize: curr.portfolioSize,
+          investorCount: curr.investorCount,
+          lastUpdatedAt: new Date(),
+        },
+      }),
+      prisma.fundPriceHistory.upsert({
+        where: { fundId_date: { fundId: existing.id, date: previousSessionDate } },
+        create: {
+          fundId: existing.id,
+          date: previousSessionDate,
+          price: prev.lastPrice,
+          dailyReturn: 0,
+          portfolioSize: prev.portfolioSize,
+          investorCount: prev.investorCount,
+        },
+        update: {
+          price: prev.lastPrice,
+          portfolioSize: prev.portfolioSize,
+          investorCount: prev.investorCount,
+        },
+      }),
+      prisma.fundPriceHistory.upsert({
+        where: { fundId_date: { fundId: existing.id, date: currentSessionDate } },
+        create: {
+          fundId: existing.id,
+          date: currentSessionDate,
+          price: curr.lastPrice,
+          dailyReturn,
+          portfolioSize: curr.portfolioSize,
+          investorCount: curr.investorCount,
+        },
+        update: {
+          price: curr.lastPrice,
+          dailyReturn,
+          portfolioSize: curr.portfolioSize,
+          investorCount: curr.investorCount,
+        },
+      }),
+    ]);
 
-    await prisma.fund.updateMany({
-      where: { code },
-      data: {
-        lastPrice: curr.lastPrice,
-        previousPrice: prev.lastPrice,
-        dailyReturn: Number(dailyReturn.toFixed(4)),
-        portfolioSize: curr.portfolioSize,
-        investorCount: curr.investorCount,
-      },
-    });
-    updated++;
+    updated += 1;
   }
 
-  // Fetch exchange rates
-  console.log("\nFetching exchange rates...");
+  return { updated, sessionDate: currentSessionDate };
+}
+
+async function main() {
+  const sessions = await getLatestDistinctHistorySessions();
+  let updatedFromHistory = 0;
+  let targetSessionDate = sessions[0] ?? startOfUtcDay(new Date());
+
+  if (sessions.length >= 2) {
+    const result = await recomputeDailyReturnsFromHistory({ targetSessionDate });
+    updatedFromHistory = result.updatedFunds;
+    console.log(`[daily-return] History recalculated: ${result.updatedFunds} funds, ${result.updatedHistoryRows} rows`);
+  } else {
+    console.log("[daily-return] Yeterli history yok, TEFAS compare fallback denenecek.");
+  }
+
+  let updatedFromCompare = 0;
+  if (updatedFromHistory === 0) {
+    const fallback = await backfillFromTefasCompare();
+    updatedFromCompare = fallback.updated;
+    if (fallback.sessionDate) targetSessionDate = fallback.sessionDate;
+    console.log(`[daily-return] TEFAS compare backfill: ${updatedFromCompare} funds`);
+  }
+
+  await rebuildMarketSnapshot(targetSessionDate);
+
   const rates = await fetchExchangeRates();
   if (rates) {
-    console.log(`USD/TRY: ${rates.usdTry.toFixed(4)}, EUR/TRY: ${rates.eurTry.toFixed(4)}`);
+    await prisma.marketSnapshot.updateMany({
+      where: { date: targetSessionDate },
+      data: {
+        usdTry: rates.usdTry,
+        eurTry: rates.eurTry,
+      },
+    });
   }
 
-  // Update market snapshot
-  const funds = await prisma.fund.findMany({
-    where: { isActive: true },
-    select: { dailyReturn: true, portfolioSize: true, investorCount: true },
-  });
+  const [advancers, decliners, nonZero] = await Promise.all([
+    prisma.fund.count({ where: { isActive: true, dailyReturn: { gt: 0 } } }),
+    prisma.fund.count({ where: { isActive: true, dailyReturn: { lt: 0 } } }),
+    prisma.fund.count({ where: { isActive: true, dailyReturn: { not: 0 } } }),
+  ]);
 
-  const advancers = funds.filter((f) => f.dailyReturn > 0).length;
-  const decliners = funds.filter((f) => f.dailyReturn < 0).length;
-  const unchanged = funds.length - advancers - decliners;
-  const rets = funds.map((f) => f.dailyReturn).filter((x) => x !== 0);
-  const avgReturn = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
-
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
-
-  await prisma.marketSnapshot.upsert({
-    where: { date: dayStart },
-    create: {
-      date: dayStart,
-      totalFundCount: funds.length,
-      totalPortfolioSize: funds.reduce((s, f) => s + f.portfolioSize, 0),
-      totalInvestorCount: funds.reduce((s, f) => s + f.investorCount, 0),
-      avgDailyReturn: avgReturn,
-      advancers,
-      decliners,
-      unchanged,
-      usdTry: rates?.usdTry ?? null,
-      eurTry: rates?.eurTry ?? null,
-    },
-    update: {
-      totalFundCount: funds.length,
-      totalPortfolioSize: funds.reduce((s, f) => s + f.portfolioSize, 0),
-      totalInvestorCount: funds.reduce((s, f) => s + f.investorCount, 0),
-      avgDailyReturn: avgReturn,
-      advancers,
-      decliners,
-      unchanged,
-      usdTry: rates?.usdTry ?? undefined,
-      eurTry: rates?.eurTry ?? undefined,
-    },
-  });
-
-  console.log(`\nDone! Updated ${updated} funds, skipped ${skipped}`);
-  console.log(`Market: ${advancers} advancers, ${decliners} decliners, ${unchanged} unchanged`);
-  console.log(`Average daily return: ${avgReturn.toFixed(4)}%`);
+  console.log(
+    JSON.stringify(
+      {
+        sessionDate: targetSessionDate.toISOString(),
+        updatedFromHistory,
+        updatedFromCompare,
+        advancers,
+        decliners,
+        nonZero,
+      },
+      null,
+      2
+    )
+  );
 
   await prisma.$disconnect();
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error(e);
+  await prisma.$disconnect().catch(() => {});
   process.exit(1);
 });

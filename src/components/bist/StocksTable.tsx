@@ -85,9 +85,9 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
     Number(Boolean(enableSectorFilter && selectedSector));
 
   useEffect(() => {
-    const sectorParam = searchParams.get("sector") ?? "";
-    const indexParam = searchParams.get("index") ?? "";
-    const searchParam = searchParams.get("q") ?? "";
+    const sectorParam = searchParams?.get("sector") ?? "";
+    const indexParam = searchParams?.get("index") ?? "";
+    const searchParam = searchParams?.get("q") ?? "";
 
     setSelectedSector(enableSectorFilter ? sectorParam : "");
     setSelectedIndex(indexParam);

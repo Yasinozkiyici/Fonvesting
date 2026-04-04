@@ -23,7 +23,7 @@ export default function SectorsPage() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="relative isolate flex min-h-screen flex-col">
       <div className="gradient-mesh">
         <div className="mesh-layer-1" />
         <div className="mesh-layer-2" />
@@ -31,50 +31,52 @@ export default function SectorsPage() {
         <div className="noise" />
       </div>
 
-      <Header />
+      <div className="relative z-10 flex min-h-screen flex-col">
+        <Header />
 
-      <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
-            Kategoriler
-          </h1>
-          <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-            Bir kategori seçin; tablo otomatik filtrelenecek. Kategoriler TEFAS tiplerine göre eşlenir.
-          </p>
-        </div>
+        <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
+          <div className="mb-6">
+            <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
+              Kategoriler
+            </h1>
+            <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
+              Bir kategori seçin; tablo otomatik filtrelenecek. Kategoriler TEFAS tiplerine göre eşlenir.
+            </p>
+          </div>
 
-        <div className="mb-6 flex flex-wrap gap-2">
-          <Link
-            href="/sectors"
-            className="rounded-full border px-3 py-1.5 text-sm"
-            style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-          >
-            Tüm kategoriler
-          </Link>
-          {categories.map((c) => (
+          <div className="mb-6 flex flex-wrap gap-2">
             <Link
-              key={c.code}
-              href={`/sectors?sector=${encodeURIComponent(c.code)}`}
+              href="/sectors"
               className="rounded-full border px-3 py-1.5 text-sm"
               style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
             >
-              {c.name} ({c.stockCount})
+              Tüm kategoriler
             </Link>
-          ))}
-        </div>
+            {categories.map((c) => (
+              <Link
+                key={c.code}
+                href={`/sectors?sector=${encodeURIComponent(c.code)}`}
+                className="rounded-full border px-3 py-1.5 text-sm"
+                style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              >
+                {c.name} ({c.stockCount})
+              </Link>
+            ))}
+          </div>
 
-        <Suspense
-          fallback={
-            <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-              Tablo yükleniyor...
-            </div>
-          }
-        >
-          <FundsTable />
-        </Suspense>
-      </main>
+          <Suspense
+            fallback={
+              <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+                Tablo yükleniyor...
+              </div>
+            }
+          >
+            <FundsTable />
+          </Suspense>
+        </main>
 
-      <Footer />
+        <Footer />
+      </div>
     </div>
   );
 }

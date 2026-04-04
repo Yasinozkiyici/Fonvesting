@@ -58,7 +58,6 @@ export async function GET(req: NextRequest) {
           investorCount: true,
           shareCount: true,
           lastPrice: true,
-          previousPrice: true,
           dailyReturn: true,
           weeklyReturn: true,
           monthlyReturn: true,

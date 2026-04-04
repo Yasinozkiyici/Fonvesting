@@ -1,93 +1,139 @@
 "use client";
 
-import { ExternalLink, Github, Twitter, Linkedin } from "lucide-react";
+import Link from "next/link";
+import { ExternalLink, Mail, ShieldCheck } from "lucide-react";
 import { SiteLogo } from "@/components/SiteLogo";
+
+const PRODUCT_LINKS = [
+  { href: "/", label: "Piyasalar" },
+  { href: "/stocks", label: "Fonlar" },
+  { href: "/sectors", label: "Kategoriler" },
+  { href: "/indices", label: "Fon Türleri" },
+];
+
+const RESOURCE_LINKS = [
+  { href: "/diagnostics", label: "Metodoloji" },
+  { href: "/status", label: "Veri Durumu" },
+  { href: "/diagnostics", label: "SSS" },
+  { href: "https://www.fundturkiye.gov.tr", label: "Veri Kaynağı", external: true },
+];
+
+const COMPANY_LINKS = [
+  { href: "/status", label: "Hakkında" },
+  { href: "mailto:hello@yatirim.io", label: "İletişim", external: true },
+  { href: "/status", label: "Gizlilik" },
+  { href: "/status", label: "Şartlar" },
+];
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
 
-  const resources = [
-    { href: "https://www.fundturkiye.gov.tr", label: "TEFAS" },
-    { href: "https://www.fonbul.fonapi.com", label: "Fon Bilgileri" },
-    { href: "https://www.spk.gov.tr", label: "SPK" },
-    { href: "https://www.kap.org.tr", label: "KAP" },
-  ];
-
   return (
     <footer
-      className="mt-auto border-t transition-colors"
-      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      className="mt-12 border-t"
+      style={{
+        borderColor: "var(--border-default)",
+        background: "var(--bg-muted)",
+      }}
     >
-      <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-8 py-10 md:grid-cols-4">
-          <div className="md:col-span-2">
-            <div className="mb-4 flex items-center gap-2">
+      <div className="mx-auto max-w-[1320px] px-4 py-10 sm:px-6 sm:py-12 lg:px-8">
+        <div className="grid gap-10 lg:grid-cols-[1.35fr_1fr_1fr_1fr]">
+          <div className="max-w-md">
+            <div className="flex items-center gap-3">
               <SiteLogo size="footer" />
               <span
-                className="rounded-md px-2 py-0.5 text-2xs font-semibold uppercase"
-                style={{ background: "var(--accent-bg)", color: "var(--accent)" }}
+                className="inline-flex rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+                style={{ borderColor: "var(--border-default)", background: "var(--surface-glass)", color: "var(--text-tertiary)" }}
               >
-                TEFAS
+                Araştırma
               </span>
             </div>
-            <p className="mb-5 max-w-sm text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Yatırım fonu fiyatları, günlük getiri ve portföy metrikleri. Veriler senkron script ile güncellenir; yatırım
-              tavsiyesi değildir.
+            <p className="mt-3.5 text-[13px] leading-[1.65]" style={{ color: "var(--text-secondary)" }}>
+              TEFAS fon verileri üzerinde sıralama, risk ve performans görünümleri. Yatırım kararı vermez; bilgilendirme içindir.
             </p>
-            <div className="flex items-center gap-2">
-              {[Twitter, Linkedin, Github].map((Icon, i) => (
+
+            <div
+              className="mt-5 rounded-xl border px-3.5 py-3"
+              style={{
+                borderColor: "var(--border-default)",
+                background: "var(--surface-glass)",
+              }}
+            >
+              <div className="flex items-start gap-2.5">
                 <div
-                  key={i}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg"
-                  style={{
-                    background: "var(--bg-hover)",
-                    border: "1px solid var(--border-subtle)",
-                    color: "var(--text-muted)",
-                  }}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border"
+                  style={{ borderColor: "var(--border-subtle)", background: "var(--surface-glass-strong)", color: "var(--text-tertiary)" }}
                 >
-                  <Icon className="h-4 w-4" />
+                  <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} />
                 </div>
-              ))}
+                <div>
+                  <p className="text-xs font-semibold leading-snug" style={{ color: "var(--text-primary)" }}>
+                    Yatırım tavsiyesi değildir.
+                  </p>
+                  <p className="mt-1 text-[11px] leading-5" style={{ color: "var(--text-secondary)" }}>
+                    Kararlarınızı risk profilinize ve yetkili danışmanlığa dayandırın.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div>
-            <h4 className="text-caption mb-3">Kaynaklar</h4>
-            <ul className="space-y-2.5">
-              {resources.map((link) => (
-                <li key={link.href}>
-                  <a
-                    href={link.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group inline-flex items-center gap-1.5 text-sm transition-colors"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    {link.label}
-                    <ExternalLink className="h-3 w-3 opacity-60 transition group-hover:opacity-100" />
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="text-caption mb-3">Yasal uyarı</h4>
-            <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Gösterilen veriler bilgilendirme amaçlıdır. Fon seçimi ve riskler için yönetim şirketi veya lisanslı danışmana
-              başvurun.
-            </p>
-          </div>
+          <FooterLinkGroup title="Ürün" links={PRODUCT_LINKS} />
+          <FooterLinkGroup title="Kaynaklar" links={RESOURCE_LINKS} />
+          <FooterLinkGroup title="Şirket / İletişim" links={COMPANY_LINKS} />
         </div>
 
-        <div className="border-t py-4" style={{ borderColor: "var(--border-subtle)" }}>
-          <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              © {currentYear} Yatirim.io
-            </p>
+        <div
+          className="mt-10 flex flex-col gap-3 border-t pt-5 text-[13px] sm:flex-row sm:items-center sm:justify-between"
+          style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+        >
+          <p>© {currentYear} Yatirim.io</p>
+          <div className="inline-flex items-center gap-2" style={{ color: "var(--text-tertiary)" }}>
+            <Mail className="h-4 w-4" />
+            <a href="mailto:hello@yatirim.io" className="transition-colors hover:text-[var(--accent)]">
+              hello@yatirim.io
+            </a>
           </div>
         </div>
       </div>
     </footer>
+  );
+}
+
+function FooterLinkGroup({
+  title,
+  links,
+}: {
+  title: string;
+  links: Array<{ href: string; label: string; external?: boolean }>;
+}) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--text-muted)" }}>
+        {title}
+      </h3>
+      <ul className="mt-4 space-y-3">
+        {links.map((link) => (
+          <li key={`${title}-${link.label}`}>
+            {link.external ? (
+              <a
+                href={link.href}
+                target={link.href.startsWith("http") ? "_blank" : undefined}
+                rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                className="inline-flex items-center gap-1.5 text-sm font-medium transition-colors hover:text-[var(--accent)]"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {link.label}
+                {link.href.startsWith("http") ? <ExternalLink className="h-3.5 w-3.5 opacity-70" /> : null}
+              </a>
+            ) : (
+              <Link href={link.href} className="text-sm font-medium transition-colors hover:text-[var(--accent)]" style={{ color: "var(--text-secondary)" }}>
+                {link.label}
+              </Link>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

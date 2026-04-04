@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def job():
     env = {**os.environ, "FORCE_COLOR": "0"}
     r = subprocess.run(
-        ["npx", "tsx", "scripts/sync-tefas.ts"],
+        ["npx", "tsx", "scripts/sync-tefas.ts", "--all"],
         cwd=str(ROOT),
         env=env,
     )

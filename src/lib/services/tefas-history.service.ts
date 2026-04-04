@@ -1,0 +1,428 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
+
+const HISTORY_SYNC_KEY = "tefas_fund_history";
+const DEFAULT_CHUNK_DAYS = 14;
+const UPSERT_CHUNK = 500;
+
+type ExportRow = {
+  date?: string | null;
+  code: string;
+  name: string;
+  shortName?: string | null;
+  lastPrice: number;
+  previousPrice: number;
+  dailyReturn: number;
+  portfolioSize: number;
+  investorCount: number;
+  shareCount: number;
+};
+
+type ExportPayload =
+  | { ok: false; error: string }
+  | { ok: true; empty: true; date?: string; fromDate?: string | null; toDate?: string | null; fundTypeCode: number }
+  | { ok: true; empty?: false; date: string; fromDate?: string | null; toDate?: string | null; fundTypeCode: number; rows: ExportRow[] };
+
+export type FundHistorySyncResult = {
+  ok: boolean;
+  startDate: string;
+  endDate: string;
+  chunkDays: number;
+  chunks: number;
+  fetchedRows: number;
+  writtenRows: number;
+  touchedDates: number;
+};
+
+function resolvePythonBin(root: string): string {
+  const fromEnv = process.env.TEFAS_PYTHON?.trim();
+  if (fromEnv) return fromEnv;
+  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
+  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
+  if (fs.existsSync(venvUnix)) return venvUnix;
+  if (fs.existsSync(venvWin)) return venvWin;
+  return process.platform === "win32" ? "python" : "python3";
+}
+
+function projectRoot(): string {
+  return process.cwd();
+}
+
+function formatDate(d: Date): string {
+  return `${String(d.getUTCDate()).padStart(2, "0")}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.${d.getUTCFullYear()}`;
+}
+
+function parseInputDate(input: string): Date {
+  const trimmed = input.trim();
+  const ddmmyyyy = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/;
+  let date: Date | null = null;
+  const ddmmyyyyMatch = ddmmyyyy.exec(trimmed);
+  if (ddmmyyyyMatch) {
+    date = parseTefasSessionDate(trimmed);
+  } else {
+    const isoMatch = iso.exec(trimmed);
+    if (isoMatch) {
+      date = new Date(Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]), 0, 0, 0, 0));
+    }
+  }
+  if (!date || Number.isNaN(date.getTime())) {
+    throw new Error(`Geçersiz tarih: ${input}`);
+  }
+  return startOfUtcDay(date);
+}
+
+function businessDaysBetween(startDate: Date, endDate: Date): Date[] {
+  const out: Date[] = [];
+  const cursor = new Date(startDate);
+  while (cursor.getTime() <= endDate.getTime()) {
+    const day = cursor.getUTCDay();
+    if (day !== 0 && day !== 6) {
+      out.push(new Date(cursor));
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function chunkDates(dates: Date[], chunkDays: number): Array<{ start: Date; end: Date }> {
+  const chunks: Array<{ start: Date; end: Date }> = [];
+  for (let i = 0; i < dates.length; i += chunkDays) {
+    const slice = dates.slice(i, i + chunkDays);
+    if (slice.length === 0) continue;
+    chunks.push({
+      start: slice[0] as Date,
+      end: slice[slice.length - 1] as Date,
+    });
+  }
+  return chunks;
+}
+
+function toJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function normalizeSessionDate(raw: string | null | undefined, fallbackDate: Date): Date {
+  if (!raw?.trim()) return fallbackDate;
+  const parsed = parseTefasSessionDate(raw.trim());
+  return parsed ? startOfUtcDay(parsed) : fallbackDate;
+}
+
+function buildChunkCacheKey(chunk: { start: Date; end: Date }, fundTypeCode: number): string {
+  return `${formatDate(chunk.start)}:${formatDate(chunk.end)}:${fundTypeCode}`;
+}
+
+function fetchHistoryChunk(chunk: { start: Date; end: Date }, fundTypeCode: number): ExportPayload {
+  const root = projectRoot();
+  const script = path.join(root, "scripts", "tefas_export.py");
+  const py = resolvePythonBin(root);
+
+  const out = execFileSync(
+    py,
+    [
+      script,
+      "--fund-type",
+      String(fundTypeCode),
+      "--from-date",
+      formatDate(chunk.start),
+      "--to-date",
+      formatDate(chunk.end),
+    ],
+    {
+      cwd: root,
+      encoding: "utf-8",
+      maxBuffer: 128 * 1024 * 1024,
+      timeout: 900_000,
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    }
+  );
+
+  return JSON.parse(out.trim()) as ExportPayload;
+}
+
+function splitChunk(chunk: { start: Date; end: Date }): Array<{ start: Date; end: Date }> {
+  const dates = businessDaysBetween(chunk.start, chunk.end);
+  if (dates.length <= 1) return [chunk];
+  const mid = Math.floor(dates.length / 2);
+  return [
+    { start: dates[0] as Date, end: dates[Math.max(0, mid - 1)] as Date },
+    { start: dates[mid] as Date, end: dates[dates.length - 1] as Date },
+  ];
+}
+
+function fetchHistoryChunkWithFallback(chunk: { start: Date; end: Date }, fundTypeCode: number): ExportPayload[] {
+  try {
+    return [fetchHistoryChunk(chunk, fundTypeCode)];
+  } catch (error) {
+    const parts = splitChunk(chunk);
+    if (parts.length <= 1) throw error;
+    return parts.flatMap((part) => fetchHistoryChunkWithFallback(part, fundTypeCode));
+  }
+}
+
+type NormalizedHistoryRow = {
+  fundId: string;
+  date: Date;
+  price: number;
+  portfolioSize: number;
+  investorCount: number;
+};
+
+async function loadActiveFundMap(): Promise<Map<string, string>> {
+  const funds = await prisma.fund.findMany({
+    where: { isActive: true },
+    select: { id: true, code: true },
+  });
+  return new Map(funds.map((fund) => [fund.code, fund.id]));
+}
+
+function mergePayloadRows(
+  payloads: ExportPayload[],
+  fundIdByCode: Map<string, string>,
+  fallbackDate: Date
+): NormalizedHistoryRow[] {
+  const merged = new Map<string, NormalizedHistoryRow>();
+
+  for (const payload of payloads) {
+    if (!payload.ok || ("empty" in payload && payload.empty) || !("rows" in payload)) continue;
+
+    for (const row of payload.rows) {
+      const fundId = fundIdByCode.get(row.code);
+      if (!fundId || !Number.isFinite(row.lastPrice) || row.lastPrice <= 0) continue;
+
+      const sessionDate = normalizeSessionDate(row.date ?? payload.date, fallbackDate);
+      const key = `${fundId}:${sessionDate.toISOString()}`;
+      merged.set(key, {
+        fundId,
+        date: sessionDate,
+        price: row.lastPrice,
+        portfolioSize: row.portfolioSize || 0,
+        investorCount: row.investorCount || 0,
+      });
+    }
+  }
+
+  return [...merged.values()];
+}
+
+async function upsertHistoryRows(rows: NormalizedHistoryRow[]): Promise<number> {
+  let written = 0;
+
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+    const slice = rows.slice(i, i + UPSERT_CHUNK);
+    await prisma.$transaction(
+      slice.map((row) =>
+        prisma.fundPriceHistory.upsert({
+          where: {
+            fundId_date: {
+              fundId: row.fundId,
+              date: row.date,
+            },
+          },
+          update: {
+            price: row.price,
+            portfolioSize: row.portfolioSize,
+            investorCount: row.investorCount,
+          },
+          create: {
+            fundId: row.fundId,
+            date: row.date,
+            price: row.price,
+            portfolioSize: row.portfolioSize,
+            investorCount: row.investorCount,
+          },
+        })
+      )
+    );
+    written += slice.length;
+  }
+
+  return written;
+}
+
+export async function refreshFundHistorySyncState(details?: Record<string, unknown>): Promise<void> {
+  const [minDate, maxDate] = await Promise.all([
+    prisma.fundPriceHistory.findFirst({
+      orderBy: { date: "asc" },
+      select: { date: true },
+    }),
+    prisma.fundPriceHistory.findFirst({
+      orderBy: { date: "desc" },
+      select: { date: true },
+    }),
+  ]);
+
+  await prisma.historySyncState.upsert({
+    where: { key: HISTORY_SYNC_KEY },
+    create: {
+      key: HISTORY_SYNC_KEY,
+      status: "READY",
+      earliestHistoryDate: minDate?.date ?? null,
+      latestHistoryDate: maxDate?.date ?? null,
+      lastCompletedAt: new Date(),
+      details: toJson(details ?? {}),
+    },
+    update: {
+      status: "READY",
+      earliestHistoryDate: minDate?.date ?? null,
+      latestHistoryDate: maxDate?.date ?? null,
+      lastCompletedAt: new Date(),
+      details: toJson(details ?? {}),
+    },
+  });
+}
+
+export async function syncFundHistoryRange(options: {
+  startDate: Date;
+  endDate: Date;
+  chunkDays?: number;
+}): Promise<FundHistorySyncResult> {
+  const startDate = startOfUtcDay(options.startDate);
+  const endDate = startOfUtcDay(options.endDate);
+  if (endDate.getTime() < startDate.getTime()) {
+    throw new Error("Bitiş tarihi başlangıçtan önce olamaz.");
+  }
+
+  const chunkDays = Math.max(1, options.chunkDays ?? DEFAULT_CHUNK_DAYS);
+  const dates = businessDaysBetween(startDate, endDate);
+  const chunks = chunkDates(dates, chunkDays);
+  const fundIdByCode = await loadActiveFundMap();
+
+  await prisma.historySyncState.upsert({
+    where: { key: HISTORY_SYNC_KEY },
+    create: {
+      key: HISTORY_SYNC_KEY,
+      status: "RUNNING",
+      lastStartedAt: new Date(),
+      details: toJson({
+        phase: "history_backfill",
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        chunkDays,
+      }),
+    },
+    update: {
+      status: "RUNNING",
+      lastStartedAt: new Date(),
+      details: toJson({
+        phase: "history_backfill",
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        chunkDays,
+      }),
+    },
+  });
+
+  try {
+    let fetchedRows = 0;
+    let writtenRows = 0;
+    const touchedDates = new Set<number>();
+
+    for (const chunk of chunks) {
+      const payloads = [0, 1].flatMap((fundTypeCode) =>
+        fetchHistoryChunkWithFallback(chunk, fundTypeCode).map((payload) => {
+          if (!payload.ok) {
+            throw new Error(`[history-sync] ${buildChunkCacheKey(chunk, fundTypeCode)} -> ${payload.error}`);
+          }
+          return payload;
+        })
+      );
+
+      for (const payload of payloads) {
+        if (payload.ok && !("empty" in payload && payload.empty) && "rows" in payload) {
+          fetchedRows += payload.rows.length;
+        }
+      }
+
+      const rows = mergePayloadRows(payloads, fundIdByCode, chunk.end);
+      for (const row of rows) touchedDates.add(row.date.getTime());
+      writtenRows += await upsertHistoryRows(rows);
+    }
+
+    const details = {
+      phase: "history_backfill",
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      chunkDays,
+      chunks: chunks.length,
+      fetchedRows,
+      writtenRows,
+      touchedDates: touchedDates.size,
+    };
+
+    await refreshFundHistorySyncState(details);
+    await prisma.syncLog.create({
+      data: {
+        syncType: "TEFAS_HISTORY",
+        status: "SUCCESS",
+        fundsUpdated: writtenRows,
+        fundsCreated: 0,
+        startedAt: new Date(),
+        completedAt: new Date(),
+        durationMs: 0,
+      },
+    });
+
+    return {
+      ok: true,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      chunkDays,
+      chunks: chunks.length,
+      fetchedRows,
+      writtenRows,
+      touchedDates: touchedDates.size,
+    };
+  } catch (error) {
+    await prisma.historySyncState.upsert({
+      where: { key: HISTORY_SYNC_KEY },
+      create: {
+        key: HISTORY_SYNC_KEY,
+        status: "FAILED",
+        lastStartedAt: new Date(),
+        details: toJson({
+          phase: "history_backfill",
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          chunkDays,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      },
+      update: {
+        status: "FAILED",
+        details: toJson({
+          phase: "history_backfill",
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          chunkDays,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      },
+    });
+    throw error;
+  }
+}
+
+export async function backfillFundHistoryDays(days: number, anchorDate?: Date, chunkDays?: number): Promise<FundHistorySyncResult> {
+  const endDate = startOfUtcDay(anchorDate ?? new Date());
+  const startDate = new Date(endDate.getTime() - Math.max(1, days) * 24 * 60 * 60 * 1000);
+  return syncFundHistoryRange({ startDate, endDate, chunkDays: chunkDays ?? DEFAULT_CHUNK_DAYS });
+}
+
+export async function appendRecentFundHistory(overlapDays: number = 7): Promise<FundHistorySyncResult> {
+  const latest = await prisma.fundPriceHistory.findFirst({
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+
+  const endDate = startOfUtcDay(new Date());
+  const startDate = latest?.date
+    ? new Date(startOfUtcDay(latest.date).getTime() - Math.max(1, overlapDays) * 24 * 60 * 60 * 1000)
+    : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  return syncFundHistoryRange({ startDate, endDate, chunkDays: DEFAULT_CHUNK_DAYS });
+}

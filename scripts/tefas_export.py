@@ -8,6 +8,7 @@ import contextlib
 import io
 import json
 import math
+import os
 import sys
 import traceback
 from datetime import datetime, timedelta
@@ -15,12 +16,62 @@ from typing import Optional
 
 try:
     from tefasfon import fetch_tefas_data
+    import tefasfon.data_fetcher as tefas_data_fetcher
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
 except ImportError:
     print(
         json.dumps({"ok": False, "error": "tefasfon yok. pip install -r scripts/requirements.txt"}),
         file=sys.stderr,
     )
     sys.exit(2)
+
+
+def find_chrome_binary() -> Optional[str]:
+    env_binary = os.environ.get("TEFAS_CHROME_BIN", "").strip()
+    candidates = [
+        env_binary,
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def setup_local_webdriver(lang: str, headless: bool = True):
+    chrome_options = Options()
+    chrome_binary = find_chrome_binary()
+    if chrome_binary:
+        chrome_options.binary_location = chrome_binary
+
+    if headless:
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+
+    chrome_options.add_argument("--lang=tr-TR")
+    chrome_options.add_argument("--disable-notifications")
+    chrome_options.add_argument("--disable-popup-blocking")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--log-level=3")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    chrome_options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36"
+    )
+
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.set_page_load_timeout(45)
+    return driver
+
+
+tefas_data_fetcher.setup_webdriver = setup_local_webdriver
 
 
 def num(v, default=0.0):
@@ -100,24 +151,51 @@ def main() -> None:
         help="0=genel bilgi (fon kodu/fiyat), 1=portföy dağılımı",
     )
     p.add_argument("--date", type=str, default=None, help="dd.mm.yyyy (varsayılan: bugün TR)")
+    p.add_argument("--from-date", type=str, default=None, help="dd.mm.yyyy")
+    p.add_argument("--to-date", type=str, default=None, help="dd.mm.yyyy")
     p.add_argument("--wait", type=int, default=3, help="Selenium bekleme (sn)")
     p.add_argument("--no-headless", action="store_true", help="Tarayıcıyı göster")
     args = p.parse_args()
 
-    def try_fetch(for_date: str):
+    def try_fetch(from_date: str, to_date: str):
         _capture = io.StringIO()
         with contextlib.redirect_stdout(_capture):
             return fetch_tefas_data(
                 args.fund_type,
                 args.tab,
-                for_date,
-                for_date,
+                from_date,
+                to_date,
                 headless=not args.no_headless,
                 wait_seconds=max(1, args.wait),
             )
 
+    def normalize_date_value(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, datetime):
+            return v.strftime("%d.%m.%Y")
+        if hasattr(v, "strftime"):
+            try:
+                return v.strftime("%d.%m.%Y")
+            except Exception:
+                pass
+        if isinstance(v, str):
+            t = v.strip()
+            if not t:
+                return ""
+            for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"):
+                try:
+                    return datetime.strptime(t[:19], fmt).strftime("%d.%m.%Y")
+                except ValueError:
+                    continue
+            return t
+        return str(v)
+
     dates_to_try: list[str] = []
-    if args.date:
+    range_mode = bool(args.from_date and args.to_date)
+    if range_mode:
+        dates_to_try = [args.from_date.strip(), args.to_date.strip()]
+    elif args.date:
         dates_to_try.append(args.date)
     else:
         # Hafta sonu / tatilde bugün boş döner; son iş günlerine geri git.
@@ -133,10 +211,14 @@ def main() -> None:
     df = None
     used_date = ""
     last_err: Optional[Exception] = None
-    for today in dates_to_try:
+    for today in dates_to_try if not range_mode else [dates_to_try[0]]:
         try:
-            df = try_fetch(today)
-            used_date = today
+            if range_mode:
+                df = try_fetch(dates_to_try[0], dates_to_try[1])
+                used_date = dates_to_try[1]
+            else:
+                df = try_fetch(today, today)
+                used_date = today
             if df is not None and not df.empty:
                 break
         except Exception as e:
@@ -155,7 +237,9 @@ def main() -> None:
                 {
                     "ok": True,
                     "empty": True,
-                    "date": dates_to_try[0] if dates_to_try else "",
+                    "date": dates_to_try[1] if range_mode and len(dates_to_try) > 1 else (dates_to_try[0] if dates_to_try else ""),
+                    "fromDate": dates_to_try[0] if range_mode and dates_to_try else None,
+                    "toDate": dates_to_try[1] if range_mode and len(dates_to_try) > 1 else None,
                     "fundTypeCode": args.fund_type,
                 }
             )
@@ -177,10 +261,24 @@ def main() -> None:
                 "Önceki Fiyat",
                 "Önceki Fiyat (TL)",
                 "Onceki Fiyat",
+                "Önceki Birim Fiyat",
+                "Onceki Birim Fiyat",
+                "Birim Payının Alış Fiyatı (TL)",
             ),
             0,
         )
-        price = num(col(row, "FIYAT", "Fiyat", "FİYAT", "Fiyat (TL)"), 0)
+        price = num(
+            col(
+                row,
+                "FIYAT",
+                "Fiyat",
+                "FİYAT",
+                "Fiyat (TL)",
+                "Son Birim Fiyat",
+                "Birim Pay Satış Fiyatı (TL)",
+            ),
+            0,
+        )
         daily_api = num(
             col(
                 row,
@@ -189,11 +287,13 @@ def main() -> None:
                 "Günlük Getiri (%)",
                 "Günlük Getiri",
                 "Gunluk Getiri",
+                "Günlük Getiri Oranı (%)",
             ),
             0,
         )
         rows.append(
             {
+                "date": normalize_date_value(col(row, "TARIH", "TARİH", "Tarih", "DATE", "Date")) or used_date,
                 "code": code,
                 "name": name,
                 "shortName": code,
@@ -212,6 +312,8 @@ def main() -> None:
                 "ok": True,
                 "empty": False,
                 "date": used_date,
+                "fromDate": dates_to_try[0] if range_mode and dates_to_try else None,
+                "toDate": dates_to_try[1] if range_mode and len(dates_to_try) > 1 else None,
                 "fundTypeCode": args.fund_type,
                 "rows": rows,
             },
