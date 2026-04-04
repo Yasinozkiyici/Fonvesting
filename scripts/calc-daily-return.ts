@@ -44,7 +44,7 @@ type ExportPayload =
   | { ok: true; empty: true }
   | { ok: true; empty?: false; rows: ExportRow[] };
 
-function fetchTefasData(date: string, fundType: number = 0): Map<string, ExportRow> | null {
+function fetchTefasData(date: string, fundType: number): Map<string, ExportRow> | null {
   const root = process.cwd();
   const script = path.join(root, "scripts", "tefas_export.py");
   const py = resolvePythonBin(root);
@@ -68,6 +68,20 @@ function fetchTefasData(date: string, fundType: number = 0): Map<string, ExportR
     console.error("TEFAS fetch error:", e);
     return null;
   }
+}
+
+/** Yatırım (0) + BES (1) tek haritada birleştirilir */
+function fetchTefasDataMerged(date: string): Map<string, ExportRow> | null {
+  const merged = new Map<string, ExportRow>();
+  let any = false;
+  for (const fundType of [0, 1] as const) {
+    const part = fetchTefasData(date, fundType);
+    if (part?.size) {
+      any = true;
+      for (const [code, row] of part) merged.set(code, row);
+    }
+  }
+  return any ? merged : null;
 }
 
 function formatDate(d: Date): string {
@@ -99,16 +113,16 @@ async function main() {
 
   console.log(`Fetching TEFAS data for ${previousDateStr} (previous) and ${currentDateStr} (current)...`);
 
-  console.log(`\nFetching ${previousDateStr}...`);
-  const prevData = fetchTefasData(previousDateStr);
+  console.log(`\nFetching ${previousDateStr} (tür 0+1)...`);
+  const prevData = fetchTefasDataMerged(previousDateStr);
   if (!prevData) {
     console.error("Could not fetch previous day data");
     process.exit(1);
   }
   console.log(`Got ${prevData.size} funds`);
 
-  console.log(`\nFetching ${currentDateStr}...`);
-  const currData = fetchTefasData(currentDateStr);
+  console.log(`\nFetching ${currentDateStr} (tür 0+1)...`);
+  const currData = fetchTefasDataMerged(currentDateStr);
   if (!currData) {
     console.error("Could not fetch current day data");
     process.exit(1);

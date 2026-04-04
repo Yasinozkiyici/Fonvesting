@@ -148,10 +148,10 @@ export default function FundsTable({ enableCategoryFilter = true }: FundsTablePr
       <div className="border-b px-6 py-5" style={{ borderColor: "var(--table-border)" }}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>
+            <h2 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
               TEFAS yatırım fonları
             </h2>
-            <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
+            <p className="mt-1 text-base" style={{ color: "var(--text-muted)" }}>
               Listelenen {data?.total ?? 0} fon • Veri kaynağı TEFAS (senkron ile güncellenir)
             </p>
           </div>
@@ -244,10 +244,10 @@ export default function FundsTable({ enableCategoryFilter = true }: FundsTablePr
         <table className="w-full min-w-[720px]">
           <thead>
             <tr style={{ background: "var(--table-header-bg)" }}>
-              <th className="w-12 px-4 py-4 text-left text-[11px] font-semibold uppercase tracking-wide md:px-6" style={{ color: "var(--text-muted)" }}>
+              <th className="w-12 px-4 py-4 text-left text-xs font-semibold uppercase tracking-wide md:px-6" style={{ color: "var(--text-muted)" }}>
                 #
               </th>
-              <th className="min-w-[200px] px-4 py-4 text-left text-[11px] font-semibold uppercase tracking-wide md:px-6" style={{ color: "var(--text-muted)" }}>
+              <th className="min-w-[200px] px-4 py-4 text-left text-xs font-semibold uppercase tracking-wide md:px-6" style={{ color: "var(--text-muted)" }}>
                 FON
               </th>
               <th className="w-[120px] px-4 py-4 text-right md:px-6">
@@ -262,7 +262,7 @@ export default function FundsTable({ enableCategoryFilter = true }: FundsTablePr
               <th className="hidden w-[120px] px-6 py-4 text-right xl:table-cell">
                 <SortableHeader label="YATIRIMCI" field="investorCount" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("investorCount")} />
               </th>
-              <th className="hidden w-[140px] px-6 py-4 text-left text-[11px] font-semibold uppercase tracking-wide xl:table-cell" style={{ color: "var(--text-muted)" }}>
+              <th className="hidden w-[140px] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide xl:table-cell" style={{ color: "var(--text-muted)" }}>
                 KATEGORİ
               </th>
             </tr>
@@ -388,7 +388,7 @@ function SortableHeader({
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide transition"
+      className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition"
       style={{ color: isActive ? "var(--accent)" : "var(--text-muted)" }}
     >
       {label}

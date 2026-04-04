@@ -44,7 +44,7 @@ export async function GET() {
         orderBy: { date: "desc" },
       }),
       prisma.fund.findMany({
-        where: { isActive: true },
+        where: { isActive: true, dailyReturn: { gt: 0 } },
         orderBy: { dailyReturn: "desc" },
         take: 5,
         select: {
@@ -57,7 +57,7 @@ export async function GET() {
         },
       }),
       prisma.fund.findMany({
-        where: { isActive: true },
+        where: { isActive: true, dailyReturn: { lt: 0 } },
         orderBy: { dailyReturn: "asc" },
         take: 5,
         select: {

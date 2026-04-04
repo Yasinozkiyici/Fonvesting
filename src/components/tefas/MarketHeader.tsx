@@ -182,7 +182,7 @@ export default function MarketHeader() {
           value={data.fundCount.toLocaleString("tr-TR")}
           icon={<PieChart className="h-3.5 w-3.5" />}
           secondary={
-            <span className="flex items-center gap-1.5 text-[11px]">
+            <span className="flex items-center gap-1.5 text-xs">
               <span style={{ color: "var(--success)" }}>↑{data.advancers}</span>
               <span style={{ color: "var(--danger)" }}>↓{data.decliners}</span>
             </span>
@@ -199,12 +199,12 @@ export default function MarketHeader() {
       {/* Curated Categories - Simplified */}
       <section>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
             Kategoriler
           </h2>
           <Link
             href="/sectors"
-            className="inline-flex items-center gap-1 text-xs font-medium transition-colors hover:underline"
+            className="inline-flex items-center gap-1 text-sm font-medium transition-colors hover:underline"
             style={{ color: "var(--text-tertiary)" }}
           >
             Tümünü gör
@@ -270,7 +270,7 @@ function StatCard({
     >
       <div className="flex items-center gap-1.5 mb-1">
         <span style={{ color: "var(--text-muted)" }}>{icon}</span>
-        <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+        <span className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
           {label}
         </span>
       </div>
@@ -323,19 +323,19 @@ function CategoryCard({
           {icon}
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="font-semibold text-sm leading-tight" style={{ color: "var(--text-primary)" }}>
+          <h3 className="font-semibold text-base leading-tight" style={{ color: "var(--text-primary)" }}>
             {name}
           </h3>
-          <p className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--text-muted)" }}>
+          <p className="text-xs mt-0.5 leading-snug" style={{ color: "var(--text-muted)" }}>
             {description}
           </p>
           <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-[10px] font-medium" style={{ color: "var(--text-tertiary)" }}>
+            <span className="text-2xs font-medium" style={{ color: "var(--text-tertiary)" }}>
               {fundCount} fon
             </span>
             {hovered && (
               <span
-                className="text-[10px] font-semibold tabular-nums"
+                className="text-2xs font-semibold tabular-nums"
                 style={{ color: dailyReturn >= 0 ? "var(--success)" : "var(--danger)" }}
               >
                 {dailyReturn >= 0 ? "+" : ""}{dailyReturn.toFixed(2)}%
@@ -386,32 +386,39 @@ function MiniPerformanceList({
         </div>
       </div>
       <div className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>
-        {items.map((item, i) => (
-          <div
-            key={item.code}
-            className="flex items-center justify-between px-4 py-2 transition-colors hover:bg-[var(--bg-hover)]"
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span
-                className="text-[10px] font-bold tabular-nums w-4 text-center"
-                style={{ color: "var(--text-muted)" }}
-              >
-                {i + 1}
-              </span>
-              <div className="min-w-0">
-                <span className="font-semibold text-xs" style={{ color: "var(--text-primary)" }}>
-                  {item.code}
-                </span>
-                <span className="text-[10px] ml-1.5 truncate" style={{ color: "var(--text-muted)" }}>
-                  {item.shortName || item.name.slice(0, 20)}
-                </span>
-              </div>
-            </div>
-            <span className="font-semibold text-xs tabular-nums" style={{ color }}>
-              {isGainer ? "+" : ""}{item.dailyReturn.toFixed(2)}%
-            </span>
+        {items.length === 0 ? (
+          <div className="px-4 py-3 text-xs leading-snug" style={{ color: "var(--text-muted)" }}>
+            Günlük getiri henüz yok veya tüm fonlar değişimsiz görünüyor. TEFAS’tan güncel veri çekildikten
+            sonra dolar.
           </div>
-        ))}
+        ) : (
+          items.map((item, i) => (
+            <div
+              key={item.code}
+              className="flex items-center justify-between px-4 py-2 transition-colors hover:bg-[var(--bg-hover)]"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span
+                  className="text-2xs font-bold tabular-nums w-4 text-center"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {i + 1}
+                </span>
+                <div className="min-w-0">
+                  <span className="font-semibold text-xs" style={{ color: "var(--text-primary)" }}>
+                    {item.code}
+                  </span>
+                  <span className="text-2xs ml-1.5 truncate" style={{ color: "var(--text-muted)" }}>
+                    {item.shortName || item.name.slice(0, 20)}
+                  </span>
+                </div>
+              </div>
+              <span className="font-semibold text-xs tabular-nums" style={{ color }}>
+                {isGainer ? "+" : ""}{item.dailyReturn.toFixed(2)}%
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

@@ -63,7 +63,7 @@ export function ScoreBadge({ score, size = "sm" }: ScoreBadgeProps) {
   };
 
   const style = getScoreStyle(score);
-  const sizeClasses = size === "sm" ? "min-w-[28px] h-5 text-[10px]" : "min-w-[32px] h-6 text-xs";
+  const sizeClasses = size === "sm" ? "min-w-[28px] h-5 text-2xs" : "min-w-[32px] h-6 text-xs";
 
   return (
     <div
@@ -189,7 +189,7 @@ export function MetricsTooltip({ metrics, scores, alpha, riskLevel, children }: 
             <div className="flex items-center justify-between pb-2 border-b" style={{ borderColor: "var(--border-subtle)" }}>
               <span style={{ color: "var(--text-muted)" }}>Risk</span>
               <span
-                className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                className="px-1.5 py-0.5 rounded text-2xs font-semibold"
                 style={{ background: riskInfo.bg, color: riskInfo.color }}
               >
                 {riskInfo.label}

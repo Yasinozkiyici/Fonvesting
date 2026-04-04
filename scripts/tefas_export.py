@@ -10,7 +10,8 @@ import json
 import math
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
 
 try:
     from tefasfon import fetch_tefas_data
@@ -25,8 +26,38 @@ except ImportError:
 def num(v, default=0.0):
     if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
         return default
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        try:
+            x = float(v)
+            if math.isnan(x) or math.isinf(x):
+                return default
+            return x
+        except (TypeError, ValueError):
+            return default
+    if isinstance(v, str):
+        t = v.strip().replace("%", "").replace(" ", "").replace("\u00a0", "")
+        if not t or t.lower() in ("-", "—", "nan"):
+            return default
+        # TR: 1.234,56 → 1234.56 ; 12,3456 → 12.3456
+        if "," in t:
+            if "." in t and t.rfind(",") > t.rfind("."):
+                t = t.replace(".", "").replace(",", ".")
+            else:
+                t = t.replace(",", ".")
+        elif t.count(".") > 1:
+            t = t.replace(".", "")
+        try:
+            x = float(t)
+            if math.isnan(x) or math.isinf(x):
+                return default
+            return x
+        except ValueError:
+            return default
     try:
-        return float(v)
+        x = float(v)
+        if math.isnan(x) or math.isinf(x):
+            return default
+        return x
     except (TypeError, ValueError):
         return default
 
@@ -73,27 +104,62 @@ def main() -> None:
     p.add_argument("--no-headless", action="store_true", help="Tarayıcıyı göster")
     args = p.parse_args()
 
-    today = args.date or datetime.now().strftime("%d.%m.%Y")
-
-    try:
-        # tefasfon Rich çıktısı stdout'u kirletir; JSON stdout'a tek satır yazılır.
+    def try_fetch(for_date: str):
         _capture = io.StringIO()
         with contextlib.redirect_stdout(_capture):
-            df = fetch_tefas_data(
+            return fetch_tefas_data(
                 args.fund_type,
                 args.tab,
-                today,
-                today,
+                for_date,
+                for_date,
                 headless=not args.no_headless,
                 wait_seconds=max(1, args.wait),
             )
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}), file=sys.stderr)
+
+    dates_to_try: list[str] = []
+    if args.date:
+        dates_to_try.append(args.date)
+    else:
+        # Hafta sonu / tatilde bugün boş döner; son iş günlerine geri git.
+        now = datetime.now()
+        for back in range(0, 14):
+            d = now - timedelta(days=back)
+            if d.weekday() >= 5:
+                continue
+            dates_to_try.append(d.strftime("%d.%m.%Y"))
+            if len(dates_to_try) >= 6:
+                break
+
+    df = None
+    used_date = ""
+    last_err: Optional[Exception] = None
+    for today in dates_to_try:
+        try:
+            df = try_fetch(today)
+            used_date = today
+            if df is not None and not df.empty:
+                break
+        except Exception as e:
+            last_err = e
+            df = None
+            continue
+
+    if last_err and df is None:
+        print(json.dumps({"ok": False, "error": str(last_err)}), file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         sys.exit(2)
 
     if df is None or df.empty:
-        print(json.dumps({"ok": True, "empty": True, "date": today, "fundTypeCode": args.fund_type}))
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "empty": True,
+                    "date": dates_to_try[0] if dates_to_try else "",
+                    "fundTypeCode": args.fund_type,
+                }
+            )
+        )
         sys.exit(0)
 
     rows = []
@@ -103,16 +169,36 @@ def main() -> None:
         if not code:
             continue
         name = str(col(row, "FONADI", "FON ADI", "Fon Adı") or code).strip()
-        prev_price = num(col(row, "ONCEKI_FIYAT", "ONCEKIFIYAT"), 0)
-        price = num(col(row, "FIYAT", "Fiyat"), 0)
-        daily_api = num(col(row, "GUNLUKGETIRI", "GUNLUK_GETIRI", "Günlük Getiri (%)", "Günlük Getiri"), 0)
+        prev_price = num(
+            col(
+                row,
+                "ONCEKI_FIYAT",
+                "ONCEKIFIYAT",
+                "Önceki Fiyat",
+                "Önceki Fiyat (TL)",
+                "Onceki Fiyat",
+            ),
+            0,
+        )
+        price = num(col(row, "FIYAT", "Fiyat", "FİYAT", "Fiyat (TL)"), 0)
+        daily_api = num(
+            col(
+                row,
+                "GUNLUKGETIRI",
+                "GUNLUK_GETIRI",
+                "Günlük Getiri (%)",
+                "Günlük Getiri",
+                "Gunluk Getiri",
+            ),
+            0,
+        )
         rows.append(
             {
                 "code": code,
                 "name": name,
                 "shortName": code,
                 "lastPrice": price,
-                "previousPrice": prev_price if prev_price else price,
+                "previousPrice": prev_price if prev_price > 0 else 0,
                 "dailyReturn": daily_api,
                 "portfolioSize": num(col(row, "PORTFOYBUYUKLUGU", "PORTFOY_BUYUKLUGU", "Fon Toplam Değer"), 0),
                 "investorCount": inte(col(row, "YATIRIMCISAYISI", "YATIRIMCI_SAYISI", "Kişi Sayısı"), 0),
@@ -122,7 +208,13 @@ def main() -> None:
 
     print(
         json.dumps(
-            {"ok": True, "empty": False, "date": today, "fundTypeCode": args.fund_type, "rows": rows},
+            {
+                "ok": True,
+                "empty": False,
+                "date": used_date,
+                "fundTypeCode": args.fund_type,
+                "rows": rows,
+            },
             ensure_ascii=False,
         )
     )

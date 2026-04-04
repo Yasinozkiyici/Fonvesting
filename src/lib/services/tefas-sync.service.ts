@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
+import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
 
 function resolvePythonBin(root: string): string {
   const fromEnv = process.env.TEFAS_PYTHON?.trim();
@@ -41,6 +42,43 @@ function projectRoot(): string {
   return process.cwd();
 }
 
+/** TEFAS günlük getiri: API sütunu → satır fiyatları → önceki gün history → DB son kapanış */
+function computeFundDailyMetrics(input: {
+  apiDailyReturn: number;
+  lastPrice: number;
+  rowPreviousPrice: number;
+  dbPreviousClose: number;
+  historyPreviousPrice: number;
+}): { dailyReturn: number; previousPrice: number } {
+  const { apiDailyReturn, lastPrice, rowPreviousPrice, dbPreviousClose, historyPreviousPrice } =
+    input;
+
+  const clampReturn = (x: number): number => {
+    if (!Number.isFinite(x) || Math.abs(x) > 50) return 0;
+    return x;
+  };
+
+  const pct = (prev: number, curr: number) => ((curr - prev) / prev) * 100;
+
+  let dailyReturn = 0;
+  if (apiDailyReturn !== 0 && Number.isFinite(apiDailyReturn)) {
+    dailyReturn = clampReturn(apiDailyReturn);
+  } else if (rowPreviousPrice > 0 && lastPrice > 0) {
+    dailyReturn = clampReturn(pct(rowPreviousPrice, lastPrice));
+  } else if (historyPreviousPrice > 0 && lastPrice > 0) {
+    dailyReturn = clampReturn(pct(historyPreviousPrice, lastPrice));
+  } else if (dbPreviousClose > 0 && lastPrice > 0) {
+    dailyReturn = clampReturn(pct(dbPreviousClose, lastPrice));
+  }
+
+  let previousPrice = lastPrice;
+  if (rowPreviousPrice > 0) previousPrice = rowPreviousPrice;
+  else if (historyPreviousPrice > 0) previousPrice = historyPreviousPrice;
+  else if (dbPreviousClose > 0) previousPrice = dbPreviousClose;
+
+  return { dailyReturn, previousPrice };
+}
+
 async function ensureFundTypes(fundTypeCode: number): Promise<string> {
   const names: Record<number, string> = {
     0: "Yatırım Fonları",
@@ -57,8 +95,13 @@ async function ensureFundTypes(fundTypeCode: number): Promise<string> {
   return row.id;
 }
 
-export async function runTefasSync(options?: { fundTypeCode?: number }): Promise<TefasSyncResult> {
+export async function runTefasSync(options?: {
+  fundTypeCode?: number;
+  /** true: kategori/logo pass atlanır (runFullTefasSync son turda bir kez çalıştırır). */
+  skipMetadata?: boolean;
+}): Promise<TefasSyncResult> {
   const fundTypeCode = options?.fundTypeCode ?? 0;
+  const skipMetadata = options?.skipMetadata ?? false;
   const started = Date.now();
   const root = projectRoot();
   const script = path.join(root, "scripts", "tefas_export.py");
@@ -142,75 +185,91 @@ export async function runTefasSync(options?: { fundTypeCode?: number }): Promise
   let created = 0;
   let updatedRows = 0;
 
-  await prisma.$transaction(async (tx) => {
-    for (const r of payload.rows) {
-      const existing = await tx.fund.findUnique({
-        where: { code: r.code },
-        select: { id: true, lastPrice: true },
-      });
-      const prevClose = existing?.lastPrice ?? 0;
-      const canCalc = prevClose > 0 && r.lastPrice > 0;
-      let dailyReturn =
-        r.dailyReturn !== 0 && Number.isFinite(r.dailyReturn)
-          ? r.dailyReturn
-          : canCalc
-            ? ((r.lastPrice - prevClose) / prevClose) * 100
-            : 0;
-      if (!Number.isFinite(dailyReturn) || Math.abs(dailyReturn) > 50) {
-        dailyReturn = 0;
+  const rows = payload.rows;
+  const CHUNK = 100;
+  const txOpts = { maxWait: 60_000, timeout: 180_000 };
+
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    await prisma.$transaction(async (tx) => {
+      for (const r of slice) {
+        const existing = await tx.fund.findUnique({
+          where: { code: r.code },
+          select: { id: true, lastPrice: true },
+        });
+        const dbPreviousClose = existing?.lastPrice ?? 0;
+
+        let historyPreviousPrice = 0;
+        if (existing?.id) {
+          const h = await tx.fundPriceHistory.findFirst({
+            where: { fundId: existing.id, date: { lt: dayStart } },
+            orderBy: { date: "desc" },
+            select: { price: true },
+          });
+          historyPreviousPrice = h && h.price > 0 ? h.price : 0;
+        }
+
+        const { dailyReturn, previousPrice } = computeFundDailyMetrics({
+          apiDailyReturn: r.dailyReturn,
+          lastPrice: r.lastPrice,
+          rowPreviousPrice: r.previousPrice,
+          dbPreviousClose,
+          historyPreviousPrice,
+        });
+
+        const fund = await tx.fund.upsert({
+          where: { code: r.code },
+          create: {
+            code: r.code,
+            name: r.name,
+            shortName: r.shortName ?? r.code,
+            lastPrice: r.lastPrice,
+            previousPrice,
+            dailyReturn,
+            portfolioSize: r.portfolioSize,
+            investorCount: r.investorCount,
+            shareCount: r.shareCount,
+            fundTypeId: typeId,
+            lastUpdatedAt: now,
+          },
+          update: {
+            name: r.name,
+            shortName: r.shortName ?? r.code,
+            lastPrice: r.lastPrice,
+            previousPrice,
+            dailyReturn,
+            portfolioSize: r.portfolioSize,
+            investorCount: r.investorCount,
+            shareCount: r.shareCount,
+            fundTypeId: typeId,
+            lastUpdatedAt: now,
+          },
+        });
+        if (existing) updatedRows += 1;
+        else created += 1;
+
+        await tx.fundPriceHistory.upsert({
+          where: { fundId_date: { fundId: fund.id, date: dayStart } },
+          create: {
+            fundId: fund.id,
+            date: dayStart,
+            price: r.lastPrice,
+            dailyReturn,
+            portfolioSize: r.portfolioSize,
+            investorCount: r.investorCount,
+          },
+          update: {
+            price: r.lastPrice,
+            dailyReturn,
+            portfolioSize: r.portfolioSize,
+            investorCount: r.investorCount,
+          },
+        });
       }
-      const previousPrice = canCalc ? prevClose : r.previousPrice > 0 ? r.previousPrice : r.lastPrice;
+    }, txOpts);
+  }
 
-      const fund = await tx.fund.upsert({
-        where: { code: r.code },
-        create: {
-          code: r.code,
-          name: r.name,
-          shortName: r.shortName ?? r.code,
-          lastPrice: r.lastPrice,
-          previousPrice,
-          dailyReturn,
-          portfolioSize: r.portfolioSize,
-          investorCount: r.investorCount,
-          shareCount: r.shareCount,
-          fundTypeId: typeId,
-          lastUpdatedAt: now,
-        },
-        update: {
-          name: r.name,
-          shortName: r.shortName ?? r.code,
-          lastPrice: r.lastPrice,
-          previousPrice,
-          dailyReturn,
-          portfolioSize: r.portfolioSize,
-          investorCount: r.investorCount,
-          shareCount: r.shareCount,
-          fundTypeId: typeId,
-          lastUpdatedAt: now,
-        },
-      });
-      if (existing) updatedRows += 1;
-      else created += 1;
-
-      await tx.fundPriceHistory.upsert({
-        where: { fundId_date: { fundId: fund.id, date: dayStart } },
-        create: {
-          fundId: fund.id,
-          date: dayStart,
-          price: r.lastPrice,
-          dailyReturn,
-          portfolioSize: r.portfolioSize,
-          investorCount: r.investorCount,
-        },
-        update: {
-          price: r.lastPrice,
-          dailyReturn,
-          portfolioSize: r.portfolioSize,
-          investorCount: r.investorCount,
-        },
-      });
-    }
-
+  await prisma.$transaction(async (tx) => {
     const all = await tx.fund.findMany({
       where: { isActive: true },
       select: { dailyReturn: true, portfolioSize: true, investorCount: true },
@@ -243,7 +302,19 @@ export async function runTefasSync(options?: { fundTypeCode?: number }): Promise
         unchanged: unch,
       },
     });
-  });
+  }, txOpts);
+
+  let metadataNote = "";
+  if (!skipMetadata) {
+    try {
+      const meta = await runTefasMetadataPass(prisma);
+      metadataNote = ` | kategori+logo: ${JSON.stringify(meta)}`;
+      console.log("[tefas-sync] Kategori/logo pass:", meta);
+    } catch (e) {
+      console.error("[tefas-sync] Kategori/logo pass hatası:", e);
+      metadataNote = " | metadata_hata";
+    }
+  }
 
   await prisma.syncLog.create({
     data: {
@@ -257,6 +328,33 @@ export async function runTefasSync(options?: { fundTypeCode?: number }): Promise
     },
   });
 
-  console.log(`[tefas-sync] Tamam: ${created} yeni, ${updatedRows} güncelleme.`);
+  console.log(`[tefas-sync] Tamam: ${created} yeni, ${updatedRows} güncelleme.${metadataNote}`);
   return { ok: true, skipped: false, updated: payload.rows.length };
+}
+
+/** Yatırım (0) + BES (1) TEFAS çekimi; her turdan sonra kategori/logo pass. */
+export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: number[] }> {
+  const types = [0, 1];
+  let totalRows = 0;
+  let lastError: string | undefined;
+  for (const fundTypeCode of types) {
+    const r = await runTefasSync({ fundTypeCode, skipMetadata: true });
+    totalRows += r.updated;
+    if (!r.ok && !r.skipped) {
+      return { ok: false, skipped: false, updated: totalRows, message: r.message, types };
+    }
+    if (!r.ok && r.skipped) lastError = r.message;
+  }
+  if (lastError && totalRows === 0) {
+    return { ok: false, skipped: true, updated: 0, message: lastError, types };
+  }
+
+  try {
+    const meta = await runTefasMetadataPass(prisma);
+    console.log("[tefas-sync] full sync metadata:", meta);
+  } catch (e) {
+    console.error("[tefas-sync] full sync metadata:", e);
+  }
+
+  return { ok: true, skipped: false, updated: totalRows, types };
 }

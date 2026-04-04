@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runTefasSync } from "@/lib/services/tefas-sync.service";
+import { runFullTefasSync } from "@/lib/services/tefas-sync.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+/** Tam TEFAS çekimi uzun sürebilir (Pro+). */
+export const maxDuration = 300;
 
 function isAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
@@ -17,11 +19,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await runTefasSync({ fundTypeCode: 0 });
+    const result = await runFullTefasSync();
     return NextResponse.json({
       ok: result.ok,
       skipped: result.skipped,
       updated: result.updated,
+      types: result.types,
       message: result.message,
     });
   } catch (error) {

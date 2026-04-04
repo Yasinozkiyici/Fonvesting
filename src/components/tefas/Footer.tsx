@@ -24,7 +24,7 @@ export default function Footer() {
             <div className="mb-4 flex items-center gap-2">
               <SiteLogo size="footer" />
               <span
-                className="rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase"
+                className="rounded-md px-2 py-0.5 text-2xs font-semibold uppercase"
                 style={{ background: "var(--accent-bg)", color: "var(--accent)" }}
               >
                 TEFAS

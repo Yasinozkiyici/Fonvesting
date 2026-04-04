@@ -198,10 +198,10 @@ export default function ScoredFundsTable({
       <div className="border-b px-4 py-3" style={{ borderColor: "var(--border-subtle)" }}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+            <h2 className="text-base font-semibold" style={{ color: "var(--text-primary)" }}>
               Akıllı Fon Sıralaması
             </h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>
               {filteredFunds.length} fon
             </p>
           </div>
@@ -252,13 +252,13 @@ export default function ScoredFundsTable({
           <thead>
             <tr style={{ background: "var(--table-header-bg)" }}>
               <th className="w-10 py-2.5 pl-4 pr-1 align-middle">
-                <span className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>#</span>
+                <span className="text-2xs font-semibold uppercase" style={{ color: "var(--text-muted)" }}>#</span>
               </th>
               <th className="min-w-[220px] py-2.5 px-2 align-middle">
-                <span className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Fon</span>
+                <span className="text-2xs font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Fon</span>
               </th>
               <th className="w-[100px] py-2.5 px-2 align-middle">
-                <span className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Kategori</span>
+                <span className="text-2xs font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Kategori</span>
               </th>
               <th className="w-[76px] py-2.5 px-2 text-right align-middle">
                 <SortableHeader label="Gün %" field="dailyReturn" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("dailyReturn")} />
@@ -267,10 +267,10 @@ export default function ScoredFundsTable({
                 <SortableHeader label="Alpha" field="alpha" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("alpha")} />
               </th>
               <th className="w-[52px] py-2.5 px-1 text-center align-middle">
-                <span className="text-[10px] font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Trend</span>
+                <span className="text-2xs font-semibold uppercase" style={{ color: "var(--text-muted)" }}>Trend</span>
               </th>
               <th className="w-[76px] py-2.5 px-2 text-right align-middle">
-                <span className="text-[10px] font-semibold uppercase whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Yatırımcı</span>
+                <span className="text-2xs font-semibold uppercase whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Yatırımcı</span>
               </th>
               <th className="w-[96px] py-2.5 pl-2 pr-4 text-right align-middle">
                 <SortableHeader label="Portföy" field="portfolioSize" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("portfolioSize")} />
@@ -312,7 +312,7 @@ export default function ScoredFundsTable({
                     onMouseLeave={() => setHoveredFund(null)}
                   >
                     <td className="py-2 pl-4 pr-1 align-middle">
-                      <span className="text-[11px] tabular-nums" style={{ color: "var(--text-muted)" }}>{rank}</span>
+                      <span className="text-xs tabular-nums" style={{ color: "var(--text-muted)" }}>{rank}</span>
                     </td>
                     <td className="py-2 px-2 align-middle">
                       <div className="flex items-center gap-2 min-w-0 max-w-[320px]">
@@ -330,13 +330,13 @@ export default function ScoredFundsTable({
                           initialsClassName="text-[9px] font-bold"
                         />
                         <div className="min-w-0 flex-1 overflow-hidden">
-                          <p className="text-xs font-semibold truncate" style={{ color: "var(--text-primary)" }}>{f.code}</p>
-                          <p className="text-[10px] truncate" style={{ color: "var(--text-muted)" }} title={f.name}>{f.name}</p>
+                          <p className="text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>{f.code}</p>
+                          <p className="text-2xs truncate" style={{ color: "var(--text-muted)" }} title={f.name}>{f.name}</p>
                         </div>
                       </div>
                     </td>
                     <td className="py-2 px-2 align-middle">
-                      <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }} title={f.category?.name}>
+                      <span className="block truncate text-2xs" style={{ color: "var(--text-tertiary)" }} title={f.category?.name}>
                         {catShort}
                       </span>
                     </td>
@@ -352,12 +352,12 @@ export default function ScoredFundsTable({
                       </div>
                     </td>
                     <td className="py-2 px-2 text-right align-middle whitespace-nowrap">
-                      <span className="text-[10px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+                      <span className="text-2xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
                         {f.investorCount > 0 ? formatInvestor(f.investorCount) : "—"}
                       </span>
                     </td>
                     <td className="py-2 pl-2 pr-4 text-right align-middle whitespace-nowrap">
-                      <span className="text-[11px] font-medium tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                      <span className="text-xs font-medium tabular-nums" style={{ color: "var(--text-secondary)" }}>
                         {formatPortfolio(f.portfolioSize)}
                       </span>
                     </td>
@@ -417,7 +417,7 @@ function SortableHeader({
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase whitespace-nowrap"
+      className="inline-flex items-center gap-0.5 text-2xs font-semibold uppercase whitespace-nowrap"
       style={{ color: isActive ? "var(--accent)" : "var(--text-muted)" }}
     >
       {label}
@@ -432,11 +432,11 @@ function SortableHeader({
 
 function ReturnBadge({ value }: { value: number }) {
   const isInvalid = !Number.isFinite(value) || Math.abs(value) > 100;
-  if (isInvalid) return <span className="text-[11px]" style={{ color: "var(--text-muted)" }}>—</span>;
+  if (isInvalid) return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
 
   const isPositive = value >= 0;
   return (
-    <span className="text-[11px] font-medium tabular-nums whitespace-nowrap" style={{ color: isPositive ? "var(--success)" : "var(--danger)" }}>
+    <span className="text-xs font-medium tabular-nums whitespace-nowrap" style={{ color: isPositive ? "var(--success)" : "var(--danger)" }}>
       {isPositive ? "+" : ""}{value.toFixed(2)}%
     </span>
   );

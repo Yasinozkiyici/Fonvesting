@@ -166,7 +166,7 @@ export default function MarketHeader() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-caption">BIST 100</span>
                   <span 
-                    className="px-2 py-0.5 text-[10px] font-semibold rounded-full"
+                    className="px-2 py-0.5 text-2xs font-semibold rounded-full"
                     style={{
                       background: 'var(--bg-hover)',
                       color: 'var(--text-muted)',
@@ -270,7 +270,7 @@ export default function MarketHeader() {
                 color: "var(--success)",
               }}
             >
-              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 Yükselen
               </p>
               <div className="mt-1 flex flex-col gap-1">
@@ -289,7 +289,7 @@ export default function MarketHeader() {
                 color: "var(--danger)",
               }}
             >
-              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 Düşen
               </p>
               <div className="mt-1 flex flex-col gap-1">
@@ -308,7 +308,7 @@ export default function MarketHeader() {
                 color: "var(--accent)",
               }}
             >
-              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+              <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                 Sektör
               </p>
               <div className="mt-1 flex flex-col gap-1">
@@ -326,7 +326,7 @@ export default function MarketHeader() {
           </div>
 
           <div className="mt-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
               Sektörler
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -335,7 +335,7 @@ export default function MarketHeader() {
                 return (
                   <span
                     key={sector.id}
-                    className="inline-flex items-center rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums"
+                    className="inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold tabular-nums"
                     style={{
                       background: "var(--bg-hover)",
                       borderColor: "var(--border-subtle)",
@@ -352,7 +352,7 @@ export default function MarketHeader() {
           </div>
 
           <div className="mt-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+            <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
               Öne Çıkan Hisseler
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -360,7 +360,7 @@ export default function MarketHeader() {
                 featuredStocks.map((stock) => (
                   <span
                     key={stock.symbol}
-                    className="inline-flex items-center rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums"
+                    className="inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold tabular-nums"
                     style={{
                       background: "var(--success-bg)",
                       borderColor: "var(--success-border)",

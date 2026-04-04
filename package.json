@@ -20,6 +20,9 @@
     "db:docker:seed": "DATABASE_URL=\"postgresql://postgres:postgres@localhost:5433/fonvesting\" prisma db seed",
     "db:docker:studio": "DATABASE_URL=\"postgresql://postgres:postgres@localhost:5433/fonvesting\" prisma studio",
     "sync:tefas": "tsx scripts/sync-tefas.ts",
+    "import:tefas-full": "tsx scripts/full-tefas-import.ts",
+    "tefas:metadata": "tsx scripts/tefas-metadata-only.ts",
+    "tefas:daily-returns": "tsx scripts/calc-daily-return.ts",
     "download:fund-logos": "tsx scripts/download-fund-logos.ts",
     "setup:venv": "python3 -m venv scripts/.venv && scripts/.venv/bin/pip install -r scripts/requirements.txt",
     "postinstall": "prisma generate"

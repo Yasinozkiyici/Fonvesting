@@ -379,7 +379,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
             Filtreler
           </p>
           <span
-            className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border px-2 text-[11px] font-semibold"
+            className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border px-2 text-xs font-semibold"
             style={{
               borderColor: activeFilterCount > 0 ? "var(--accent)" : "var(--border-default)",
               color: activeFilterCount > 0 ? "var(--accent)" : "var(--text-muted)",
@@ -500,13 +500,13 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
           <thead>
             <tr style={{ background: "var(--table-header-bg)" }}>
               <th
-                className="w-12 px-6 py-4 text-left text-[11px] font-semibold uppercase tracking-wide"
+                className="w-12 px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide"
                 style={{ color: "var(--text-muted)" }}
               >
                 #
               </th>
               <th
-                className="min-w-[260px] px-6 py-4 text-left text-[11px] font-semibold uppercase tracking-wide"
+                className="min-w-[260px] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide"
                 style={{ color: "var(--text-muted)" }}
               >
                 HİSSE
@@ -548,19 +548,19 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                 />
               </th>
               <th
-                className="hidden w-[90px] px-6 py-4 text-right text-[11px] font-semibold uppercase tracking-wide xl:table-cell"
+                className="hidden w-[90px] px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide xl:table-cell"
                 style={{ color: "var(--text-muted)" }}
               >
                 F/K
               </th>
               <th
-                className="hidden w-[170px] px-6 py-4 text-left text-[11px] font-semibold uppercase tracking-wide xl:table-cell"
+                className="hidden w-[170px] px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide xl:table-cell"
                 style={{ color: "var(--text-muted)" }}
               >
                 SEKTÖR
               </th>
               <th
-                className="w-[110px] px-6 py-4 text-center text-[11px] font-semibold uppercase tracking-wide"
+                className="w-[110px] px-6 py-4 text-center text-xs font-semibold uppercase tracking-wide"
                 style={{ color: "var(--text-muted)" }}
               >
                 7 GÜN
@@ -731,7 +731,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                     style={{ borderColor: "var(--table-border)" }}
                   >
                     <div className="min-w-0">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                      <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                         Sektor
                       </p>
                       <p className="mt-1 text-xs font-medium truncate" style={{ color: "var(--text-secondary)" }} title={stock.sector?.name ?? ""}>
@@ -740,7 +740,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                     </div>
 
                     <div className="min-w-0">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                      <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                         Piyasa Değeri
                       </p>
                       <p className="mt-1 text-xs font-medium tabular-nums truncate" style={{ color: "var(--text-secondary)" }}>
@@ -749,7 +749,7 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
                     </div>
 
                     <div className="flex flex-col items-end">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                      <p className="text-2xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                         7 Gun
                       </p>
                       <div className="mt-1 h-6 w-16">
@@ -867,7 +867,7 @@ function SortableHeader({
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide transition"
+      className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide transition"
       style={{ color: isActive ? "var(--accent)" : "var(--text-muted)" }}
     >
       {label}

@@ -24,7 +24,7 @@ export default function Page() {
         <div id="funds-table" className="mt-6">
           <Suspense
             fallback={
-              <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+              <div className="rounded-xl border p-4 text-base" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
                 Tablo yükleniyor...
               </div>
             }
