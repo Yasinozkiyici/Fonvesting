@@ -9,10 +9,12 @@ import {
 } from "@/lib/fund-list-format";
 import { FundLogoMark } from "@/components/tefas/FundLogoMark";
 import { PctChangeMobile, PctChangeTable } from "@/components/ds/PctChange";
+import { fundTypeChipToneClass } from "@/lib/fund-type-chip-tone";
 
 export function FundRowMobile({ fund }: { fund: ScoredFund }) {
   const subtitle = fundDisplaySubtitle(fund);
   const typeLabel = fund.fundType?.name?.trim() || "—";
+  const typeTone = fundTypeChipToneClass(fund.fundType, typeLabel);
 
   return (
     <div className="mobile-fund-card">
@@ -41,7 +43,10 @@ export function FundRowMobile({ fund }: { fund: ScoredFund }) {
               <PctChangeMobile value={fund.dailyReturn} />
             </div>
             <div className="flex min-w-0 flex-nowrap items-center gap-x-0 overflow-hidden">
-              <span className="fund-type-chip fund-type-chip--mobile min-w-0 max-w-[min(100%,11rem)] truncate" title={typeLabel}>
+              <span
+                className={`fund-type-chip fund-type-chip--mobile ${typeTone} min-w-0 max-w-[min(100%,11rem)] truncate`}
+                title={typeLabel}
+              >
                 {typeLabel}
               </span>
               <span className="mobile-fund-card__dot" aria-hidden>
@@ -67,6 +72,7 @@ export function FundRowMobile({ fund }: { fund: ScoredFund }) {
 export function FundDataTableRow({ fund }: { fund: ScoredFund }) {
   const subtitle = fundDisplaySubtitle(fund);
   const typeLabel = fund.fundType?.name?.trim() || "—";
+  const typeTone = fundTypeChipToneClass(fund.fundType, typeLabel);
 
   return (
     <tr className="table-row fund-data-row group">
@@ -107,7 +113,10 @@ export function FundDataTableRow({ fund }: { fund: ScoredFund }) {
       </td>
       <td className="fund-col-gutter" aria-hidden="true" />
       <td className="fund-col-type">
-        <span className="fund-type-chip inline-block max-w-full truncate align-middle" title={typeLabel}>
+        <span
+          className={`fund-type-chip ${typeTone} inline-block max-w-full truncate align-middle`}
+          title={typeLabel}
+        >
           {typeLabel}
         </span>
       </td>

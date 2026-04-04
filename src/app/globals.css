@@ -2151,16 +2151,16 @@ body {
   width: 14%;
 }
 .fund-data-table col.fund-col-price {
-  width: 9%;
+  width: 8%;
 }
 .fund-data-table col.fund-col-1d {
-  width: 7%;
+  width: 6.25%;
 }
 .fund-data-table col.fund-col-inv {
-  width: 10%;
+  width: 9.25%;
 }
 .fund-data-table col.fund-col-aum {
-  width: 12%;
+  width: 11.5%;
 }
 
 .fund-data-table th,
@@ -2257,11 +2257,16 @@ body {
   text-align: right;
 }
 
-/* Sağ blok: fiyat / getiri / yatırımcı / portföy — kompakt cluster (solda nefes payı) */
+/* Sağ blok: fiyat / getiri / yatırımcı / portföy — sıkı finansal cluster */
 .fund-data-table th.fund-th-metric,
 .fund-data-table td.fund-col-metric {
-  padding-left: 0.25rem;
-  padding-right: 0.25rem;
+  padding-left: 0.125rem;
+  padding-right: 0.125rem;
+}
+
+.fund-data-table th.fund-th-metric .sortable-th-btn {
+  gap: 0.25rem;
+  min-height: 1.125rem;
 }
 
 .fund-data-table td.fund-col-metric.fund-col-aum {
@@ -2333,31 +2338,129 @@ body {
   justify-content: center;
 }
 
-/* Fon türü — sakin, yumuşak tonlu minimal chip */
+/* Fon türü — küçük, yumuşak veri işaretçisi + düşük doygunluklu tonlar */
 .fund-type-chip {
   box-sizing: border-box;
   max-width: 100%;
-  padding: 0.1875rem 0.5rem;
-  border-radius: 0.3125rem;
-  font-size: 0.6875rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.625rem;
   font-weight: 500;
-  letter-spacing: 0.015em;
-  line-height: 1.25;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 4.5%, var(--card-bg));
-  border: 1px solid color-mix(in srgb, var(--border-subtle) 65%, transparent);
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  border-width: 1px;
+  border-style: solid;
   font-variant-numeric: tabular-nums;
 }
 
-[data-theme="dark"] .fund-type-chip {
-  background: color-mix(in srgb, var(--text-primary) 5.5%, var(--card-bg));
-  border-color: color-mix(in srgb, var(--border-subtle) 55%, transparent);
+.fund-type-chip--tone-neutral {
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
+  background: color-mix(in srgb, var(--text-primary) 3.5%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--border-subtle) 58%, transparent);
+}
+
+/* Yatırım (TEFAS kod 0) — hafif soğuk gri-mavi */
+.fund-type-chip--tone-yat {
+  color: color-mix(in srgb, #546273 38%, var(--text-secondary));
+  background: color-mix(in srgb, #5a6d7d 5.5%, var(--card-bg));
+  border-color: color-mix(in srgb, #5a6d7d 15%, transparent);
+}
+
+/* BES / emeklilik — hafif mürdüm-gri */
+.fund-type-chip--tone-bes {
+  color: color-mix(in srgb, #5c5566 36%, var(--text-secondary));
+  background: color-mix(in srgb, #6b6278 5%, var(--card-bg));
+  border-color: color-mix(in srgb, #6b6278 14%, transparent);
+}
+
+/* Hisse odaklı — çok hafif lacivert-gri */
+.fund-type-chip--tone-equity {
+  color: color-mix(in srgb, #4d5f72 34%, var(--text-secondary));
+  background: color-mix(in srgb, #4a6280 5%, var(--card-bg));
+  border-color: color-mix(in srgb, #4a6280 13%, transparent);
+}
+
+/* Para / likidite — çok hafif teal-gri */
+.fund-type-chip--tone-liquidity {
+  color: color-mix(in srgb, #4d6568 34%, var(--text-secondary));
+  background: color-mix(in srgb, #3d6065 5%, var(--card-bg));
+  border-color: color-mix(in srgb, #3d6065 13%, transparent);
+}
+
+/* Borçlanma — hafif sıcak gri */
+.fund-type-chip--tone-bond {
+  color: color-mix(in srgb, #5d5348 34%, var(--text-secondary));
+  background: color-mix(in srgb, #6b5c4a 5%, var(--card-bg));
+  border-color: color-mix(in srgb, #6b5c4a 13%, transparent);
+}
+
+/* Altın / emtia — hafif zeytin-gri */
+.fund-type-chip--tone-commodity {
+  color: color-mix(in srgb, #5e5645 34%, var(--text-secondary));
+  background: color-mix(in srgb, #6d6348 5%, var(--card-bg));
+  border-color: color-mix(in srgb, #6d6348 12%, transparent);
+}
+
+/* Katılım — hafif sage */
+.fund-type-chip--tone-participation {
+  color: color-mix(in srgb, #4a574d 34%, var(--text-secondary));
+  background: color-mix(in srgb, #4a5c50 5%, var(--card-bg));
+  border-color: color-mix(in srgb, #4a5c50 13%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-neutral {
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--border-subtle) 48%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-yat {
+  color: color-mix(in srgb, #9aa8b8 45%, var(--text-secondary));
+  background: color-mix(in srgb, #7a8fa3 7%, var(--card-bg));
+  border-color: color-mix(in srgb, #7a8fa3 20%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-bes {
+  color: color-mix(in srgb, #a8a0b8 42%, var(--text-secondary));
+  background: color-mix(in srgb, #8a8298 6.5%, var(--card-bg));
+  border-color: color-mix(in srgb, #8a8298 18%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-equity {
+  color: color-mix(in srgb, #94a3b8 42%, var(--text-secondary));
+  background: color-mix(in srgb, #647896 6.5%, var(--card-bg));
+  border-color: color-mix(in srgb, #647896 18%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-liquidity {
+  color: color-mix(in srgb, #8fb0b3 38%, var(--text-secondary));
+  background: color-mix(in srgb, #4d7378 7%, var(--card-bg));
+  border-color: color-mix(in srgb, #4d7378 18%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-bond {
+  color: color-mix(in srgb, #b8a99a 38%, var(--text-secondary));
+  background: color-mix(in srgb, #7a6b58 6.5%, var(--card-bg));
+  border-color: color-mix(in srgb, #7a6b58 17%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-commodity {
+  color: color-mix(in srgb, #b5ab92 38%, var(--text-secondary));
+  background: color-mix(in srgb, #7d7355 6.5%, var(--card-bg));
+  border-color: color-mix(in srgb, #7d7355 17%, transparent);
+}
+
+[data-theme="dark"] .fund-type-chip--tone-participation {
+  color: color-mix(in srgb, #9eb0a4 38%, var(--text-secondary));
+  background: color-mix(in srgb, #5a6e62 6.5%, var(--card-bg));
+  border-color: color-mix(in srgb, #5a6e62 18%, transparent);
 }
 
 .fund-type-chip--mobile {
-  padding: 0.125rem 0.375rem;
-  font-size: 0.625rem;
-  line-height: 1.2;
+  padding: 0.09375rem 0.3125rem;
+  font-size: 0.5625rem;
+  line-height: 1.1;
+  letter-spacing: 0.018em;
+  border-radius: 0.21875rem;
 }
 
 [data-theme="dark"] .ds-badge-risk-mid {
