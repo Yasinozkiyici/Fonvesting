@@ -1,20 +1,10 @@
 /**
  * Son 7 iş gününün TEFAS verilerini çekip FundPriceHistory tablosuna kaydeder
  */
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { TefasBrowserClient, withTefasBrowserClient } from "../src/lib/services/tefas-browser.service";
 
 const prisma = new PrismaClient();
-
-function resolvePythonBin(root: string): string {
-  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
-  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  if (fs.existsSync(venvWin)) return venvWin;
-  return process.platform === "win32" ? "python" : "python3";
-}
 
 function formatDate(d: Date): string {
   const day = String(d.getDate()).padStart(2, "0");
@@ -45,25 +35,20 @@ interface TefasRecord {
   lastPrice: number;
 }
 
-async function fetchTefasForDate(pythonBin: string, scriptPath: string, dateStr: string): Promise<TefasRecord[]> {
+async function fetchTefasForDate(client: TefasBrowserClient, date: Date, fundTypeCode: 0 | 1): Promise<TefasRecord[]> {
+  const dateStr = formatDate(date);
   console.log(`  Fetching TEFAS data for ${dateStr}...`);
-  
-  try {
-    const raw = execFileSync(pythonBin, [scriptPath, "--date", dateStr], {
-      encoding: "utf-8",
-      maxBuffer: 100 * 1024 * 1024,
-      timeout: 120_000,
-    });
 
-    const data = JSON.parse(raw);
-    if (!data.ok || !Array.isArray(data.funds)) {
+  try {
+    const data = await client.fetchPayload({ fundTypeCode, date });
+    if (!data.ok || ("empty" in data && data.empty) || !("rows" in data)) {
       console.log(`    No data for ${dateStr}`);
       return [];
     }
 
-    return data.funds
-      .filter((f: any) => f.code && f.lastPrice > 0)
-      .map((f: any) => ({
+    return data.rows
+      .filter((f) => f.code && f.lastPrice > 0)
+      .map((f) => ({
         code: f.code,
         lastPrice: f.lastPrice,
       }));
@@ -74,10 +59,6 @@ async function fetchTefasForDate(pythonBin: string, scriptPath: string, dateStr:
 }
 
 async function main() {
-  const root = path.resolve(__dirname, "..");
-  const pythonBin = resolvePythonBin(root);
-  const scriptPath = path.join(root, "scripts", "tefas_export.py");
-
   console.log("=== Fetching 7 Business Days of TEFAS Price History ===\n");
 
   // Get last 7 business days
@@ -95,50 +76,58 @@ async function main() {
 
   // Fetch data for each date
   let totalRecords = 0;
-  
-  for (const date of dates) {
-    const dateStr = formatDate(date);
-    const records = await fetchTefasForDate(pythonBin, scriptPath, dateStr);
-    
-    if (records.length === 0) {
-      console.log(`    Skipping ${dateStr} - no data\n`);
-      continue;
-    }
 
-    console.log(`    Got ${records.length} records for ${dateStr}`);
+  await withTefasBrowserClient(async (client) => {
+    for (const date of dates) {
+      const dateStr = formatDate(date);
+      const merged = new Map<string, TefasRecord>();
 
-    // Upsert price history records
-    let inserted = 0;
-    for (const rec of records) {
-      const fundId = fundMap.get(rec.code);
-      if (!fundId) continue;
+      for (const fundTypeCode of [0, 1] as const) {
+        const records = await fetchTefasForDate(client, date, fundTypeCode);
+        for (const record of records) {
+          merged.set(record.code, record);
+        }
+      }
 
-      try {
-        await prisma.fundPriceHistory.upsert({
-          where: {
-            fundId_date: {
+      if (merged.size === 0) {
+        console.log(`    Skipping ${dateStr} - no data\n`);
+        continue;
+      }
+
+      console.log(`    Got ${merged.size} records for ${dateStr}`);
+
+      let inserted = 0;
+      for (const rec of merged.values()) {
+        const fundId = fundMap.get(rec.code);
+        if (!fundId) continue;
+
+        try {
+          await prisma.fundPriceHistory.upsert({
+            where: {
+              fundId_date: {
+                fundId,
+                date,
+              },
+            },
+            update: {
+              price: rec.lastPrice,
+            },
+            create: {
               fundId,
               date,
+              price: rec.lastPrice,
             },
-          },
-          update: {
-            price: rec.lastPrice,
-          },
-          create: {
-            fundId,
-            date,
-            price: rec.lastPrice,
-          },
-        });
-        inserted++;
-      } catch {
-        // Ignore duplicate errors
+          });
+          inserted++;
+        } catch {
+          // Ignore duplicate errors
+        }
       }
-    }
 
-    console.log(`    Inserted/Updated ${inserted} price history records\n`);
-    totalRecords += inserted;
-  }
+      console.log(`    Inserted/Updated ${inserted} price history records\n`);
+      totalRecords += inserted;
+    }
+  });
 
   // Check final state
   const historyCount = await prisma.fundPriceHistory.count();

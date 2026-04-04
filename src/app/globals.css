@@ -147,6 +147,15 @@
   --sparkline-fill-down: rgba(179, 92, 92, 0.07);
   --sparkline-stroke-table: var(--accent-blue);
   --sparkline-stroke-table-down: #b87a7a;
+
+  /* Tasarım sistemi — spacing (4 / 8 / 12 / 16 / 24 px) */
+  --ds-4: 0.25rem;
+  --ds-8: 0.5rem;
+  --ds-12: 0.75rem;
+  --ds-16: 1rem;
+  --ds-24: 1.5rem;
+  --ds-glass-border: rgba(15, 23, 42, 0.075);
+  --nav-sticky-h: 3.5rem;
 }
 
 [data-theme="dark"] {
@@ -276,6 +285,8 @@
   --sparkline-fill-down: rgba(196, 137, 137, 0.1);
   --sparkline-stroke-table: var(--accent-blue);
   --sparkline-stroke-table-down: #c9a0a0;
+
+  --ds-glass-border: rgba(255, 255, 255, 0.06);
 
   --row-accent-line: #9aacf0;
 }
@@ -1948,6 +1959,501 @@ body {
 
 [data-theme="dark"] .category-rail-card:hover:not([data-active="true"]) {
   background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* DS — kompakt hero, sticky kategori sekmeleri, fon tablosu */
+.ds-hero-compact {
+  margin-bottom: var(--ds-8);
+}
+
+.ds-hero-compact__intro {
+  max-width: 40rem;
+}
+
+.ds-hero-title {
+  margin-top: var(--ds-4);
+  font-size: clamp(1.25rem, 3.5vw, 1.625rem);
+  font-weight: 700;
+  letter-spacing: -0.038em;
+  line-height: 1.12;
+  color: var(--text-primary);
+}
+
+.ds-hero-stats {
+  margin-top: var(--ds-12);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-4) var(--ds-8);
+  padding: var(--ds-8) var(--ds-12);
+  border-radius: 12px;
+  border: 1px solid var(--ds-glass-border);
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+@media (min-width: 640px) {
+  .ds-hero-stats {
+    font-size: 0.8125rem;
+    padding: var(--ds-8) var(--ds-16);
+    gap: var(--ds-4) var(--ds-12);
+  }
+}
+
+.ds-hero-stat-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  opacity: 0.88;
+  margin-right: 0.25rem;
+}
+
+.ds-hero-stat-dot {
+  color: var(--text-muted);
+  opacity: 0.55;
+  user-select: none;
+}
+
+.ds-section-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  opacity: 0.72;
+  line-height: 1.25;
+}
+
+.ds-link-muted {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+
+.ds-link-muted:hover {
+  opacity: 0.72;
+}
+
+.ds-metric-card__label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  line-height: 1.2;
+}
+
+.ds-metric-card__value {
+  margin-top: 0.125rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-metric-card__hint {
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  line-height: 1.35;
+}
+
+.category-tabs-sticky {
+  position: sticky;
+  top: var(--nav-sticky-h);
+  z-index: 30;
+  margin-left: -0.75rem;
+  margin-right: -0.75rem;
+  padding: var(--ds-8) 0.75rem var(--ds-4);
+  border-bottom: 1px solid var(--ds-glass-border);
+  background: color-mix(in srgb, var(--bg-base) 82%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@media (min-width: 640px) {
+  .category-tabs-sticky {
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  .category-tabs-sticky {
+    position: static;
+    margin-left: 0;
+    margin-right: 0;
+    padding: var(--ds-8) 0;
+    border-bottom: none;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+.category-tabs-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.category-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.category-tab-pill {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 5.5rem;
+  max-width: 10rem;
+  padding: var(--ds-8) var(--ds-12);
+  border-radius: 10px;
+  border: 1px solid var(--ds-glass-border);
+  background: color-mix(in srgb, var(--card-bg) 90%, transparent);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.category-tab-pill[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--ds-glass-border));
+  background: color-mix(in srgb, var(--accent-blue) 06%, var(--card-bg));
+}
+
+.category-tab-pill__icon {
+  display: flex;
+  color: var(--text-secondary);
+}
+
+.category-tab-pill[data-active="true"] .category-tab-pill__icon {
+  color: var(--accent-blue);
+}
+
+.category-tab-pill__main {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ds-8);
+}
+
+.category-tab-pill__label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-tab-pill__count {
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.category-tab-pill__sub {
+  font-size: 0.625rem;
+  line-height: 1.25;
+  color: var(--text-tertiary);
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.ds-surface-glass {
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: var(--ds-glass-border) !important;
+}
+
+.fund-data-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.fund-data-table col.fund-col-name {
+  width: 36%;
+}
+.fund-data-table col.fund-col-aum {
+  width: 15%;
+}
+.fund-data-table col.fund-col-inv {
+  width: 12%;
+}
+.fund-data-table col.fund-col-1d {
+  width: 11%;
+}
+.fund-data-table col.fund-col-7d {
+  width: 11%;
+}
+.fund-data-table col.fund-col-risk {
+  width: 10%;
+}
+
+.fund-data-table th,
+.fund-data-table td {
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.fund-data-table td {
+  overflow: hidden;
+}
+
+.fund-data-table th.fund-th,
+.fund-data-table td.fund-col-name,
+.fund-data-table td.fund-col-num,
+.fund-data-table td.fund-col-risk {
+  padding-top: 0.5625rem;
+  padding-bottom: 0.5625rem;
+}
+
+.fund-data-table th.fund-th {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+  font-size: 0.59375rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  opacity: 0.92;
+}
+
+.fund-data-table .scored-th-label {
+  font-size: 0.59375rem;
+  font-weight: 600;
+  letter-spacing: 0.125em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  opacity: 0.92;
+}
+
+.fund-data-table th.fund-th-name,
+.fund-data-table td.fund-col-name {
+  padding-left: var(--ds-16);
+  padding-right: var(--ds-8);
+  text-align: left;
+}
+
+.fund-data-table th.fund-th-num,
+.fund-data-table td.fund-col-num {
+  padding-left: var(--ds-8);
+  padding-right: var(--ds-8);
+  text-align: right;
+}
+
+.fund-data-table th.fund-th-risk,
+.fund-data-table td.fund-col-risk {
+  padding-left: var(--ds-4);
+  padding-right: var(--ds-16);
+}
+
+.fund-data-table .fund-data-row {
+  transition: background 0.18s ease;
+}
+
+.fund-data-table tbody tr.fund-data-row:hover {
+  background: var(--table-row-hover);
+}
+
+.fund-data-table tbody tr.fund-data-row:hover td.fund-col-name {
+  box-shadow: inset 1.5px 0 0 0 var(--row-accent-line);
+}
+
+[data-theme="dark"] .fund-data-table tbody tr.fund-data-row:hover {
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.fund-data-table .sortable-th-btn {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.375rem;
+  width: 100%;
+  min-height: 1.25rem;
+  padding: 0.125rem 0;
+  text-align: right;
+  border-radius: var(--radius-sm);
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.fund-data-table .sortable-th-btn:hover {
+  background: rgba(15, 23, 42, 0.016);
+}
+
+.fund-data-table .sort-th-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.fund-data-table .sort-icon-slot {
+  flex: 0 0 14px;
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-theme="dark"] .ds-badge-risk-mid {
+  background: rgba(255, 255, 255, 0.055) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Mobil fon listesi — CoinMarketCap tarzı kompakt satır (yalnızca md altı) */
+.mobile-fund-card {
+  box-sizing: border-box;
+  max-height: 80px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--mfc-border);
+  background: var(--card-bg);
+  --mfc-border: rgba(15, 23, 42, 0.08);
+  --mfc-primary: var(--text-primary);
+  --mfc-secondary: var(--text-secondary);
+  --mfc-pct-pos: rgba(22, 199, 132, 0.92);
+  --mfc-pct-neg: rgba(234, 57, 67, 0.92);
+  --mfc-pct-zero: var(--text-secondary);
+  --mfc-dot: rgba(15, 23, 42, 0.35);
+}
+
+[data-theme="dark"] .mobile-fund-card {
+  --mfc-border: rgba(255, 255, 255, 0.06);
+  --mfc-primary: #e6e8eb;
+  --mfc-secondary: #9aa4b2;
+  --mfc-pct-pos: rgba(22, 199, 132, 0.88);
+  --mfc-pct-neg: rgba(234, 57, 67, 0.88);
+  --mfc-pct-zero: #9aa4b2;
+  --mfc-dot: rgba(255, 255, 255, 0.28);
+}
+
+.mobile-fund-card__link {
+  display: block;
+  margin: -12px -14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  outline: none;
+  text-decoration: none;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s ease;
+}
+
+.mobile-fund-card__link:active {
+  opacity: 0.88;
+}
+
+.mobile-fund-card__link:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 35%, transparent);
+}
+
+.mobile-fund-card__code {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--mfc-primary);
+}
+
+.mobile-fund-card__name {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--mfc-secondary);
+}
+
+.mobile-fund-card__metric {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--mfc-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-fund-card__pct {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mobile-fund-card__pct--pos {
+  color: var(--mfc-pct-pos);
+}
+
+.mobile-fund-card__pct--neg {
+  color: var(--mfc-pct-neg);
+}
+
+.mobile-fund-card__pct--zero,
+.mobile-fund-card__pct--muted {
+  color: var(--mfc-pct-zero);
+}
+
+.mobile-fund-card__dot {
+  color: var(--mfc-dot);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.mobile-fund-card__risk {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.mobile-fund-card__risk--low {
+  background: rgba(22, 199, 132, 0.14);
+  color: var(--mfc-pct-pos);
+}
+
+.mobile-fund-card__risk--mid {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+[data-theme="dark"] .mobile-fund-card__risk--mid {
+  color: #f0b429;
+}
+
+.mobile-fund-card__risk--high {
+  background: rgba(234, 57, 67, 0.12);
+  color: var(--mfc-pct-neg);
 }
 
 /* Mobile filter bar */

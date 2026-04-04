@@ -1,8 +1,6 @@
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { deriveFundPerformanceFromHistory } from "@/lib/services/fund-daily-snapshot.service";
+import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } from "@/lib/services/tefas-browser.service";
 import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.service";
 import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
 import { rebuildFundDailySnapshots } from "@/lib/services/fund-daily-snapshot.service";
@@ -12,43 +10,12 @@ import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr"
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
 
-function resolvePythonBin(root: string): string {
-  const fromEnv = process.env.TEFAS_PYTHON?.trim();
-  if (fromEnv) return fromEnv;
-  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
-  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  if (fs.existsSync(venvWin)) return venvWin;
-  return process.platform === "win32" ? "python" : "python3";
-}
-
 export type TefasSyncResult = {
   ok: boolean;
   skipped: boolean;
   updated: number;
   message?: string;
 };
-
-type ExportRow = {
-  code: string;
-  name: string;
-  shortName?: string | null;
-  lastPrice: number;
-  previousPrice: number;
-  dailyReturn: number;
-  portfolioSize: number;
-  investorCount: number;
-  shareCount: number;
-};
-
-type ExportPayload =
-  | { ok: false; error: string }
-  | { ok: true; empty: true; date: string; fundTypeCode: number }
-  | { ok: true; empty?: false; date: string; fundTypeCode: number; rows: ExportRow[] };
-
-function projectRoot(): string {
-  return process.cwd();
-}
 
 function clampReturn(x: number): number {
   if (!Number.isFinite(x) || Math.abs(x) > 100) return 0;
@@ -375,36 +342,59 @@ async function ensureFundTypes(fundTypeCode: number): Promise<string> {
   return row.id;
 }
 
+async function fetchLatestAvailablePayload(input: {
+  fundTypeCode: 0 | 1;
+  client?: TefasBrowserClient | null;
+}): Promise<TefasExportPayload> {
+  const fetchWithClient = input.client
+    ? input.client.fetchPayload.bind(input.client)
+    : (request: Parameters<TefasBrowserClient["fetchPayload"]>[0]) =>
+        withTefasBrowserClient((browserClient) => browserClient.fetchPayload(request));
+
+  const today = new Date();
+  for (let back = 0; back < 7; back += 1) {
+    const candidate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - back));
+    const day = candidate.getUTCDay();
+    if (day === 0 || day === 6) continue;
+    const payload = await fetchWithClient({
+      fundTypeCode: input.fundTypeCode,
+      date: candidate,
+    });
+    if (payload.ok && !("empty" in payload && payload.empty) && "rows" in payload && payload.rows.length > 0) {
+      return payload;
+    }
+  }
+
+  return {
+    ok: true,
+    empty: true,
+    date: "",
+    fundTypeCode: input.fundTypeCode,
+  };
+}
+
 export async function runTefasSync(options?: {
   fundTypeCode?: number;
   /** true: kategori/logo pass atlanır (runFullTefasSync son turda bir kez çalıştırır). */
   skipMetadata?: boolean;
   /** true: market/snapshot/cache rebuild atlanır (full sync sonunda bir kez çalıştırılır). */
   skipDerivedRebuilds?: boolean;
+  client?: TefasBrowserClient;
 }): Promise<TefasSyncResult> {
   const fundTypeCode = options?.fundTypeCode ?? 0;
   const skipMetadata = options?.skipMetadata ?? false;
   const skipDerivedRebuilds = options?.skipDerivedRebuilds ?? false;
   const started = Date.now();
-  const root = projectRoot();
-  const script = path.join(root, "scripts", "tefas_export.py");
+  const client = options?.client ?? null;
 
-  let payload: ExportPayload;
+  let payload: TefasExportPayload;
   try {
-    const py = resolvePythonBin(root);
-    const out = execFileSync(py, [script, "--fund-type", String(fundTypeCode)], {
-      cwd: root,
-      encoding: "utf-8",
-      maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    payload = await fetchLatestAvailablePayload({
+      fundTypeCode: fundTypeCode as 0 | 1,
+      client,
     });
-    payload = JSON.parse(out.trim()) as ExportPayload;
   } catch (e: unknown) {
-    const err = e as { status?: number; stderr?: Buffer; message?: string };
-    const msg =
-      err.stderr?.toString().trim() ||
-      (e instanceof Error ? e.message : String(e)) ||
-      "python çalıştırılamadı";
+    const msg = (e instanceof Error ? e.message : String(e)) || "TEFAS browser fetch çalıştırılamadı";
     console.error("[tefas-sync] TEFAS çekilemedi, mevcut veri korunuyor:", msg);
     await prisma.syncLog.create({
       data: {
@@ -613,13 +603,23 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
   const types = [0, 1];
   let totalRows = 0;
   let lastError: string | undefined;
-  for (const fundTypeCode of types) {
-    const r = await runTefasSync({ fundTypeCode, skipMetadata: true, skipDerivedRebuilds: true });
-    totalRows += r.updated;
-    if (!r.ok && !r.skipped) {
-      return { ok: false, skipped: false, updated: totalRows, message: r.message, types };
+  let hardFailure = false;
+  await withTefasBrowserClient(async (client) => {
+    for (const fundTypeCode of types) {
+      const r = await runTefasSync({ fundTypeCode, skipMetadata: true, skipDerivedRebuilds: true, client });
+      totalRows += r.updated;
+      if (!r.ok && !r.skipped) {
+        throw new Error(r.message ?? `TEFAS sync failed for type ${fundTypeCode}`);
+      }
+      if (!r.ok && r.skipped) lastError = r.message;
     }
-    if (!r.ok && r.skipped) lastError = r.message;
+  }).catch((error) => {
+    lastError = error instanceof Error ? error.message : String(error);
+    hardFailure = true;
+  });
+
+  if (hardFailure) {
+    return { ok: false, skipped: false, updated: totalRows, message: lastError, types };
   }
   if (lastError && totalRows === 0) {
     return { ok: false, skipped: true, updated: 0, message: lastError, types };

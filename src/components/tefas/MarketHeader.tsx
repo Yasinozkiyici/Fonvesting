@@ -1,19 +1,16 @@
 "use client";
 
-import { Fragment, useEffect, useState, type ReactNode } from "react";
-import Link from "next/link";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  ArrowRight,
   BarChart3,
   Building2,
   Coins,
   Landmark,
   PieChart,
   Shield,
-  Users,
-  Wallet,
 } from "lucide-react";
+import { CategoryTabs, type CategoryTabItem } from "@/components/ds/CategoryTabs";
 
 export interface MarketApi {
   summary: { avgDailyReturn: number; totalFundCount: number };
@@ -71,7 +68,6 @@ function formatCompactNumber(n: number) {
   return v.toLocaleString("tr-TR");
 }
 
-/** Kısmi / bozuk API yanıtında render çökmesini önler (beyaz ekran). */
 function isCompleteMarketApi(x: unknown): x is MarketApi {
   if (!x || typeof x !== "object") return false;
   const d = x as Record<string, unknown>;
@@ -135,52 +131,19 @@ export default function MarketHeader({
 
   if (loading) {
     return (
-      <section className="space-y-3 sm:space-y-4">
-        <div className="hero-section">
-          <div className="hero-product__intro space-y-2.5">
-            <div className="skeleton h-2.5 w-36 rounded-full" />
-            <div className="skeleton h-8 w-[min(100%,20rem)] rounded-md" />
-            <div className="skeleton h-4 w-full max-w-lg rounded-md" />
-            <div className="skeleton h-4 w-4/5 max-w-md rounded-md" />
-          </div>
-          <div className="hero-metrics-panel" aria-hidden>
-            {[0, 1, 2, 3].map((i) => (
-              <Fragment key={i}>
-                {i > 0 ? <span className="hero-metric-sep" /> : null}
-                <div className="hero-metric-cell">
-                  <div className="flex gap-3 sm:gap-3.5">
-                    <div className="skeleton mt-0.5 h-[18px] w-[18px] shrink-0 rounded-sm opacity-80" />
-                    <div className="min-w-0 flex-1 space-y-2">
-                      <div className="skeleton h-2 w-20 rounded-full opacity-70" />
-                      <div className="skeleton h-7 w-[min(100%,7.5rem)] rounded-md" />
-                      <div className="skeleton h-3 w-[min(100%,9rem)] rounded-full opacity-60" />
-                    </div>
-                  </div>
-                </div>
-              </Fragment>
-            ))}
+      <section className="space-y-3">
+        <div className="ds-hero-compact">
+          <div className="ds-hero-compact__intro space-y-2">
+            <div className="skeleton h-2.5 w-32 rounded-full" />
+            <div className="skeleton h-7 w-[min(100%,16rem)] rounded-md" />
+            <div className="skeleton h-10 w-full max-w-2xl rounded-lg" />
           </div>
         </div>
-        <div className="category-rail-section px-0 pb-0 pt-2 sm:pt-2.5">
-          <div className="mb-1.5 flex items-center justify-between gap-2 sm:mb-2">
-            <div className="skeleton h-3 w-36 rounded-full opacity-80" />
-            <div className="skeleton h-3 w-10 rounded-full opacity-60" />
-          </div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 sm:grid-cols-3 sm:gap-x-2.5 xl:grid-cols-6">
-            {[...Array(6)].map((_, i) => (
-              <div
-                key={i}
-                className="flex min-h-[36px] items-start gap-2 rounded-md border-l-2 border-l-transparent py-1 pl-2 pr-1 sm:min-h-[38px]"
-              >
-                <div className="skeleton mt-0.5 h-3 w-3 shrink-0 rounded-sm opacity-70" />
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="skeleton h-2.5 w-16 rounded-full opacity-75" />
-                    <div className="skeleton h-2.5 w-7 shrink-0 rounded-full opacity-55" />
-                  </div>
-                  <div className="skeleton h-2 w-20 rounded-full opacity-45" />
-                </div>
-              </div>
+        <div className="category-tabs-sticky">
+          <div className="skeleton mb-2 h-3 w-40 rounded-full" />
+          <div className="flex gap-2 overflow-hidden">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="skeleton h-14 w-[5.5rem] shrink-0 rounded-[10px]" />
             ))}
           </div>
         </div>
@@ -216,192 +179,84 @@ export default function MarketHeader({
 
   const activePrimaryCode = primaryCategories.find((category) => category.code === activeSector)?.code ?? activeSector;
 
+  const largestLabel =
+    largestCategory != null
+      ? (PRIMARY_CATEGORIES[largestCategory.code]?.short ?? largestCategory.name.split(/\s+/)[0] ?? "—")
+      : "—";
+
+  const tabItems: CategoryTabItem[] = [
+    {
+      href: "/",
+      label: "Tümü",
+      active: activePrimaryCode === "",
+      count: data.fundCount,
+      subtitle: "Tüm fonlar",
+      icon: <PieChart className="h-[11px] w-[11px]" strokeWidth={1.75} />,
+    },
+    ...primaryCategories.map((category) => {
+      const config = PRIMARY_CATEGORIES[category.code];
+      return {
+        href: `/?sector=${encodeURIComponent(category.code)}`,
+        label: config?.name ?? category.name,
+        active: activePrimaryCode === category.code,
+        count: category.fundCount,
+        subtitle: `${(Number(category.avgDailyReturn) || 0) >= 0 ? "+" : ""}${(Number(category.avgDailyReturn) || 0).toFixed(2)}% 1G`,
+        icon: config?.icon ?? <PieChart className="h-[11px] w-[11px]" strokeWidth={1.75} />,
+      };
+    }),
+  ];
+
+  const avg1g = data.summary.avgDailyReturn;
+  const avg1gStr = `${avg1g >= 0 ? "+" : ""}${avg1g.toFixed(2)}%`;
+
   return (
-    <section className="space-y-3 sm:space-y-4">
-      <div className="hero-section">
-        <div className="hero-product__intro">
+    <section className="space-y-0">
+      <div className="ds-hero-compact">
+        <div className="ds-hero-compact__intro">
           <p className="hero-kicker">Türkiye yatırım fonları</p>
-          <h1 className="hero-title">Piyasa özeti</h1>
-          <p className="hero-lede">Günlük anlık görüntüye göre portföy büyüklüğü, yatırımcı dağılımı ve kategori performansı — tek ekranda.</p>
-        </div>
-
-        <div className="hero-metrics-panel" role="group" aria-label="Piyasa metrikleri">
-          <HeroMetricCell
-            tone="accent"
-            icon={<Wallet strokeWidth={1.85} />}
-            label="Toplam AUM"
-            value={formatCompactTl(data.totalPortfolioSize)}
-            supporting={`${formatCompactNumber(data.fundCount)} fon`}
-          />
-          <span className="hero-metric-sep" aria-hidden />
-          <HeroMetricCell
-            tone="accent"
-            icon={<Users strokeWidth={1.85} />}
-            label="Yatırımcı"
-            value={formatCompactNumber(data.totalInvestorCount)}
-            supporting={`${data.advancers} yükselen · ${data.decliners} düşen`}
-          />
-          <span className="hero-metric-sep" aria-hidden />
-          <HeroMetricCell
-            tone={data.summary.avgDailyReturn >= 0 ? "success" : "danger"}
-            icon={<PieChart strokeWidth={1.85} />}
-            label="Aktif fon"
-            value={data.fundCount.toLocaleString("tr-TR")}
-            supporting={`Ort. 1G ${data.summary.avgDailyReturn >= 0 ? "+" : ""}${data.summary.avgDailyReturn.toFixed(2)}%`}
-          />
-          <span className="hero-metric-sep" aria-hidden />
-          <HeroMetricCell
-            tone="neutral"
-            icon={<Landmark strokeWidth={1.85} />}
-            label="En büyük kategori"
-            value={
-              largestCategory ? (PRIMARY_CATEGORIES[largestCategory.code]?.name ?? largestCategory.name) : "—"
-            }
-            supporting={largestCategory ? `${formatCompactTl(largestCategory.totalPortfolioSize)} AUM` : "—"}
-            valueSize="compact"
-          />
-        </div>
-      </div>
-
-      <section className="category-rail-section px-0 pb-0 pt-2 sm:pt-2.5">
-        <div className="mb-1.5 flex items-center justify-between gap-3 sm:mb-2">
-          <h2 className="text-heading-section">Kategoriye göre keşfet</h2>
-          <Link
-            href="/sectors"
-            className="hidden shrink-0 items-center gap-1 text-[11px] font-medium tracking-tight transition-opacity hover:opacity-70 sm:inline-flex"
-            style={{ color: "var(--text-secondary)" }}
-          >
-            Tümü
-            <ArrowRight className="h-3 w-3" strokeWidth={2} />
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-2 gap-x-2 gap-y-1 sm:grid-cols-3 sm:gap-x-2.5 xl:grid-cols-6">
-          <CategoryCard
-            href="/"
-            active={activePrimaryCode === ""}
-            icon={<PieChart className="h-[11px] w-[11px]" strokeWidth={1.75} />}
-            label="Tümü"
-            count={data.fundCount}
-            subtitle="Tüm fonlar"
-          />
-          {primaryCategories.map((category) => {
-            const config = PRIMARY_CATEGORIES[category.code];
-            return (
-              <CategoryCard
-                key={category.id}
-                href={`/?sector=${encodeURIComponent(category.code)}`}
-                active={activePrimaryCode === category.code}
-                icon={config?.icon ?? <PieChart className="h-[11px] w-[11px]" strokeWidth={1.75} />}
-                label={config?.name ?? category.name}
-                count={category.fundCount}
-                subtitle={`${(Number(category.avgDailyReturn) || 0) >= 0 ? "+" : ""}${(Number(category.avgDailyReturn) || 0).toFixed(2)}% ort. 1G`}
-              />
-            );
-          })}
-        </div>
-      </section>
-    </section>
-  );
-}
-
-function HeroMetricCell({
-  icon,
-  label,
-  value,
-  supporting,
-  tone = "accent",
-  valueSize = "default",
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  supporting: string;
-  tone?: "accent" | "success" | "danger" | "neutral";
-  /** Uzun metin değerleri (ör. kategori adı) için daha küçük başlık */
-  valueSize?: "default" | "compact";
-}) {
-  return (
-    <div className="hero-metric-cell">
-      <div className="flex gap-3 sm:gap-3.5">
-        <div
-          className="hero-metric-icon mt-0.5 flex shrink-0 items-start justify-center [&_svg]:block [&_svg]:h-[19px] [&_svg]:w-[19px]"
-          data-tone={tone}
-          aria-hidden
-        >
-          {icon}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="hero-metric-label">{label}</p>
-          <p
-            className={`hero-metric-value tabular-nums ${valueSize === "compact" ? "hero-metric-value--compact" : ""}`.trim()}
-          >
-            {value}
+          <h1 className="ds-hero-title">Piyasa özeti</h1>
+          <p className="hero-lede mt-2 hidden text-[13px] leading-snug sm:block" style={{ color: "var(--text-secondary)" }}>
+            Günlük anlık görüntü — AUM, yatırımcı ve getiri özeti.
           </p>
-          <p className="hero-metric-support">{supporting}</p>
         </div>
-      </div>
-    </div>
-  );
-}
 
-function CategoryCard({
-  href,
-  active,
-  icon,
-  label,
-  count,
-  subtitle,
-}: {
-  href: string;
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  count: number;
-  subtitle: string;
-}) {
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      data-active={active ? "true" : "false"}
-      className="category-rail-card flex min-h-[34px] items-start gap-1.5 rounded-md py-0.5 pl-2 pr-1 sm:min-h-[36px]"
-      style={{
-        borderLeftWidth: 1.5,
-        borderLeftStyle: "solid",
-        borderLeftColor: active ? "var(--accent-blue)" : "transparent",
-        boxShadow: "none",
-      }}
-    >
-      <div
-        className="mt-0.5 flex shrink-0 items-center justify-center [&_svg]:block"
-        style={{ color: active ? "var(--accent-blue)" : "var(--text-secondary)" }}
-      >
-        {icon}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-1.5">
-          <h3
-            className="min-w-0 truncate text-[11px] font-semibold leading-[1.2] tracking-[-0.021em] sm:text-[11.5px]"
-            style={{ color: "var(--text-primary)", fontWeight: active ? 700 : 600 }}
-          >
-            {label}
-          </h3>
-          <span
-            className="table-num shrink-0 text-[10px] font-semibold tabular-nums leading-none tracking-[-0.018em] opacity-[0.66] sm:text-[10.25px]"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {(Number.isFinite(count) ? count : 0).toLocaleString("tr-TR")}
+        <div className="ds-hero-stats" role="group" aria-label="Piyasa metrikleri">
+          <span>
+            <strong className="ds-hero-stat-label">AUM</strong>
+            <span className="tabular-nums">{formatCompactTl(data.totalPortfolioSize)}</span>
+          </span>
+          <span className="ds-hero-stat-dot" aria-hidden>
+            ·
+          </span>
+          <span>
+            <strong className="ds-hero-stat-label">Yatırımcı</strong>
+            <span className="tabular-nums">{formatCompactNumber(data.totalInvestorCount)}</span>
+          </span>
+          <span className="ds-hero-stat-dot" aria-hidden>
+            ·
+          </span>
+          <span>
+            <strong className="ds-hero-stat-label">Fon</strong>
+            <span className="tabular-nums">{data.fundCount.toLocaleString("tr-TR")}</span>
+          </span>
+          <span className="ds-hero-stat-dot" aria-hidden>
+            ·
+          </span>
+          <span>
+            <strong className="ds-hero-stat-label">Ort. 1G</strong>
+            <span className="tabular-nums">{avg1gStr}</span>
+          </span>
+          <span className="ds-hero-stat-dot" aria-hidden>
+            ·
+          </span>
+          <span>
+            <strong className="ds-hero-stat-label">Öne çıkan</strong>
+            <span className="tabular-nums">{largestLabel}</span>
           </span>
         </div>
-        <p
-          className="mt-[3px] text-[8.25px] leading-[1.35] tracking-[-0.01em] sm:text-[8.75px]"
-          style={{ color: "var(--text-tertiary)", opacity: 0.88 }}
-        >
-          {subtitle}
-        </p>
       </div>
-    </Link>
+
+      <CategoryTabs title="Kategoriler" items={tabItems} allHref="/sectors" allLabel="Tümü" />
+    </section>
   );
 }

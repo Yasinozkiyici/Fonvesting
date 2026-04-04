@@ -4,11 +4,10 @@
  * 2) History yetersizse TEFAS'tan önceki + güncel iş gününü çekip backfill yapar.
  * 3) Piyasa özetini tekrar üretir.
  */
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { config } from "dotenv";
 import { prisma } from "../src/lib/prisma";
+import { TefasBrowserClient, withTefasBrowserClient, type TefasExportRow } from "../src/lib/services/tefas-browser.service";
 import { rebuildMarketSnapshot, recomputeDailyReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
 import { parseTefasSessionDate, startOfUtcDay } from "../src/lib/trading-calendar-tr";
 
@@ -17,29 +16,6 @@ config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: tr
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
-
-type ExportRow = {
-  code: string;
-  name: string;
-  lastPrice: number;
-  portfolioSize: number;
-  investorCount: number;
-};
-
-type ExportPayload =
-  | { ok: false; error: string }
-  | { ok: true; empty: true; date?: string; fundTypeCode?: number }
-  | { ok: true; empty?: false; date: string; fundTypeCode: number; rows: ExportRow[] };
-
-function resolvePythonBin(root: string): string {
-  const fromEnv = process.env.TEFAS_PYTHON?.trim();
-  if (fromEnv) return fromEnv;
-  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
-  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  if (fs.existsSync(venvWin)) return venvWin;
-  return process.platform === "win32" ? "python" : "python3";
-}
 
 async function fetchExchangeRates(): Promise<{ usdTry: number; eurTry: number } | null> {
   try {
@@ -92,23 +68,12 @@ async function getLatestDistinctHistorySessions(): Promise<Date[]> {
   return distinct.sort((a, b) => b.getTime() - a.getTime());
 }
 
-function fetchTefasData(date: string, fundType: number): Map<string, ExportRow> | null {
-  const root = process.cwd();
-  const script = path.join(root, "scripts", "tefas_export.py");
-  const py = resolvePythonBin(root);
-
+async function fetchTefasData(client: TefasBrowserClient, date: string, fundType: 0 | 1): Promise<Map<string, TefasExportRow> | null> {
   try {
-    const out = execFileSync(py, [script, "--fund-type", String(fundType), "--date", date], {
-      cwd: root,
-      encoding: "utf-8",
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 180000,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
-    });
-    const payload = JSON.parse(out.trim()) as ExportPayload;
-    if (!payload.ok || payload.empty || !("rows" in payload)) return null;
+    const payload = await client.fetchPayload({ fundTypeCode: fundType, date });
+    if (!payload.ok || ("empty" in payload && payload.empty) || !("rows" in payload)) return null;
 
-    const map = new Map<string, ExportRow>();
+    const map = new Map<string, TefasExportRow>();
     for (const row of payload.rows) {
       map.set(row.code, row);
     }
@@ -119,11 +84,11 @@ function fetchTefasData(date: string, fundType: number): Map<string, ExportRow> 
   }
 }
 
-function fetchTefasDataMerged(date: string): Map<string, ExportRow> | null {
-  const merged = new Map<string, ExportRow>();
+async function fetchTefasDataMerged(client: TefasBrowserClient, date: string): Promise<Map<string, TefasExportRow> | null> {
+  const merged = new Map<string, TefasExportRow>();
   let any = false;
   for (const fundType of [0, 1] as const) {
-    const part = fetchTefasData(date, fundType);
+    const part = await fetchTefasData(client, date, fundType);
     if (!part?.size) continue;
     any = true;
     for (const [code, row] of part) {
@@ -146,8 +111,9 @@ async function backfillFromTefasCompare(): Promise<{ updated: number; sessionDat
 
   console.log(`[daily-return] TEFAS karşılaştırma: ${previousDateStr} -> ${currentDateStr}`);
 
-  const prevData = fetchTefasDataMerged(previousDateStr);
-  const currData = fetchTefasDataMerged(currentDateStr);
+  const [prevData, currData] = await withTefasBrowserClient(async (client) =>
+    Promise.all([fetchTefasDataMerged(client, previousDateStr), fetchTefasDataMerged(client, currentDateStr)])
+  );
   if (!prevData || !currData) {
     return { updated: 0, sessionDate: null };
   }

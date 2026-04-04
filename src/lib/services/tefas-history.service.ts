@@ -1,31 +1,11 @@
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } from "@/lib/services/tefas-browser.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
 
 const HISTORY_SYNC_KEY = "tefas_fund_history";
 const DEFAULT_CHUNK_DAYS = 14;
 const UPSERT_CHUNK = 500;
-
-type ExportRow = {
-  date?: string | null;
-  code: string;
-  name: string;
-  shortName?: string | null;
-  lastPrice: number;
-  previousPrice: number;
-  dailyReturn: number;
-  portfolioSize: number;
-  investorCount: number;
-  shareCount: number;
-};
-
-type ExportPayload =
-  | { ok: false; error: string }
-  | { ok: true; empty: true; date?: string; fromDate?: string | null; toDate?: string | null; fundTypeCode: number }
-  | { ok: true; empty?: false; date: string; fromDate?: string | null; toDate?: string | null; fundTypeCode: number; rows: ExportRow[] };
 
 export type FundHistorySyncResult = {
   ok: boolean;
@@ -37,20 +17,6 @@ export type FundHistorySyncResult = {
   writtenRows: number;
   touchedDates: number;
 };
-
-function resolvePythonBin(root: string): string {
-  const fromEnv = process.env.TEFAS_PYTHON?.trim();
-  if (fromEnv) return fromEnv;
-  const venvUnix = path.join(root, "scripts", ".venv", "bin", "python3");
-  const venvWin = path.join(root, "scripts", ".venv", "Scripts", "python.exe");
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  if (fs.existsSync(venvWin)) return venvWin;
-  return process.platform === "win32" ? "python" : "python3";
-}
-
-function projectRoot(): string {
-  return process.cwd();
-}
 
 function formatDate(d: Date): string {
   return `${String(d.getUTCDate()).padStart(2, "0")}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.${d.getUTCFullYear()}`;
@@ -116,32 +82,16 @@ function buildChunkCacheKey(chunk: { start: Date; end: Date }, fundTypeCode: num
   return `${formatDate(chunk.start)}:${formatDate(chunk.end)}:${fundTypeCode}`;
 }
 
-function fetchHistoryChunk(chunk: { start: Date; end: Date }, fundTypeCode: number): ExportPayload {
-  const root = projectRoot();
-  const script = path.join(root, "scripts", "tefas_export.py");
-  const py = resolvePythonBin(root);
-
-  const out = execFileSync(
-    py,
-    [
-      script,
-      "--fund-type",
-      String(fundTypeCode),
-      "--from-date",
-      formatDate(chunk.start),
-      "--to-date",
-      formatDate(chunk.end),
-    ],
-    {
-      cwd: root,
-      encoding: "utf-8",
-      maxBuffer: 128 * 1024 * 1024,
-      timeout: 900_000,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
-    }
-  );
-
-  return JSON.parse(out.trim()) as ExportPayload;
+async function fetchHistoryChunk(
+  client: TefasBrowserClient,
+  chunk: { start: Date; end: Date },
+  fundTypeCode: 0 | 1
+): Promise<TefasExportPayload> {
+  return client.fetchPayload({
+    fundTypeCode,
+    fromDate: chunk.start,
+    toDate: chunk.end,
+  });
 }
 
 function splitChunk(chunk: { start: Date; end: Date }): Array<{ start: Date; end: Date }> {
@@ -154,13 +104,21 @@ function splitChunk(chunk: { start: Date; end: Date }): Array<{ start: Date; end
   ];
 }
 
-function fetchHistoryChunkWithFallback(chunk: { start: Date; end: Date }, fundTypeCode: number): ExportPayload[] {
+async function fetchHistoryChunkWithFallback(
+  client: TefasBrowserClient,
+  chunk: { start: Date; end: Date },
+  fundTypeCode: 0 | 1
+): Promise<TefasExportPayload[]> {
   try {
-    return [fetchHistoryChunk(chunk, fundTypeCode)];
+    return [await fetchHistoryChunk(client, chunk, fundTypeCode)];
   } catch (error) {
     const parts = splitChunk(chunk);
     if (parts.length <= 1) throw error;
-    return parts.flatMap((part) => fetchHistoryChunkWithFallback(part, fundTypeCode));
+    const out: TefasExportPayload[] = [];
+    for (const part of parts) {
+      out.push(...(await fetchHistoryChunkWithFallback(client, part, fundTypeCode)));
+    }
+    return out;
   }
 }
 
@@ -181,7 +139,7 @@ async function loadActiveFundMap(): Promise<Map<string, string>> {
 }
 
 function mergePayloadRows(
-  payloads: ExportPayload[],
+  payloads: TefasExportPayload[],
   fundIdByCode: Map<string, string>,
   fallbackDate: Date
 ): NormalizedHistoryRow[] {
@@ -321,27 +279,31 @@ export async function syncFundHistoryRange(options: {
     let fetchedRows = 0;
     let writtenRows = 0;
     const touchedDates = new Set<number>();
+    await withTefasBrowserClient(async (client) => {
+      for (const chunk of chunks) {
+        const payloads: TefasExportPayload[] = [];
 
-    for (const chunk of chunks) {
-      const payloads = [0, 1].flatMap((fundTypeCode) =>
-        fetchHistoryChunkWithFallback(chunk, fundTypeCode).map((payload) => {
-          if (!payload.ok) {
-            throw new Error(`[history-sync] ${buildChunkCacheKey(chunk, fundTypeCode)} -> ${payload.error}`);
+        for (const fundTypeCode of [0, 1] as const) {
+          const parts = await fetchHistoryChunkWithFallback(client, chunk, fundTypeCode);
+          for (const payload of parts) {
+            if (!payload.ok) {
+              throw new Error(`[history-sync] ${buildChunkCacheKey(chunk, fundTypeCode)} -> ${payload.error}`);
+            }
+            payloads.push(payload);
           }
-          return payload;
-        })
-      );
-
-      for (const payload of payloads) {
-        if (payload.ok && !("empty" in payload && payload.empty) && "rows" in payload) {
-          fetchedRows += payload.rows.length;
         }
-      }
 
-      const rows = mergePayloadRows(payloads, fundIdByCode, chunk.end);
-      for (const row of rows) touchedDates.add(row.date.getTime());
-      writtenRows += await upsertHistoryRows(rows);
-    }
+        for (const payload of payloads) {
+          if (payload.ok && !("empty" in payload && payload.empty) && "rows" in payload) {
+            fetchedRows += payload.rows.length;
+          }
+        }
+
+        const rows = mergePayloadRows(payloads, fundIdByCode, chunk.end);
+        for (const row of rows) touchedDates.add(row.date.getTime());
+        writtenRows += await upsertHistoryRows(rows);
+      }
+    });
 
     const details = {
       phase: "history_backfill",
