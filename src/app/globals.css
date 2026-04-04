@@ -158,14 +158,14 @@
 }
 
 [data-theme="dark"] {
-  /* Derin lacivert / mürekkep — saf siyah değil */
-  --bg-base: #0c101c;
-  --bg-surface: #121726;
-  --bg-elevated: #171d2e;
-  --bg-hover: rgba(120, 130, 220, 0.08);
-  --bg-active: rgba(120, 130, 220, 0.12);
-  --bg-muted: #1c2334;
-  --bg-card-tint: rgba(99, 110, 200, 0.05);
+  /* Modern “ink” — daha koyu, hafif soğuk mavi-gri; #000 değil (Linear / Vercel tarzı) */
+  --bg-base: #07090e;
+  --bg-surface: #0b0e15;
+  --bg-elevated: #11141c;
+  --bg-hover: rgba(130, 150, 230, 0.075);
+  --bg-active: rgba(130, 150, 230, 0.11);
+  --bg-muted: #161a24;
+  --bg-card-tint: rgba(100, 125, 210, 0.045);
 
   --surface-page: var(--bg-base);
   --surface-section: var(--bg-elevated);
@@ -173,8 +173,8 @@
   --surface-elevated: var(--bg-elevated);
   --surface-control: var(--bg-surface);
   --surface-table-header: var(--bg-muted);
-  --surface-row-hover: rgba(255, 255, 255, 0.03);
-  --surface-selected: rgba(120, 130, 220, 0.09);
+  --surface-row-hover: rgba(255, 255, 255, 0.028);
+  --surface-selected: rgba(125, 145, 235, 0.085);
   --kpi-icon-surface: var(--bg-muted);
   --metric-kpi-bg: var(--bg-surface);
   --metric-kpi-border: var(--border-subtle);
@@ -184,14 +184,14 @@
   --bg-success-subtle: rgba(95, 179, 168, 0.1);
   --bg-danger-subtle: rgba(196, 137, 137, 0.1);
 
-  --text-primary: #ececf1;
-  --text-secondary: #a8a8b8;
-  --text-tertiary: #7e7e90;
-  --text-muted: #656575;
+  --text-primary: #e8eaef;
+  --text-secondary: #9aa4b3;
+  --text-tertiary: #768090;
+  --text-muted: #5c6778;
 
-  --border-subtle: rgba(255, 255, 255, 0.055);
-  --border-default: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-subtle: rgba(255, 255, 255, 0.062);
+  --border-default: rgba(255, 255, 255, 0.092);
+  --border-strong: rgba(255, 255, 255, 0.132);
   --border-focus: rgba(129, 140, 248, 0.45);
 
   --success: #5fb3a8;
@@ -217,11 +217,11 @@
   --brand-bist: #ffffff;
   --brand-marketcap: #a5b4fc;
 
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-sm: 0 4px 20px rgba(0, 0, 0, 0.32);
-  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.38);
-  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.45);
-  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.5);
+  --shadow-xs: 0 1px 2px rgba(4, 8, 18, 0.48);
+  --shadow-sm: 0 4px 22px rgba(4, 8, 18, 0.44);
+  --shadow-md: 0 8px 30px rgba(4, 8, 18, 0.48);
+  --shadow-lg: 0 20px 52px rgba(3, 6, 16, 0.52);
+  --shadow-xl: 0 28px 68px rgba(3, 6, 16, 0.56);
 
   --mesh-color-1: rgba(99, 102, 241, 0.07);
   --mesh-color-2: rgba(59, 130, 200, 0.05);
@@ -231,25 +231,26 @@
   --hero-border: var(--border-subtle);
 
   --card-bg: var(--bg-surface);
-  --card-border: rgba(255, 255, 255, 0.055);
-  --card-shadow: 0 12px 40px rgba(0, 0, 0, 0.38);
+  --card-bg-tinted: #131720;
+  --card-border: rgba(255, 255, 255, 0.065);
+  --card-shadow: 0 12px 44px rgba(3, 6, 14, 0.52);
 
   --surface-card: var(--card-bg);
 
   --table-header-bg: var(--surface-table-header);
-  --table-row-hover: rgba(255, 255, 255, 0.035);
-  --table-border: rgba(255, 255, 255, 0.06);
+  --table-row-hover: rgba(255, 255, 255, 0.032);
+  --table-border: rgba(255, 255, 255, 0.068);
   --table-stripe: rgba(255, 255, 255, 0.02);
 
   --nav-bg: var(--bg-surface);
-  --nav-border: rgba(255, 255, 255, 0.065);
-  --header-brand-rule: rgba(255, 255, 255, 0.08);
+  --nav-border: rgba(255, 255, 255, 0.07);
+  --header-brand-rule: rgba(255, 255, 255, 0.085);
 
-  --surface-glass: rgba(22, 28, 42, 0.88);
-  --surface-glass-hover: rgba(28, 34, 50, 0.92);
-  --surface-glass-strong: rgba(32, 38, 54, 0.94);
-  --surface-glass-mid: rgba(26, 32, 48, 0.9);
-  --surface-glass-95: rgba(24, 30, 44, 0.96);
+  --surface-glass: rgba(11, 14, 22, 0.91);
+  --surface-glass-hover: rgba(14, 17, 26, 0.93);
+  --surface-glass-strong: rgba(18, 21, 30, 0.95);
+  --surface-glass-mid: rgba(12, 15, 24, 0.9);
+  --surface-glass-95: rgba(14, 18, 28, 0.97);
   --gradient-panel: var(--card-bg);
   --gradient-card-soft: var(--card-bg);
   --gradient-metric-card: var(--card-bg);
@@ -275,8 +276,8 @@
   --screener-panel-bg: var(--bg-elevated);
   --screener-panel-border: var(--border-subtle);
   --header-chrome-bg: var(--bg-surface);
-  --header-chrome-border: rgba(255, 255, 255, 0.09);
-  --header-tools-divider: rgba(255, 255, 255, 0.1);
+  --header-chrome-border: rgba(255, 255, 255, 0.095);
+  --header-tools-divider: rgba(255, 255, 255, 0.105);
 
   --sparkline-stroke-up: var(--success);
   --sparkline-stroke-down: var(--danger);
@@ -285,9 +286,9 @@
   --sparkline-stroke-table: var(--accent-blue);
   --sparkline-stroke-table-down: #c9a0a0;
 
-  --ds-glass-border: rgba(255, 255, 255, 0.06);
+  --ds-glass-border: rgba(255, 255, 255, 0.068);
 
-  --row-accent-line: #9aacf0;
+  --row-accent-line: #93a8e8;
 }
 
 /* ========================================
@@ -2338,16 +2339,16 @@ body {
   justify-content: center;
 }
 
-/* Fon türü — küçük, yumuşak veri işaretçisi + düşük doygunluklu tonlar */
+/* Fon türü — kompakt çerçeve, yumuşak veri işaretçisi + düşük doygunluklu tonlar */
 .fund-type-chip {
   box-sizing: border-box;
   max-width: 100%;
-  padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
-  font-size: 0.625rem;
+  padding: 0.0625rem 0.3125rem;
+  border-radius: 0.1875rem;
+  font-size: 0.5625rem;
   font-weight: 500;
-  letter-spacing: 0.02em;
-  line-height: 1.15;
+  letter-spacing: 0.022em;
+  line-height: 1.12;
   border-width: 1px;
   border-style: solid;
   font-variant-numeric: tabular-nums;
@@ -2356,56 +2357,56 @@ body {
 .fund-type-chip--tone-neutral {
   color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
   background: color-mix(in srgb, var(--text-primary) 3.5%, var(--card-bg));
-  border-color: color-mix(in srgb, var(--border-subtle) 58%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle) 48%, transparent);
 }
 
 /* Yatırım (TEFAS kod 0) — hafif soğuk gri-mavi */
 .fund-type-chip--tone-yat {
   color: color-mix(in srgb, #546273 38%, var(--text-secondary));
   background: color-mix(in srgb, #5a6d7d 5.5%, var(--card-bg));
-  border-color: color-mix(in srgb, #5a6d7d 15%, transparent);
+  border-color: color-mix(in srgb, #5a6d7d 12%, transparent);
 }
 
 /* BES / emeklilik — hafif mürdüm-gri */
 .fund-type-chip--tone-bes {
   color: color-mix(in srgb, #5c5566 36%, var(--text-secondary));
   background: color-mix(in srgb, #6b6278 5%, var(--card-bg));
-  border-color: color-mix(in srgb, #6b6278 14%, transparent);
+  border-color: color-mix(in srgb, #6b6278 11%, transparent);
 }
 
 /* Hisse odaklı — çok hafif lacivert-gri */
 .fund-type-chip--tone-equity {
   color: color-mix(in srgb, #4d5f72 34%, var(--text-secondary));
   background: color-mix(in srgb, #4a6280 5%, var(--card-bg));
-  border-color: color-mix(in srgb, #4a6280 13%, transparent);
+  border-color: color-mix(in srgb, #4a6280 11%, transparent);
 }
 
 /* Para / likidite — çok hafif teal-gri */
 .fund-type-chip--tone-liquidity {
   color: color-mix(in srgb, #4d6568 34%, var(--text-secondary));
   background: color-mix(in srgb, #3d6065 5%, var(--card-bg));
-  border-color: color-mix(in srgb, #3d6065 13%, transparent);
+  border-color: color-mix(in srgb, #3d6065 11%, transparent);
 }
 
 /* Borçlanma — hafif sıcak gri */
 .fund-type-chip--tone-bond {
   color: color-mix(in srgb, #5d5348 34%, var(--text-secondary));
   background: color-mix(in srgb, #6b5c4a 5%, var(--card-bg));
-  border-color: color-mix(in srgb, #6b5c4a 13%, transparent);
+  border-color: color-mix(in srgb, #6b5c4a 11%, transparent);
 }
 
 /* Altın / emtia — hafif zeytin-gri */
 .fund-type-chip--tone-commodity {
   color: color-mix(in srgb, #5e5645 34%, var(--text-secondary));
   background: color-mix(in srgb, #6d6348 5%, var(--card-bg));
-  border-color: color-mix(in srgb, #6d6348 12%, transparent);
+  border-color: color-mix(in srgb, #6d6348 10%, transparent);
 }
 
 /* Katılım — hafif sage */
 .fund-type-chip--tone-participation {
   color: color-mix(in srgb, #4a574d 34%, var(--text-secondary));
   background: color-mix(in srgb, #4a5c50 5%, var(--card-bg));
-  border-color: color-mix(in srgb, #4a5c50 13%, transparent);
+  border-color: color-mix(in srgb, #4a5c50 11%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-neutral {
@@ -2416,51 +2417,51 @@ body {
 [data-theme="dark"] .fund-type-chip--tone-yat {
   color: color-mix(in srgb, #9aa8b8 45%, var(--text-secondary));
   background: color-mix(in srgb, #7a8fa3 7%, var(--card-bg));
-  border-color: color-mix(in srgb, #7a8fa3 20%, transparent);
+  border-color: color-mix(in srgb, #7a8fa3 15%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-bes {
   color: color-mix(in srgb, #a8a0b8 42%, var(--text-secondary));
   background: color-mix(in srgb, #8a8298 6.5%, var(--card-bg));
-  border-color: color-mix(in srgb, #8a8298 18%, transparent);
+  border-color: color-mix(in srgb, #8a8298 14%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-equity {
   color: color-mix(in srgb, #94a3b8 42%, var(--text-secondary));
   background: color-mix(in srgb, #647896 6.5%, var(--card-bg));
-  border-color: color-mix(in srgb, #647896 18%, transparent);
+  border-color: color-mix(in srgb, #647896 14%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-liquidity {
   color: color-mix(in srgb, #8fb0b3 38%, var(--text-secondary));
   background: color-mix(in srgb, #4d7378 7%, var(--card-bg));
-  border-color: color-mix(in srgb, #4d7378 18%, transparent);
+  border-color: color-mix(in srgb, #4d7378 14%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-bond {
   color: color-mix(in srgb, #b8a99a 38%, var(--text-secondary));
   background: color-mix(in srgb, #7a6b58 6.5%, var(--card-bg));
-  border-color: color-mix(in srgb, #7a6b58 17%, transparent);
+  border-color: color-mix(in srgb, #7a6b58 13%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-commodity {
   color: color-mix(in srgb, #b5ab92 38%, var(--text-secondary));
   background: color-mix(in srgb, #7d7355 6.5%, var(--card-bg));
-  border-color: color-mix(in srgb, #7d7355 17%, transparent);
+  border-color: color-mix(in srgb, #7d7355 13%, transparent);
 }
 
 [data-theme="dark"] .fund-type-chip--tone-participation {
   color: color-mix(in srgb, #9eb0a4 38%, var(--text-secondary));
   background: color-mix(in srgb, #5a6e62 6.5%, var(--card-bg));
-  border-color: color-mix(in srgb, #5a6e62 18%, transparent);
+  border-color: color-mix(in srgb, #5a6e62 14%, transparent);
 }
 
 .fund-type-chip--mobile {
-  padding: 0.09375rem 0.3125rem;
-  font-size: 0.5625rem;
-  line-height: 1.1;
-  letter-spacing: 0.018em;
-  border-radius: 0.21875rem;
+  padding: 0.0625rem 0.28125rem;
+  font-size: 0.53125rem;
+  line-height: 1.08;
+  letter-spacing: 0.02em;
+  border-radius: 0.1875rem;
 }
 
 [data-theme="dark"] .ds-badge-risk-mid {

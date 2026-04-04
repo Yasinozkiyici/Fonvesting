@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { FundLogoMark } from "./FundLogoMark";
+import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 
 interface FundRow {
   id: string;
@@ -511,13 +512,6 @@ function FundCell({ f, formatPrice }: { f: FundRow; formatPrice: (n: number) => 
   );
 }
 
-function fundTypeLabelFundsMobile(ft: { name: string } | null | undefined): string {
-  if (!ft?.name) return "—";
-  const n = ft.name.trim();
-  if (n.length <= 14) return n;
-  return `${n.slice(0, 12)}…`;
-}
-
 function FundMobileListCard({
   f,
   rank,
@@ -574,7 +568,7 @@ function FundMobileListCard({
       <p
         className="mt-1.5 text-[11px] leading-tight tabular-nums truncate"
         style={{ color: "var(--text-secondary)" }}
-        title={`${formatPrice(f.lastPrice)} · ${formatPort(f.portfolioSize)} · ${f.fundType?.name ?? "—"}`}
+        title={`${formatPrice(f.lastPrice)} · ${formatPort(f.portfolioSize)} · ${fundTypeDisplayLabel(f.fundType)}`}
       >
         <span style={{ color: "var(--text-muted)" }}>Fiyat</span>{" "}
         <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -589,7 +583,7 @@ function FundMobileListCard({
           ·
         </span>
         <span style={{ color: "var(--text-muted)" }}>Tür</span>{" "}
-        <span className="font-medium">{fundTypeLabelFundsMobile(f.fundType)}</span>
+        <span className="font-medium">{fundTypeDisplayLabel(f.fundType)}</span>
       </p>
     </article>
   );

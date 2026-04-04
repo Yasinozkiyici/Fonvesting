@@ -1,16 +1,17 @@
 /**
- * Fon türü chip’i için düşük doygunluklu ton sınıfı (TEFAS kodu + isim anahtar kelimeleri).
+ * Fon türü chip’i için düşük doygunluklu ton sınıfı.
+ * `displayLabel` — fundTypeDisplayLabel() çıktısı (TEFAS kodu ile uyumlu kısa metin).
  */
 export function fundTypeChipToneClass(
   fundType: { code: number; name: string } | null,
-  label: string
+  displayLabel: string
 ): string {
-  const raw = (fundType?.name ?? label).trim();
-  if (!raw || raw === "—") return "fund-type-chip--tone-neutral";
+  const dl = displayLabel.trim();
+  if (!dl || dl === "—") return "fund-type-chip--tone-neutral";
 
-  const n = raw.toLocaleLowerCase("tr");
+  const n = dl.toLocaleLowerCase("tr");
 
-  if (fundType?.code === 1 || /\b(bes|emeklilik)\b/i.test(raw)) {
+  if (fundType?.code === 1 || /\b(bes|emeklilik)\b/i.test(dl)) {
     return "fund-type-chip--tone-bes";
   }
 

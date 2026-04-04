@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,7 +22,7 @@ export async function GET() {
         return {
           id: t.id,
           code: t.code,
-          name: t.name,
+          name: fundTypeDisplayLabel(t),
           description: t.description,
           fundCount: t._count.funds,
           avgDailyReturn: agg._avg.dailyReturn ?? 0,

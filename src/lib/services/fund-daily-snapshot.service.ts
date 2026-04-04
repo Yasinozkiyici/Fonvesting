@@ -15,6 +15,7 @@ import {
   type RiskLevel,
 } from "@/lib/scoring";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
+import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-compute.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -292,7 +293,7 @@ function buildSnapshotRecords(fundRows: FundRow[], historyByFund: Map<string, Ar
       categoryCode: fund.category?.code ?? null,
       categoryName: fund.category?.name ?? null,
       fundTypeCode: fund.fundType?.code ?? null,
-      fundTypeName: fund.fundType?.name ?? null,
+      fundTypeName: fund.fundType ? fundTypeDisplayLabel(fund.fundType) : null,
       riskLevel,
       lastPrice: performance.lastPrice || fund.lastPrice,
       dailyReturn: performance.dailyReturn,
@@ -353,7 +354,13 @@ function snapshotRowToScoredFund(row: {
     portfolioSize: row.portfolioSize,
     investorCount: row.investorCount,
     category: row.categoryCode && row.categoryName ? { code: row.categoryCode, name: row.categoryName } : null,
-    fundType: row.fundTypeCode != null && row.fundTypeName ? { code: row.fundTypeCode, name: row.fundTypeName } : null,
+    fundType:
+      row.fundTypeCode != null && row.fundTypeName
+        ? {
+            code: row.fundTypeCode,
+            name: fundTypeDisplayLabel({ code: row.fundTypeCode, name: row.fundTypeName }),
+          }
+        : null,
     finalScore: row[finalField],
     riskLevel: row.riskLevel as RiskLevel,
     scores: row.scores as unknown as NormalizedScores,

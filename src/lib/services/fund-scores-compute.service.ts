@@ -14,6 +14,7 @@ import {
 } from "@/lib/scoring";
 import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
+import { fundTypeForApi } from "@/lib/fund-type-display";
 
 /** API satırı: skor alanları + tabloda gösterilen alanlar */
 export type ScoredFundRow = FundScore & {
@@ -182,7 +183,7 @@ async function computeScoresPayloadFromRawData(mode: RankingMode, categoryKey: s
       portfolioSize: fund.portfolioSize,
       investorCount: fund.investorCount,
       category: fund.category,
-      fundType: fund.fundType,
+      fundType: fundTypeForApi(fund.fundType),
       finalScore,
       riskLevel,
       scores,

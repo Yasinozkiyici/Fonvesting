@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import type { RankingMode } from "@/lib/scoring";
 import { Prisma } from "@prisma/client";
 import { computeScoresPayload, type ScoresApiPayload } from "@/lib/services/fund-scores-compute.service";
+import { normalizeScoresPayloadFundTypes } from "@/lib/fund-type-display";
 
 const KEY_PREFIX = "scores:v3";
 
@@ -24,7 +25,7 @@ export async function getScoresPayloadCached(mode: RankingMode, categoryKey: str
   try {
     const row = await prisma.scoresApiCache.findUnique({ where: { cacheKey } });
     if (row?.payload != null) {
-      return row.payload as unknown as ScoresApiPayload;
+      return normalizeScoresPayloadFundTypes(row.payload as unknown as ScoresApiPayload);
     }
   } catch (e) {
     if (!isRelationMissingError(e)) throw e;

@@ -10,10 +10,11 @@ import {
 import { FundLogoMark } from "@/components/tefas/FundLogoMark";
 import { PctChangeMobile, PctChangeTable } from "@/components/ds/PctChange";
 import { fundTypeChipToneClass } from "@/lib/fund-type-chip-tone";
+import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 
 export function FundRowMobile({ fund }: { fund: ScoredFund }) {
   const subtitle = fundDisplaySubtitle(fund);
-  const typeLabel = fund.fundType?.name?.trim() || "—";
+  const typeLabel = fundTypeDisplayLabel(fund.fundType);
   const typeTone = fundTypeChipToneClass(fund.fundType, typeLabel);
 
   return (
@@ -71,7 +72,7 @@ export function FundRowMobile({ fund }: { fund: ScoredFund }) {
 
 export function FundDataTableRow({ fund }: { fund: ScoredFund }) {
   const subtitle = fundDisplaySubtitle(fund);
-  const typeLabel = fund.fundType?.name?.trim() || "—";
+  const typeLabel = fundTypeDisplayLabel(fund.fundType);
   const typeTone = fundTypeChipToneClass(fund.fundType, typeLabel);
 
   return (

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,7 +22,7 @@ export async function GET() {
         });
         return {
           code: String(t.code),
-          name: t.name,
+          name: fundTypeDisplayLabel(t),
           changePercent: Number((agg._avg.dailyReturn ?? 0).toFixed(4)),
           value: agg._sum.portfolioSize ?? 0,
           stockCount: t._count.funds,

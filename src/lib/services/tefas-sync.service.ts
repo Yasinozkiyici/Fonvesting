@@ -329,7 +329,7 @@ export async function rebuildMarketSnapshot(snapshotDate: Date): Promise<void> {
 async function ensureFundTypes(fundTypeCode: number): Promise<string> {
   const names: Record<number, string> = {
     0: "Yatırım Fonları",
-    1: "Emeklilik Fonları (BES)",
+    1: "Emeklilik Fonları",
   };
   const row = await prisma.fundType.upsert({
     where: { code: fundTypeCode },

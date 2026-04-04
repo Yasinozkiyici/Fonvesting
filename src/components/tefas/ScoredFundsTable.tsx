@@ -15,6 +15,7 @@ import type { RankingMode } from "@/lib/scoring";
 import { RankingModeToggle } from "./ScoringComponents";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
 import { FundRowMobile, FundDataTableRow } from "@/components/ds/FundRow";
+import { fundTypeSortKey } from "@/lib/fund-type-display";
 
 export type { ScoredFund, ScoredResponse };
 
@@ -133,9 +134,7 @@ export default function ScoredFundsTable({
 
     return [...list].sort((a, b) => {
       if (sortField === "fundType") {
-        const as = (a.fundType?.name ?? "").toLocaleLowerCase("tr");
-        const bs = (b.fundType?.name ?? "").toLocaleLowerCase("tr");
-        const cmp = as.localeCompare(bs, "tr");
+        const cmp = fundTypeSortKey(a.fundType).localeCompare(fundTypeSortKey(b.fundType), "tr");
         return sortDir === "desc" ? -cmp : cmp;
       }
 

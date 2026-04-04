@@ -24,7 +24,7 @@ async function main() {
       data: { code: 0, name: "Yatırım Fonları", description: "TEFAS yatırım fonları" },
     }),
     prisma.fundType.create({
-      data: { code: 1, name: "Emeklilik Fonları (BES)", description: "BES fonları" },
+      data: { code: 1, name: "Emeklilik Fonları", description: "BES fonları" },
     }),
   ]);
 

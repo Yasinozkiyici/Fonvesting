@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } from "@/lib/services/tefas-browser.service";
@@ -172,30 +173,22 @@ async function upsertHistoryRows(rows: NormalizedHistoryRow[]): Promise<number> 
 
   for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
     const slice = rows.slice(i, i + UPSERT_CHUNK);
-    await prisma.$transaction(
-      slice.map((row) =>
-        prisma.fundPriceHistory.upsert({
-          where: {
-            fundId_date: {
-              fundId: row.fundId,
-              date: row.date,
-            },
-          },
-          update: {
-            price: row.price,
-            portfolioSize: row.portfolioSize,
-            investorCount: row.investorCount,
-          },
-          create: {
-            fundId: row.fundId,
-            date: row.date,
-            price: row.price,
-            portfolioSize: row.portfolioSize,
-            investorCount: row.investorCount,
-          },
-        })
+    const values = Prisma.join(
+      slice.map(
+        (row) =>
+          Prisma.sql`(${randomUUID()}, ${row.fundId}, ${row.date}, ${row.price}, ${row.portfolioSize}, ${row.investorCount})`
       )
     );
+
+    await prisma.$executeRaw`
+      INSERT INTO "FundPriceHistory" ("id", "fundId", "date", "price", "portfolioSize", "investorCount")
+      VALUES ${values}
+      ON CONFLICT ("fundId", "date") DO UPDATE
+      SET
+        "price" = EXCLUDED."price",
+        "portfolioSize" = EXCLUDED."portfolioSize",
+        "investorCount" = EXCLUDED."investorCount"
+    `;
     written += slice.length;
   }
 
