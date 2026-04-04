@@ -105,6 +105,7 @@ export function FundDataTableRow({ fund }: { fund: ScoredFund }) {
           </div>
         </Link>
       </td>
+      <td className="fund-col-gutter" aria-hidden="true" />
       <td className="fund-col-type">
         <span className="fund-type-chip inline-block max-w-full truncate align-middle" title={typeLabel}>
           {typeLabel}

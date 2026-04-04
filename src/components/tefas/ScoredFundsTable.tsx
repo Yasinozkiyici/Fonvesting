@@ -319,9 +319,10 @@ export default function ScoredFundsTable({
       </div>
 
       <div className="hidden md:block overflow-x-auto tefas-table-touch-scroll">
-        <table className="fund-data-table min-w-[760px] w-full text-left">
+        <table className="fund-data-table min-w-[780px] w-full text-left">
           <colgroup>
             <col className="fund-col-name" />
+            <col className="fund-col-gutter" />
             <col className="fund-col-type" />
             <col className="fund-col-price" />
             <col className="fund-col-1d" />
@@ -333,6 +334,7 @@ export default function ScoredFundsTable({
               <th className="fund-th fund-th-name" scope="col">
                 <span className="scored-th-label">Fon</span>
               </th>
+              <th className="fund-th fund-th-gutter" scope="col" aria-hidden="true" />
               <th className="fund-th fund-th-type" scope="col">
                 <SortableHeader
                   label="Fon türü"
@@ -367,20 +369,20 @@ export default function ScoredFundsTable({
             {loading ? (
               [...Array(10)].map((_, i) => (
                 <tr key={i} className="table-row">
-                  <td colSpan={6} className="px-6 py-3">
+                  <td colSpan={7} className="px-6 py-3">
                     <div className="h-10 rounded-lg animate-pulse" style={{ background: "var(--bg-muted)" }} />
                   </td>
                 </tr>
               ))
             ) : error ? (
               <tr>
-                <td colSpan={6} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={7} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   {error}
                 </td>
               </tr>
             ) : paginatedFunds.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={7} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   Sonuç bulunamadı.
                 </td>
               </tr>

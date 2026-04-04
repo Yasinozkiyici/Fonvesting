@@ -2136,22 +2136,31 @@ body {
 }
 
 .fund-data-table col.fund-col-name {
-  width: 36%;
+  width: 41%;
+}
+/* Fon ↔ Fon türü: gerçek sütun gutter’ı (layout seviyesi boşluk) */
+.fund-data-table col.fund-col-gutter {
+  width: 1.125rem;
+}
+@media (min-width: 1024px) {
+  .fund-data-table col.fund-col-gutter {
+    width: 1.375rem;
+  }
 }
 .fund-data-table col.fund-col-type {
-  width: 15%;
+  width: 14%;
 }
 .fund-data-table col.fund-col-price {
-  width: 10%;
+  width: 9%;
 }
 .fund-data-table col.fund-col-1d {
-  width: 8%;
+  width: 7%;
 }
 .fund-data-table col.fund-col-inv {
-  width: 11%;
+  width: 10%;
 }
 .fund-data-table col.fund-col-aum {
-  width: 14%;
+  width: 12%;
 }
 
 .fund-data-table th,
@@ -2197,21 +2206,49 @@ body {
 .fund-data-table th.fund-th-name,
 .fund-data-table td.fund-col-name {
   padding-left: var(--ds-16);
-  padding-right: 1.875rem;
+  padding-right: 1rem;
   text-align: left;
 }
 
 @media (min-width: 1024px) {
   .fund-data-table th.fund-th-name,
   .fund-data-table td.fund-col-name {
-    padding-right: 2.25rem;
+    padding-right: 1.125rem;
   }
+}
+
+.fund-data-table th.fund-th-gutter,
+.fund-data-table td.fund-col-gutter {
+  box-sizing: border-box;
+  width: 1.125rem;
+  min-width: 1.125rem;
+  max-width: 1.125rem;
+  padding: 0;
+  border: none;
+  overflow: hidden;
+  font-size: 0;
+  line-height: 0;
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .fund-data-table th.fund-th-gutter,
+  .fund-data-table td.fund-col-gutter {
+    width: 1.375rem;
+    min-width: 1.375rem;
+    max-width: 1.375rem;
+  }
+}
+
+.fund-data-table th.fund-th-gutter {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
 }
 
 .fund-data-table th.fund-th-type,
 .fund-data-table td.fund-col-type {
-  padding-left: 0.625rem;
-  padding-right: 0.875rem;
+  padding-left: 0.5rem;
+  padding-right: 0.75rem;
   text-align: left;
 }
 
@@ -2220,11 +2257,11 @@ body {
   text-align: right;
 }
 
-/* Sağ blok: fiyat / getiri / yatırımcı / portföy — daha sıkı ritim */
+/* Sağ blok: fiyat / getiri / yatırımcı / portföy — kompakt cluster (solda nefes payı) */
 .fund-data-table th.fund-th-metric,
 .fund-data-table td.fund-col-metric {
-  padding-left: 0.3125rem;
-  padding-right: 0.3125rem;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
 }
 
 .fund-data-table td.fund-col-metric.fund-col-aum {
