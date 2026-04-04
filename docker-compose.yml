@@ -1,0 +1,18 @@
+# Yerel PostgreSQL — Vercel/Supabase ile aynı motor (tam uyum).
+# Başlat: docker compose up -d
+# .env.local: DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting"
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fonvesting
+    volumes:
+      - fonvesting_pgdata:/var/lib/postgresql/data
+
+volumes:
+  fonvesting_pgdata:

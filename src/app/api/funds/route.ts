@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { fundLogoProxyUrlForFundId } from "@/lib/services/fund-logo.service";
+import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
 
     const itemsOut = items.map((it) => ({
       ...it,
-      logoUrl: fundLogoProxyUrlForFundId(it.id, it.logoUrl, it.name),
+      logoUrl: getFundLogoUrlForUi(it.id, it.code, it.logoUrl, it.name),
       sparkline: [] as number[],
       sparklineTrend:
         it.dailyReturn > 0 ? "up" : it.dailyReturn < 0 ? ("down" as const) : ("flat" as const),

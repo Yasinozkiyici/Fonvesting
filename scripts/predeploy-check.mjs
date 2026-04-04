@@ -30,11 +30,9 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const dbUrl = process.env.DATABASE_URL ? String(process.env.DATABASE_URL) : "";
-if (dbUrl && !dbUrl.startsWith("file:")) {
-  console.error(
-    "DATABASE_URL yalnızca yerel SQLite olabilir (file:./dev.db). Uzak veritabanı kullanımı bu repoda devre dışı."
-  );
+const dbUrl = process.env.DATABASE_URL ? String(process.env.DATABASE_URL).trim() : "";
+if (dbUrl && !dbUrl.startsWith("postgresql:") && !dbUrl.startsWith("postgres:")) {
+  console.error("DATABASE_URL PostgreSQL olmalı (postgresql://... veya postgres://...). SQLite (file:) artık desteklenmiyor.");
   process.exit(1);
 }
 

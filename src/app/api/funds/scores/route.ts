@@ -12,7 +12,7 @@ import {
   type RankingMode,
   type PricePoint,
 } from "@/lib/scoring";
-import { fundLogoProxyUrlForFundId } from "@/lib/services/fund-logo.service";
+import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
         code: fund.code,
         name: fund.name,
         shortName: fund.shortName,
-        logoUrl: fundLogoProxyUrlForFundId(fund.id, fund.logoUrl, fund.name),
+        logoUrl: getFundLogoUrlForUi(fund.id, fund.code, fund.logoUrl, fund.name),
         lastPrice: fund.lastPrice,
         dailyReturn: fund.dailyReturn,
         portfolioSize: fund.portfolioSize,

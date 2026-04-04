@@ -1,3 +1,5 @@
+import { publicFundLogoUrlFromManifest } from "@/lib/fund-logos-manifest";
+
 /**
  * Fon adındaki portföy yönetim şirketi → doğrulanmış logo URL’i (SVG/PNG, mümkün olduğunca yüksek çözünürlük).
  * Öncelik: DB’deki logoUrl doluysa aynen kullanılır.
@@ -98,10 +100,17 @@ const PORTFOLIO_COMPANY_RULES: LogoRule[] = [
 const CURATED_LOGO_HOSTS = new Set<string>();
 for (const { logoUrl } of PORTFOLIO_COMPANY_RULES) {
   try {
-    CURATED_LOGO_HOSTS.add(new URL(logoUrl).hostname);
+    CURATED_LOGO_HOSTS.add(new URL(logoUrl).hostname.toLowerCase());
   } catch {
     /* ignore */
   }
+}
+
+/** Örn. harici CDN: `FUND_LOGO_FETCH_EXTRA_HOSTS=cdn.ornek.com,images.ornek.com` */
+const EXTRA_FETCH_HOSTS = new Set<string>();
+for (const part of (process.env.FUND_LOGO_FETCH_EXTRA_HOSTS ?? "").split(",")) {
+  const h = part.trim().toLowerCase();
+  if (h) EXTRA_FETCH_HOSTS.add(h);
 }
 
 function isSafePublicHttps(raw: string): boolean {
@@ -129,8 +138,9 @@ export function isResolvedLogoFetchAllowed(target: string, storedUrl: string | n
   const storedTrim = storedUrl?.trim() ?? "";
   const usedDbOnly = Boolean(storedTrim) && target === storedTrim;
   try {
-    const host = new URL(target).hostname;
+    const host = new URL(target).hostname.toLowerCase();
     if (CURATED_LOGO_HOSTS.has(host)) return true;
+    if (EXTRA_FETCH_HOSTS.has(host)) return true;
     if (usedDbOnly && isSafePublicHttps(target)) return true;
   } catch {
     return false;
@@ -148,6 +158,21 @@ export function fundLogoProxyUrlForFundId(
 ): string | null {
   if (!resolveFundLogoUrl(storedUrl, fundName)) return null;
   return `/api/fund-logo?id=${encodeURIComponent(fundId)}`;
+}
+
+/**
+ * Arayüz için logo adresi: önce `public/fund-logos` + manifest (yüksek çözünürlük),
+ * yoksa mevcut proxy / portföy şirketi çözümlemesi.
+ */
+export function getFundLogoUrlForUi(
+  fundId: string,
+  code: string,
+  storedUrl: string | null | undefined,
+  fundName: string
+): string | null {
+  const local = publicFundLogoUrlFromManifest(code);
+  if (local) return local;
+  return fundLogoProxyUrlForFundId(fundId, storedUrl, fundName);
 }
 
 /** Eski `n`+`s` sorgu parametreli yol (yedek / doğrudan test). */

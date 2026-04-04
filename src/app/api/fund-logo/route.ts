@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -11,6 +13,26 @@ export const dynamic = "force-dynamic";
 const MAX_LOGO_BYTES = 2_500_000;
 const UPSTREAM_MS = 12_000;
 
+function readLocalFundLogoBuffer(code: string): { buf: Buffer; contentType: string } | null {
+  const base = path.join(process.cwd(), "public", "fund-logos");
+  const c = code.trim().toUpperCase();
+  const map: Record<string, string> = {
+    png: "image/png",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+  };
+  for (const ext of ["png", "webp", "svg", "jpg", "jpeg"] as const) {
+    const fp = path.join(base, `${c}.${ext}`);
+    if (!fs.existsSync(fp)) continue;
+    const buf = fs.readFileSync(fp);
+    if (buf.length === 0 || buf.length > MAX_LOGO_BYTES) return null;
+    return { buf, contentType: map[ext] ?? "application/octet-stream" };
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   const n = req.nextUrl.searchParams.get("n") ?? "";
@@ -22,10 +44,20 @@ export async function GET(req: NextRequest) {
   if (id) {
     const fund = await prisma.fund.findUnique({
       where: { id },
-      select: { name: true, logoUrl: true },
+      select: { name: true, logoUrl: true, code: true },
     });
     if (!fund) {
       return new NextResponse(null, { status: 404 });
+    }
+    const local = readLocalFundLogoBuffer(fund.code);
+    if (local) {
+      return new NextResponse(new Uint8Array(local.buf), {
+        status: 200,
+        headers: {
+          "Content-Type": local.contentType,
+          "Cache-Control": "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800",
+        },
+      });
     }
     fundName = fund.name;
     stored = fund.logoUrl ?? "";

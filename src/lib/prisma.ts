@@ -1,5 +1,5 @@
-import path from "node:path";
 import { config } from "dotenv";
+import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 
 // Next.js bazen modül yüklenirken .env henüz işlenmemiş olabiliyor; Prisma'dan önce yükle.
@@ -7,25 +7,23 @@ config({ path: path.join(process.cwd(), ".env"), quiet: true });
 config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
 
 /**
- * SQLite için göreli file: yolunu mutlak file:/... yapar (Prisma doğrulaması + Next bundling).
- * Postgres URL ise olduğu gibi döner.
+ * PostgreSQL URL’ini döndürür. Geliştirmede DATABASE_URL yoksa docker-compose (5433) varsayılanı.
+ * Eski SQLite `file:./dev.db` kullanıyorsanız .env’i PostgreSQL’e güncelleyin.
  */
 export function getEffectiveDatabaseUrl(): string {
   const raw = (process.env.DATABASE_URL ?? "").trim();
   if (!raw) {
-    const fallback = path.join(process.cwd(), "prisma", "dev.db");
-    return `file:${fallback}`;
+    if (process.env.NODE_ENV === "development") {
+      return "postgresql://postgres:postgres@localhost:5433/fonvesting";
+    }
+    throw new Error("DATABASE_URL tanımlı değil (Vercel ve üretimde zorunlu).");
   }
-  if (!raw.startsWith("file:")) {
-    return raw;
+  if (raw.startsWith("file:")) {
+    throw new Error(
+      "DATABASE_URL SQLite (file:) kullanıyor; proje artık PostgreSQL kullanıyor. Bkz. .env.example ve docker-compose.yml."
+    );
   }
-  let rest = raw.slice("file:".length).replace(/^\/+/, "");
-  if (path.isAbsolute(rest)) {
-    return `file:${rest}`;
-  }
-  rest = rest.replace(/^\.\//, "");
-  const abs = path.resolve(process.cwd(), "prisma", rest);
-  return `file:${abs}`;
+  return raw;
 }
 
 const globalForPrisma = global as unknown as { prisma?: PrismaClient };

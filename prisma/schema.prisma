@@ -2,9 +2,9 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Yerel SQLite: DATABASE_URL=file:./dev.db → prisma/dev.db (yol, schema dosyasına göre çözülür).
+// Üretim (Vercel) ve yerel: PostgreSQL. Yerel için: docker compose up -d (bkz. docker-compose.yml).
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

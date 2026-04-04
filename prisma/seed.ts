@@ -3,6 +3,12 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
+  const existingFunds = await prisma.fund.count();
+  if (existingFunds > 0) {
+    console.log(`Seed atlandı: veritabanında zaten ${existingFunds} fon var.`);
+    return;
+  }
+
   await prisma.watchlistItem.deleteMany();
   await prisma.watchlist.deleteMany();
   await prisma.user.deleteMany();
