@@ -1,6 +1,7 @@
 "use client";
 
 import { ExternalLink, Github, Twitter, Linkedin } from "lucide-react";
+import { SiteLogo } from "@/components/SiteLogo";
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
@@ -25,12 +26,8 @@ export default function Footer() {
         <div className="py-10 grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Brand */}
           <div className="md:col-span-2">
-            <div className="flex items-center gap-2.5 mb-4">
-              <img
-                src="/images/bistmarketcap-logo.png"
-                alt="BISTMarketCap"
-                className="h-8 w-auto"
-              />
+            <div className="mb-4 flex items-center gap-2.5">
+              <SiteLogo size="footer" />
             </div>
             <p 
               className="text-sm leading-relaxed max-w-sm mb-5"
@@ -109,7 +106,7 @@ export default function Footer() {
         >
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              © {currentYear} BISTMarketCap. Tüm hakları saklıdır.
+              © {currentYear} Yatirim.io. Tüm hakları saklıdır.
             </p>
             <div className="flex items-center gap-5">
               <a 

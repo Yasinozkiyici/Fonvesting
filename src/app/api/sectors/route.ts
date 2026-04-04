@@ -4,52 +4,36 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Geriye dönük uyumluluk: sektör listesi artık TEFAS kategorileridir. */
 export async function GET() {
-
-  const [sectors, sectorStats] = await Promise.all([
-    prisma.sector.findMany({
-      include: {
-        _count: {
-          select: { stocks: true },
-        },
-      },
+  try {
+    const categories = await prisma.fundCategory.findMany({
       orderBy: { name: "asc" },
-    }),
-    prisma.stock.groupBy({
-      by: ["sectorId"],
-      where: { isActive: true, sectorId: { not: null } },
-      _sum: { marketCap: true },
-      _avg: { changePercent: true },
-      _count: { _all: true },
-    }),
-  ]);
+      include: { _count: { select: { funds: true } } },
+    });
 
-  const statsBySectorId = new Map(
-    sectorStats
-      .filter((s) => s.sectorId)
-      .map((s) => [
-        s.sectorId as string,
-        {
-          totalMarketCap: s._sum.marketCap ?? 0,
-          avgChange: s._avg.changePercent ?? 0,
-          stockCount: s._count._all ?? 0,
-        },
-      ])
-  );
+    const rows = await Promise.all(
+      categories.map(async (c) => {
+        const agg = await prisma.fund.aggregate({
+          where: { categoryId: c.id, isActive: true },
+          _avg: { dailyReturn: true },
+        });
+        return {
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          color: c.color,
+          stockCount: c._count.funds,
+          avgChange: Number((agg._avg.dailyReturn ?? 0).toFixed(4)),
+        };
+      })
+    );
 
-  const sectorsWithStats = sectors.map((sector) => {
-    const stats = statsBySectorId.get(sector.id);
-    return {
-      ...sector,
-      stockCount: stats?.stockCount ?? sector._count.stocks,
-      totalMarketCap: stats?.totalMarketCap ?? 0,
-      avgChange: parseFloat((stats?.avgChange ?? 0).toFixed(2)),
-    };
-  });
-
-  return NextResponse.json(sectorsWithStats, {
-    headers: {
-      "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
-    },
-  });
+    return NextResponse.json(rows, {
+      headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" },
+    });
+  } catch (e) {
+    console.error(e);
+    return NextResponse.json({ error: "sectors_failed" }, { status: 500 });
+  }
 }

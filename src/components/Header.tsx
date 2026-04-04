@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Search, Menu, X, Sun, Moon } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
+import { SiteLogoLink } from "@/components/SiteLogo";
 
 export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -13,9 +14,9 @@ export default function Header() {
 
   const navLinks = [
     { href: "/", label: "Piyasalar" },
-    { href: "/stocks", label: "Hisseler" },
-    { href: "/sectors", label: "Sektörler" },
-    { href: "/indices", label: "Endeksler" },
+    { href: "/stocks", label: "Fonlar" },
+    { href: "/sectors", label: "Kategoriler" },
+    { href: "/indices", label: "Fon türleri" },
   ];
 
   return (
@@ -28,18 +29,7 @@ export default function Header() {
     >
       <div className="mx-auto max-w-[1400px] px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link href="/" className="flex items-center flex-shrink-0 group">
-            <img
-              src="/images/bist-icon.png"
-              alt="BISTMarketCap"
-              className="h-8 w-8"
-            />
-            <span className="ml-2 brand-text select-none">
-              <span className="brand-bist">BIST</span>
-              <span className="brand-marketcap">MarketCap</span>
-            </span>
-          </Link>
+          <SiteLogoLink />
 
           {/* Navigation - Desktop */}
           <nav className="hidden md:flex items-center gap-1">
@@ -67,7 +57,7 @@ export default function Header() {
               />
               <input
                 type="text"
-                placeholder="Hisse ara..."
+                placeholder="Fon ara..."
                 className="w-48 h-9 pl-9 pr-3 text-sm rounded-lg transition-all focus:w-64"
                 style={{
                   background: 'var(--bg-surface)',
@@ -113,7 +103,7 @@ export default function Header() {
               />
               <input
                 type="text"
-                placeholder="Hisse ara..."
+                placeholder="Fon ara..."
                 className="input pl-10"
               />
             </div>

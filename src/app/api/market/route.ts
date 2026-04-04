@@ -6,10 +6,8 @@ export const runtime = "nodejs";
 
 function formatNumber(n: number): string {
   const abs = Math.abs(n);
-  if (abs >= 1_000_000_000_000)
-    return (n / 1_000_000_000_000).toFixed(2) + " Trilyon";
-  if (abs >= 1_000_000_000)
-    return (n / 1_000_000_000).toFixed(2) + " Milyar";
+  if (abs >= 1_000_000_000_000) return (n / 1_000_000_000_000).toFixed(2) + " Trilyon";
+  if (abs >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + " Milyar";
   if (abs >= 1_000_000) return (n / 1_000_000).toFixed(2) + " Milyon";
   if (abs >= 1_000) return (n / 1_000).toFixed(2) + " Bin";
   return n.toFixed(2);
@@ -21,84 +19,68 @@ function formatTL(n: number): string {
 
 export async function GET() {
   try {
-
-    const [stocks, snapshot, bist100] = await Promise.all([
-      prisma.stock.findMany({
+    const [
+      fundCount,
+      sums,
+      nonZeroReturnAvg,
+      advancers,
+      decliners,
+      snapshot,
+      topGainers,
+      topLosers,
+    ] = await Promise.all([
+      prisma.fund.count({ where: { isActive: true } }),
+      prisma.fund.aggregate({
         where: { isActive: true },
-        select: {
-          marketCap: true,
-          volume: true,
-          turnover: true,
-          changePercent: true,
-        },
+        _sum: { portfolioSize: true, investorCount: true },
       }),
+      prisma.fund.aggregate({
+        where: { isActive: true, dailyReturn: { not: 0 } },
+        _avg: { dailyReturn: true },
+      }),
+      prisma.fund.count({ where: { isActive: true, dailyReturn: { gt: 0 } } }),
+      prisma.fund.count({ where: { isActive: true, dailyReturn: { lt: 0 } } }),
       prisma.marketSnapshot.findFirst({
         orderBy: { date: "desc" },
       }),
-      prisma.index.findUnique({
-        where: { code: "XU100" },
+      prisma.fund.findMany({
+        where: { isActive: true },
+        orderBy: { dailyReturn: "desc" },
+        take: 5,
+        select: {
+          code: true,
+          name: true,
+          shortName: true,
+          lastPrice: true,
+          dailyReturn: true,
+          portfolioSize: true,
+        },
+      }),
+      prisma.fund.findMany({
+        where: { isActive: true },
+        orderBy: { dailyReturn: "asc" },
+        take: 5,
+        select: {
+          code: true,
+          name: true,
+          shortName: true,
+          lastPrice: true,
+          dailyReturn: true,
+          portfolioSize: true,
+        },
       }),
     ]);
 
-    const totalMarketCap = stocks.reduce((sum, s) => sum + s.marketCap, 0);
-    const totalVolume = stocks.reduce((sum, s) => sum + s.volume, 0);
-    const totalTurnover = stocks.reduce((sum, s) => sum + s.turnover, 0);
-    const advancers = stocks.filter((s) => s.changePercent > 0).length;
-    const decliners = stocks.filter((s) => s.changePercent < 0).length;
-    const unchanged = stocks.filter((s) => s.changePercent === 0).length;
+    const totalPortfolioSize = sums._sum.portfolioSize ?? 0;
+    const totalInvestorCount = sums._sum.investorCount ?? 0;
+    const unchanged = Math.max(0, fundCount - advancers - decliners);
+    const avgDailyReturn = nonZeroReturnAvg._avg.dailyReturn ?? 0;
 
-    const topGainers = await prisma.stock.findMany({
-      where: { isActive: true },
-      orderBy: { changePercent: "desc" },
-      take: 5,
-      select: {
-        symbol: true,
-        name: true,
-        shortName: true,
-        lastPrice: true,
-        changePercent: true,
-      },
-    });
-
-    const topLosers = await prisma.stock.findMany({
-      where: { isActive: true },
-      orderBy: { changePercent: "asc" },
-      take: 5,
-      select: {
-        symbol: true,
-        name: true,
-        shortName: true,
-        lastPrice: true,
-        changePercent: true,
-      },
-    });
-
-    const mostActive = await prisma.stock.findMany({
-      where: { isActive: true },
-      orderBy: { turnover: "desc" },
-      take: 5,
-      select: {
-        symbol: true,
-        name: true,
-        shortName: true,
-        lastPrice: true,
-        turnover: true,
-        changePercent: true,
-      },
-    });
-
-    const payload = {
-      bist100: bist100
-        ? {
-            value: bist100.lastValue,
-            change: bist100.change,
-            changePercent: bist100.changePercent,
-          }
-        : null,
-      totalMarketCap,
-      totalVolume,
-      totalTurnover,
-      stockCount: stocks.length,
+    return NextResponse.json({
+      summary: { avgDailyReturn, totalFundCount: fundCount },
+      totalPortfolioSize,
+      totalInvestorCount,
+      fundCount,
       advancers,
       decliners,
       unchanged,
@@ -106,20 +88,13 @@ export async function GET() {
       eurTry: snapshot?.eurTry ?? null,
       topGainers,
       topLosers,
-      mostActive,
       formatted: {
-        totalMarketCap: formatTL(totalMarketCap),
-        totalTurnover: formatTL(totalTurnover),
-      },
-    };
-
-    return NextResponse.json(payload, {
-      headers: {
-        "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
+        totalPortfolioSize: formatTL(totalPortfolioSize),
+        totalInvestorCount: totalInvestorCount.toLocaleString("tr-TR"),
       },
     });
   } catch (e) {
-    console.error("Market API error:", e);
+    console.error(e);
     return NextResponse.json({ error: "market_failed" }, { status: 500 });
   }
 }

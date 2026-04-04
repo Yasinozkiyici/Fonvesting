@@ -1,94 +1,21 @@
-# BISTMarketCap Deployment Sirası
+# Dağıtım notları
 
-Bu belge, projeyi sorunsuz sekilde production ortamina alma adimlarini siralar.
+Bu repoda **uzak veritabanı adresi, şablon veya migration talimatı tutulmaz**; yanlışlıkla gerçek ortama bağlanma riski kasıtlı olarak kaldırılmıştır.
 
-## 1) Hazirlik (local)
+- Yerel geliştirme: yalnızca SQLite `file:./dev.db` → `prisma/dev.db` (bkz. `.env.example`).
+- Production veritabanını sıfırdan kurduğunuzda şema ve süreçleri o ortama özel, sizin onayınızla ayrıca tanımlarsınız.
 
-1. `.env.example` dosyasini referans al.
-2. Localde test:
-   - `pnpm install`
-   - `pnpm build`
-3. Health endpoint kontrol:
-   - `GET /api/health`
-4. Predeploy env kontrol:
-   - `pnpm predeploy:check`
+## GitHub
 
-## 2) Veritabani secimi
+1. Bu depoyu GitHub’a gönderin (`git push -u origin main`).
+2. CI: `main`/`master` üzerinde push ve PR’larda lint + `prisma migrate deploy` (geçici SQLite) + `next build` çalışır.
 
-Production icin SQLite yerine PostgreSQL onerilir (Supabase veya AWS RDS).
+## Vercel
 
-### Prisma provider degisikligi
-
-`prisma/schema.prisma` icinde:
-
-- `provider = "sqlite"` -> `provider = "postgresql"`
-
-Ardindan migration olustur:
-
-- `pnpm db:migrate --name postgres_init`
-
-> Not: Bu adimi productiona cikmadan once staging ortami ile dene.
-
-## 3) GitHub entegrasyonu
-
-1. Projeyi GitHub reposuna push et.
-2. Vercel hesabinda `New Project` -> repo sec.
-3. Framework: Next.js otomatik secilir.
-
-> macOS notu: Eğer `git` komutlarında Xcode lisans hatası alırsan:
-> `sudo xcodebuild -license` komutunu bir kez çalıştırıp onaylaman gerekir.
-
-## 4) Vercel environment variables
-
-Vercel Project Settings -> Environment Variables:
-
-- `DATABASE_URL` (PostgreSQL)
-- `YAHOO_SYNC_INTERVAL_HOURS` (`4`)
-- `CRON_SECRET` (guclu random string)
-
-## 5) Build ve migration
-
-`package.json` icinde hazir:
-
-- `vercel-build`: `prisma generate && next build`
-- `db:migrate:deploy`: `prisma migrate deploy`
-
-Deployment sonrasi bir kere migration calistir:
-
-- `pnpm db:migrate:deploy`
-
-Prod deploy sırası önerisi:
-
-1. `pnpm predeploy:check`
-2. `pnpm db:migrate:deploy`
-3. Vercel deploy
-
-## 6) Cron sync (4 saatte bir)
-
-`vercel.json` hazir:
-
-- `0 */4 * * *` ile `/api/jobs/sync` endpointini tetikler.
-
-Endpoint auth:
-
-- `Authorization: Bearer <CRON_SECRET>`
-
-## 7) Domain baglama
-
-1. Vercel `Settings > Domains` icine domain ekle.
-2. DNS kayitlarini registrar panelinden gir.
-3. SSL otomatik aktif olur.
-
-## 8) Go-live checklist
-
-- `/api/health` -> 200
-- `/api/stocks` -> veri donuyor
-- `/api/indices` -> XU100/XU030 guncel
-- `/api/sectors` -> sektor listesi dolu
-- cron loglari -> basarili sync
-
-## 9) Opsiyonel ama onerilen
-
-- Sentry hata izleme
-- Uptime monitor (health endpoint izleme)
-- Haftalik DB backup kontrolu
+1. [Vercel](https://vercel.com) → **Add New Project** → GitHub’dan bu repoyu seçin.
+2. **Framework Preset:** Next.js (otomatik).
+3. **Build Command:** `pnpm run build` (varsayılan yeterli; `postinstall` içinde `prisma generate` çalışır).
+4. **Environment Variables** (Supabase/PostgreSQL’e geçince güncelleyin):
+   - `DATABASE_URL` — üretim veritabanı bağlantı dizisi (şu an şema SQLite; uzak PostgreSQL için ayrı migration/strateji gerekir).
+   - `CRON_SECRET` — korumalı job/sync uçları için güçlü bir gizli anahtar.
+5. Şema hâlâ SQLite olduğu için Vercel’de kalıcı dosya tabanlı DB kullanılamaz; canlı ortamda veri için **Supabase (PostgreSQL)** veya benzeri bir sonraki adımda tanımlanmalıdır.

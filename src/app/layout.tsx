@@ -3,11 +3,13 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "BISTMarketCap - Borsa İstanbul Piyasa Verileri",
-  description: "Borsa İstanbul hisse senetleri ve piyasa verileri platformu",
-  icons: {
-    icon: "/images/bist-icon.png",
-  },
+  title: "Yatirim.io — TEFAS yatırım fonları",
+  description: "TEFAS yatırım fonları: fiyat, günlük getiri, portföy büyüklüğü ve yatırımcı sayısı",
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -16,23 +18,31 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="tr" suppressHydrationWarning>
+    <html lang="tr" data-theme="light" suppressHydrationWarning>
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 try {
                   var theme = localStorage.getItem('theme') || 'light';
+                  if (theme !== 'light' && theme !== 'dark') theme = 'light';
                   document.documentElement.setAttribute('data-theme', theme);
-                } catch (e) {}
+                } catch (e) {
+                  document.documentElement.setAttribute('data-theme', 'light');
+                }
               })();
             `,
           }}
         />
       </head>
-      <body>
+      <body
+        className="min-h-screen"
+        style={{
+          backgroundColor: "var(--bg-base, #f8f9fa)",
+          color: "var(--text-primary, #111827)",
+        }}
+      >
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

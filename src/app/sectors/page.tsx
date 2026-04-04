@@ -3,23 +3,22 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
-import Footer from "@/components/bist/Footer";
-import StocksTable from "@/components/bist/StocksTable";
+import Footer from "@/components/tefas/Footer";
+import FundsTable from "@/components/tefas/FundsTable";
 
-type SectorRow = {
+type CatRow = {
   code: string;
   name: string;
   stockCount: number;
-  avgChange: number;
 };
 
 export default function SectorsPage() {
-  const [sectors, setSectors] = useState<SectorRow[]>([]);
+  const [categories, setCategories] = useState<CatRow[]>([]);
 
   useEffect(() => {
     fetch("/api/sectors")
       .then((r) => r.json())
-      .then(setSectors)
+      .then((rows: CatRow[]) => setCategories(rows))
       .catch(console.error);
   }, []);
 
@@ -37,10 +36,10 @@ export default function SectorsPage() {
       <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
-            Sektorler
+            Kategoriler
           </h1>
           <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-            Bir sektor sec ve ilgili hisseleri otomatik listele.
+            Bir kategori seçin; tablo otomatik filtrelenecek. Kategoriler TEFAS tiplerine göre eşlenir.
           </p>
         </div>
 
@@ -50,22 +49,28 @@ export default function SectorsPage() {
             className="rounded-full border px-3 py-1.5 text-sm"
             style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
           >
-            Tum Sektorler
+            Tüm kategoriler
           </Link>
-          {sectors.map((sector) => (
+          {categories.map((c) => (
             <Link
-              key={sector.code}
-              href={`/sectors?sector=${sector.code}`}
+              key={c.code}
+              href={`/sectors?sector=${encodeURIComponent(c.code)}`}
               className="rounded-full border px-3 py-1.5 text-sm"
               style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
             >
-              {sector.name} ({sector.stockCount})
+              {c.name} ({c.stockCount})
             </Link>
           ))}
         </div>
 
-        <Suspense fallback={<div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>Tablo yukleniyor...</div>}>
-          <StocksTable />
+        <Suspense
+          fallback={
+            <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
+              Tablo yükleniyor...
+            </div>
+          }
+        >
+          <FundsTable />
         </Suspense>
       </main>
 

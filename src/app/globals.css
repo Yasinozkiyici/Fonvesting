@@ -56,8 +56,10 @@
   --accent: #6366f1;
   --accent-muted: #4f46e5;
   --accent-bg: rgba(99, 102, 241, 0.1);
+  --accent-soft: rgba(99, 102, 241, 0.08);
 
-  /* Brand */
+  /* Brand — wordmark (tek renk, temaya göre kontrast) */
+  --brand-logo: #f4f4f5;
   --brand-bist: #ffffff;
   --brand-marketcap: #a78bfa;
 
@@ -94,86 +96,89 @@
 
 /* ========================================
    LIGHT THEME
-   Premium, clean, Stripe/Linear inspired
+   Premium, calm, professional finance UI
    ======================================== */
 
 [data-theme="light"] {
-  /* Background System - Warm neutral tones */
-  --bg-base: #f8f9fa;
+  /* Background System - Soft neutral tones */
+  --bg-base: #f7f8fa;
   --bg-surface: #ffffff;
   --bg-elevated: #ffffff;
-  --bg-hover: #f1f3f5;
-  --bg-active: #e9ecef;
-  --bg-muted: #f8f9fa;
+  --bg-hover: rgba(0, 0, 0, 0.02);
+  --bg-active: rgba(0, 0, 0, 0.04);
+  --bg-muted: #f3f4f6;
+  --bg-card-tint: rgba(99, 102, 241, 0.015);
 
-  /* Accent Surfaces */
-  --bg-accent-subtle: rgba(79, 70, 229, 0.04);
-  --bg-success-subtle: rgba(22, 163, 74, 0.06);
-  --bg-danger-subtle: rgba(220, 38, 38, 0.06);
+  /* Accent Surfaces - Very subtle */
+  --bg-accent-subtle: rgba(99, 102, 241, 0.04);
+  --bg-success-subtle: rgba(34, 150, 94, 0.05);
+  --bg-danger-subtle: rgba(200, 50, 50, 0.05);
 
-  /* Text Hierarchy */
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-tertiary: #6b7280;
-  --text-muted: #9ca3af;
+  /* Text Hierarchy - Clear contrast */
+  --text-primary: #1a1d23;
+  --text-secondary: #5c6370;
+  --text-tertiary: #8b919a;
+  --text-muted: #adb3bd;
 
-  /* Borders */
-  --border-subtle: rgba(0, 0, 0, 0.04);
-  --border-default: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.12);
-  --border-focus: rgba(79, 70, 229, 0.5);
+  /* Borders - Soft and subtle */
+  --border-subtle: rgba(0, 0, 0, 0.03);
+  --border-default: rgba(0, 0, 0, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.10);
+  --border-focus: rgba(99, 102, 241, 0.4);
 
-  /* Semantic Colors - Refined, professional */
-  --success: #16a34a;
-  --success-muted: #15803d;
-  --success-bg: rgba(22, 163, 74, 0.08);
-  --success-border: rgba(22, 163, 74, 0.15);
+  /* Semantic Colors - Muted, professional */
+  --success: #1a9d5c;
+  --success-muted: #168a50;
+  --success-bg: rgba(26, 157, 92, 0.08);
+  --success-border: rgba(26, 157, 92, 0.12);
 
-  --danger: #dc2626;
-  --danger-muted: #b91c1c;
-  --danger-bg: rgba(220, 38, 38, 0.08);
-  --danger-border: rgba(220, 38, 38, 0.15);
+  --danger: #d64545;
+  --danger-muted: #c03c3c;
+  --danger-bg: rgba(214, 69, 69, 0.07);
+  --danger-border: rgba(214, 69, 69, 0.12);
 
-  /* Accent */
-  --accent: #4f46e5;
-  --accent-muted: #4338ca;
-  --accent-bg: rgba(79, 70, 229, 0.08);
+  /* Accent - Single cohesive accent */
+  --accent: #6366f1;
+  --accent-muted: #5558e3;
+  --accent-bg: rgba(99, 102, 241, 0.08);
+  --accent-soft: rgba(99, 102, 241, 0.06);
 
-  /* Brand */
-  --brand-bist: #111827;
-  --brand-marketcap: #4f46e5;
+  /* Brand — wordmark (açık temada tek siyah) */
+  --brand-logo: #0a0a0a;
+  --brand-bist: #1a1d23;
+  --brand-marketcap: #6366f1;
 
-  /* Shadows - Soft and elegant */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.06), 0 4px 6px rgba(0, 0, 0, 0.04);
-  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.08), 0 8px 10px rgba(0, 0, 0, 0.04);
+  /* Shadows - Minimal and refined */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-xl: 0 16px 32px rgba(0, 0, 0, 0.06), 0 4px 8px rgba(0, 0, 0, 0.03);
 
-  /* Gradient Mesh - Subtle and harmonious */
-  --mesh-color-1: rgba(99, 102, 241, 0.12);
-  --mesh-color-2: rgba(59, 130, 246, 0.08);
-  --mesh-color-3: rgba(168, 85, 247, 0.06);
-  --mesh-color-4: rgba(16, 185, 129, 0.04);
-  --mesh-opacity: 1;
+  /* Gradient Mesh - Very subtle */
+  --mesh-color-1: rgba(99, 102, 241, 0.06);
+  --mesh-color-2: rgba(99, 102, 241, 0.03);
+  --mesh-opacity: 0.6;
 
-  /* Hero */
-  --hero-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.75) 0%, rgba(248, 250, 252, 0.7) 100%);
-  --hero-border: rgba(0, 0, 0, 0.04);
-
-  /* Card specific - Harmonious with mesh */
-  --card-bg: rgba(255, 255, 255, 0.7);
+  /* Card specific - Soft tinted backgrounds */
+  --card-bg: rgba(255, 255, 255, 0.85);
+  --card-bg-tinted: rgba(248, 249, 252, 0.9);
   --card-border: rgba(0, 0, 0, 0.04);
-  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 
-  /* Table */
-  --table-header-bg: rgba(250, 250, 250, 0.6);
-  --table-row-hover: rgba(249, 250, 251, 0.8);
+  /* Table - Clean and readable */
+  --table-header-bg: rgba(248, 249, 252, 0.8);
+  --table-row-hover: rgba(99, 102, 241, 0.03);
   --table-border: rgba(0, 0, 0, 0.04);
+  --table-stripe: rgba(0, 0, 0, 0.01);
 
   /* Navbar */
-  --nav-bg: rgba(255, 255, 255, 0.6);
+  --nav-bg: rgba(255, 255, 255, 0.8);
   --nav-border: rgba(0, 0, 0, 0.04);
+
+  /* Hero */
+  --hero-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 249, 252, 0.85) 100%);
+  --hero-border: rgba(0, 0, 0, 0.03);
 }
 
 
@@ -233,53 +238,44 @@ body {
   overflow: hidden;
 }
 
-/* Light theme - Subtle harmonious mesh */
+/* Light theme - Very subtle, calm mesh */
 [data-theme="light"] .gradient-mesh {
-  background: 
-    linear-gradient(135deg, 
-      rgba(99, 102, 241, 0.04) 0%, 
-      transparent 50%
-    ),
-    linear-gradient(225deg, 
-      rgba(59, 130, 246, 0.03) 0%, 
-      transparent 50%
-    ),
-    var(--bg-base);
+  background: var(--bg-base);
 }
 
 [data-theme="light"] .gradient-mesh::before {
   content: '';
   position: absolute;
-  top: -150px;
-  left: -80px;
-  width: 500px;
-  height: 500px;
+  top: -100px;
+  left: -50px;
+  width: 400px;
+  height: 400px;
   background: radial-gradient(circle at center, 
-    rgba(99, 102, 241, 0.15) 0%, 
-    rgba(99, 102, 241, 0.05) 40%,
+    rgba(99, 102, 241, 0.06) 0%, 
+    rgba(99, 102, 241, 0.02) 50%,
     transparent 70%
   );
-  filter: blur(60px);
-  animation: mesh-float-1 25s ease-in-out infinite;
+  filter: blur(80px);
+  animation: mesh-float-1 30s ease-in-out infinite;
 }
 
 [data-theme="light"] .gradient-mesh::after {
   content: '';
   position: absolute;
-  top: -80px;
-  right: -100px;
-  width: 450px;
-  height: 450px;
+  bottom: -50px;
+  right: -50px;
+  width: 350px;
+  height: 350px;
   background: radial-gradient(circle at center, 
-    rgba(59, 130, 246, 0.12) 0%, 
-    rgba(59, 130, 246, 0.04) 40%,
+    rgba(99, 102, 241, 0.04) 0%, 
+    rgba(99, 102, 241, 0.01) 50%,
     transparent 70%
   );
-  filter: blur(60px);
-  animation: mesh-float-2 30s ease-in-out infinite;
+  filter: blur(80px);
+  animation: mesh-float-2 35s ease-in-out infinite;
 }
 
-/* Additional mesh layers for light theme */
+/* Additional mesh layers - hidden in light for cleaner look */
 .gradient-mesh .mesh-layer-1,
 .gradient-mesh .mesh-layer-2,
 .gradient-mesh .mesh-layer-3 {
@@ -287,34 +283,8 @@ body {
   border-radius: 50%;
 }
 
-[data-theme="light"] .mesh-layer-1 {
-  bottom: 20%;
-  left: -50px;
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle at center, 
-    rgba(168, 85, 247, 0.08) 0%, 
-    rgba(168, 85, 247, 0.02) 50%,
-    transparent 70%
-  );
-  filter: blur(70px);
-  animation: mesh-float-3 28s ease-in-out infinite;
-}
-
-[data-theme="light"] .mesh-layer-2 {
-  top: 40%;
-  right: -30px;
-  width: 350px;
-  height: 350px;
-  background: radial-gradient(circle at center, 
-    rgba(16, 185, 129, 0.06) 0%, 
-    rgba(16, 185, 129, 0.02) 50%,
-    transparent 70%
-  );
-  filter: blur(70px);
-  animation: mesh-float-1 22s ease-in-out infinite reverse;
-}
-
+[data-theme="light"] .mesh-layer-1,
+[data-theme="light"] .mesh-layer-2,
 [data-theme="light"] .mesh-layer-3 {
   display: none;
 }
@@ -465,11 +435,17 @@ body {
 /* Accent-only row style for new stocks table */
 .stocks-row-accent {
   position: relative;
+  box-shadow: inset 3px 0 0 transparent;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .stocks-row-accent:hover {
   background: var(--table-row-hover);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    4px 0 14px -2px var(--accent-bg);
 }
 
 /* ========================================
@@ -589,6 +565,42 @@ body {
 
 .brand-marketcap {
   color: var(--brand-marketcap);
+}
+
+/* Yatirim.io — tek renk wordmark (header / footer) */
+.site-logo {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  color: var(--brand-logo);
+  white-space: nowrap;
+}
+
+.site-logo--header {
+  font-size: 1.125rem;
+}
+
+.site-logo--footer {
+  font-size: 1.25rem;
+}
+
+.site-logo__tld {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.site-logo-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.site-logo-link:hover .site-logo {
+  opacity: 0.88;
+}
+
+.site-logo-link:active .site-logo {
+  opacity: 0.78;
 }
 
 .font-mono {

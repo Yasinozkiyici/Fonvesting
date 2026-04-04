@@ -10,15 +10,18 @@ coverage/
 .env
 .env.local
 .env.*.local
-.env.vercel.*
 
 # Database
 prisma/*.db
 prisma/*.db-journal
+/ci.db
+prisma/prisma/
+scripts/.venv/
 
 # Local tooling
 .cursor/
 prisma_backup/
+1prisma
 scripts/__pycache__/
 
 # Logs
@@ -31,4 +34,3 @@ yarn-error.log*
 # OS / Editor
 .DS_Store
 .vscode/
-.vercel

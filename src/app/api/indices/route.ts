@@ -4,28 +4,36 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Geriye dönük uyumluluk: endeks kartları artık fon türleridir (0=YF, 1=BES). */
 export async function GET() {
-  const indices = await prisma.index.findMany({
-    where: { code: { in: ["XU100", "XU030"] } },
-    orderBy: { code: "asc" },
-    include: {
-      _count: {
-        select: { stocks: true },
-      },
-    },
-  });
+  try {
+    const types = await prisma.fundType.findMany({
+      orderBy: { code: "asc" },
+      include: { _count: { select: { funds: true } } },
+    });
 
-  const payload = indices.map((index) => ({
-    code: index.code,
-    name: index.name,
-    changePercent: index.changePercent,
-    value: index.lastValue,
-    stockCount: index._count.stocks,
-  }));
+    const payload = await Promise.all(
+      types.map(async (t) => {
+        const agg = await prisma.fund.aggregate({
+          where: { fundTypeId: t.id, isActive: true },
+          _avg: { dailyReturn: true },
+          _sum: { portfolioSize: true },
+        });
+        return {
+          code: String(t.code),
+          name: t.name,
+          changePercent: Number((agg._avg.dailyReturn ?? 0).toFixed(4)),
+          value: agg._sum.portfolioSize ?? 0,
+          stockCount: t._count.funds,
+        };
+      })
+    );
 
-  return NextResponse.json(payload, {
-    headers: {
-      "Cache-Control": "s-maxage=300, stale-while-revalidate=900",
-    },
-  });
+    return NextResponse.json(payload, {
+      headers: { "Cache-Control": "s-maxage=300, stale-while-revalidate=900" },
+    });
+  } catch (e) {
+    console.error(e);
+    return NextResponse.json({ error: "indices_failed" }, { status: 500 });
+  }
 }

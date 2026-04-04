@@ -1,99 +1,104 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+const SORT_MAP: Record<string, Prisma.FundScalarFieldEnum> = {
+  marketCap: "portfolioSize",
+  changePercent: "dailyReturn",
+  volume: "investorCount",
+  lastPrice: "lastPrice",
+  turnover: "portfolioSize",
+};
+
+/**
+ * Geriye dönük uyumluluk: `/api/stocks` istekleri fon listesine yönlendirilir.
+ * `sector` → kategori kodu, `index` → fon türü kodu (0, 1).
+ */
 export async function GET(req: NextRequest) {
-  const { searchParams } = req.nextUrl;
+  try {
+    const { searchParams } = req.nextUrl;
+    const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
+    const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "50")));
+    const q = (searchParams.get("q") ?? "").trim();
+    const sector = searchParams.get("sector") ?? undefined;
+    const indexCode = searchParams.get("index") ?? undefined;
+    const sort = searchParams.get("sort") ?? "marketCap:desc";
+    const [rawField, sortDir] = sort.split(":") as [string, "asc" | "desc"];
+    const sortField = SORT_MAP[rawField] ?? "portfolioSize";
 
-  const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
-  const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "100")));
-  const q = (searchParams.get("q") ?? "").trim();
-  const sector = searchParams.get("sector") ?? undefined;
-  const indexCode = searchParams.get("index") ?? undefined;
-  const sort = searchParams.get("sort") ?? "marketCap:desc";
-  const [sortField, sortDir] = sort.split(":") as [string, "asc" | "desc"];
+    const where: Prisma.FundWhereInput = { isActive: true };
+    if (q) {
+      where.OR = [
+        { code: { contains: q.toUpperCase() } },
+        { name: { contains: q } },
+        { shortName: { contains: q } },
+      ];
+    }
+    if (sector) where.category = { code: sector };
+    if (indexCode !== undefined && indexCode !== "") {
+      const c = parseInt(indexCode, 10);
+      if (!Number.isNaN(c)) where.fundType = { code: c };
+    }
 
-  const where: any = {
-    isActive: true,
-  };
-
-  if (q) {
-    where.OR = [
-      { symbol: { contains: q.toUpperCase() } },
-      { name: { contains: q } },
-      { shortName: { contains: q } },
-    ];
-  }
-
-  if (sector) {
-    where.sector = { code: sector };
-  }
-
-  if (indexCode) {
-    where.indices = {
-      some: {
-        index: { code: indexCode },
-      },
-    };
-  }
-
-  const [items, total] = await Promise.all([
-    prisma.stock.findMany({
-      where,
-      orderBy: { [sortField || "marketCap"]: sortDir === "asc" ? "asc" : "desc" },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      select: {
-        id: true,
-        symbol: true,
-        name: true,
-        shortName: true,
-        logoUrl: true,
-        marketCap: true,
-        lastPrice: true,
-        previousClose: true,
-        change: true,
-        changePercent: true,
-        dayHigh: true,
-        dayLow: true,
-        volume: true,
-        turnover: true,
-        week52High: true,
-        week52Low: true,
-        peRatio: true,
-        sector: {
-          select: {
-            code: true,
-            name: true,
-            color: true,
-          },
+    const [items, total] = await Promise.all([
+      prisma.fund.findMany({
+        where,
+        orderBy: { [sortField]: sortDir === "asc" ? "asc" : "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          shortName: true,
+          logoUrl: true,
+          portfolioSize: true,
+          lastPrice: true,
+          previousPrice: true,
+          dailyReturn: true,
+          investorCount: true,
+          category: { select: { code: true, name: true, color: true } },
         },
-      },
-    }),
-    prisma.stock.count({ where }),
-  ]);
+      }),
+      prisma.fund.count({ where }),
+    ]);
 
-  // Sparkline verisi ayrı endpoint'ten (lazy) çekilir.
-  const itemsWithSparklines = items.map((item) => ({
-    ...item,
-    sparkline: [],
-    sparklineTrend: item.changePercent > 0 ? "up" : item.changePercent < 0 ? "down" : "flat",
-  }));
+    const legacy = items.map((f) => ({
+      id: f.id,
+      symbol: f.code,
+      name: f.name,
+      shortName: f.shortName,
+      logoUrl: f.logoUrl,
+      marketCap: f.portfolioSize,
+      lastPrice: f.lastPrice,
+      previousClose: f.previousPrice,
+      change: f.lastPrice - f.previousPrice,
+      changePercent: f.dailyReturn,
+      dayHigh: f.lastPrice,
+      dayLow: f.lastPrice,
+      volume: f.investorCount,
+      turnover: f.portfolioSize,
+      peRatio: null as number | null,
+      sparkline: [] as number[],
+      sparklineTrend:
+        f.dailyReturn > 0 ? ("up" as const) : f.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+      sector: f.category
+        ? { code: f.category.code, name: f.category.name, color: f.category.color }
+        : null,
+    }));
 
-  return NextResponse.json(
-    {
-      items: itemsWithSparklines,
+    return NextResponse.json({
+      items: legacy,
       page,
       pageSize,
       total,
       totalPages: Math.ceil(total / pageSize),
-    },
-    {
-      headers: {
-        "Cache-Control": "s-maxage=60, stale-while-revalidate=120",
-      },
-    }
-  );
+    });
+  } catch (e) {
+    console.error(e);
+    return NextResponse.json({ error: "stocks_legacy_failed" }, { status: 500 });
+  }
 }
