@@ -2149,19 +2149,19 @@ body {
   }
 }
 .fund-data-table col.fund-col-type {
-  width: 14%;
+  width: 12%;
 }
 .fund-data-table col.fund-col-price {
-  width: 8%;
+  width: 8.5%;
 }
 .fund-data-table col.fund-col-1d {
-  width: 6.25%;
+  width: 6.5%;
 }
 .fund-data-table col.fund-col-inv {
-  width: 9.25%;
+  width: 9.75%;
 }
 .fund-data-table col.fund-col-aum {
-  width: 11.5%;
+  width: 12%;
 }
 
 .fund-data-table th,
@@ -2249,7 +2249,8 @@ body {
 .fund-data-table th.fund-th-type,
 .fund-data-table td.fund-col-type {
   padding-left: 0.5rem;
-  padding-right: 0.75rem;
+  /* Sağa doğru: Son fiyat’a yakın; sol/gutter tarafına dokunulmaz */
+  padding-right: 0.3125rem;
   text-align: left;
 }
 
@@ -2258,11 +2259,17 @@ body {
   text-align: right;
 }
 
-/* Sağ blok: fiyat / getiri / yatırımcı / portföy — sıkı finansal cluster */
+/* Fon türü ile bitişik Son fiyat — tür ↔ fiyat boşluğu minimum */
+.fund-data-table th.fund-th-type + th.fund-th-metric,
+.fund-data-table td.fund-col-type + td.fund-col-metric {
+  padding-left: 0;
+}
+
+/* Sağ blok: fiyat / getiri / yatırımcı / portföy — dengeli sıkı cluster */
 .fund-data-table th.fund-th-metric,
 .fund-data-table td.fund-col-metric {
-  padding-left: 0.125rem;
-  padding-right: 0.125rem;
+  padding-left: 0.0625rem;
+  padding-right: 0.0625rem;
 }
 
 .fund-data-table th.fund-th-metric .sortable-th-btn {
