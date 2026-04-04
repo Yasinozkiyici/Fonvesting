@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -137,7 +137,23 @@ export default function MarketHeader({
           <div className="ds-hero-compact__intro space-y-2">
             <div className="skeleton h-2.5 w-32 rounded-full" />
             <div className="skeleton h-7 w-[min(100%,16rem)] rounded-md" />
-            <div className="skeleton h-10 w-full max-w-2xl rounded-lg" />
+            <div className="ds-hero-stats market-snapshot-bar mt-3 flex animate-pulse items-stretch">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Fragment key={i}>
+                  <div className="flex min-w-[4.25rem] flex-col justify-center gap-1.5 px-2 sm:px-3">
+                    <div className="skeleton h-2 w-9 rounded-full opacity-60" />
+                    <div className="skeleton h-[18px] w-[3.25rem] rounded-md opacity-80" />
+                  </div>
+                  {i < 4 ? (
+                    <span
+                      className="market-snapshot-sep my-1 shrink-0 opacity-40"
+                      style={{ background: "var(--border-subtle)" }}
+                      aria-hidden
+                    />
+                  ) : null}
+                </Fragment>
+              ))}
+            </div>
           </div>
         </div>
         <div className="category-rail-section px-0 pb-0 pt-2 sm:pt-2.5">
@@ -214,39 +230,37 @@ export default function MarketHeader({
           </p>
         </div>
 
-        <div className="ds-hero-stats" role="group" aria-label="Piyasa metrikleri">
-          <span>
-            <strong className="ds-hero-stat-label">AUM</strong>
-            <span className="tabular-nums">{formatCompactTl(data.totalPortfolioSize)}</span>
-          </span>
-          <span className="ds-hero-stat-dot" aria-hidden>
-            ·
-          </span>
-          <span>
-            <strong className="ds-hero-stat-label">Yatırımcı</strong>
-            <span className="tabular-nums">{formatCompactNumber(data.totalInvestorCount)}</span>
-          </span>
-          <span className="ds-hero-stat-dot" aria-hidden>
-            ·
-          </span>
-          <span>
-            <strong className="ds-hero-stat-label">Fon</strong>
-            <span className="tabular-nums">{data.fundCount.toLocaleString("tr-TR")}</span>
-          </span>
-          <span className="ds-hero-stat-dot" aria-hidden>
-            ·
-          </span>
-          <span>
-            <strong className="ds-hero-stat-label">Ort. 1G</strong>
-            <span className="tabular-nums">{avg1gStr}</span>
-          </span>
-          <span className="ds-hero-stat-dot" aria-hidden>
-            ·
-          </span>
-          <span>
-            <strong className="ds-hero-stat-label">Öne çıkan</strong>
-            <span className="tabular-nums">{largestLabel}</span>
-          </span>
+        <div className="ds-hero-stats market-snapshot-bar" role="group" aria-label="Piyasa metrikleri">
+          <div className="market-snapshot-item">
+            <span className="market-snapshot-k">AUM</span>
+            <span className="market-snapshot-v tabular-nums">{formatCompactTl(data.totalPortfolioSize)}</span>
+          </div>
+          <span className="market-snapshot-sep" aria-hidden />
+          <div className="market-snapshot-item">
+            <span className="market-snapshot-k">Yatırımcı</span>
+            <span className="market-snapshot-v tabular-nums">{formatCompactNumber(data.totalInvestorCount)}</span>
+          </div>
+          <span className="market-snapshot-sep" aria-hidden />
+          <div className="market-snapshot-item">
+            <span className="market-snapshot-k">Fon</span>
+            <span className="market-snapshot-v tabular-nums">{data.fundCount.toLocaleString("tr-TR")}</span>
+          </div>
+          <span className="market-snapshot-sep" aria-hidden />
+          <div className="market-snapshot-item">
+            <span className="market-snapshot-k">Ort. 1G</span>
+            <span
+              className={`market-snapshot-v tabular-nums ${avg1g >= 0 ? "market-snapshot-v--pos" : "market-snapshot-v--neg"}`}
+            >
+              {avg1gStr}
+            </span>
+          </div>
+          <span className="market-snapshot-sep" aria-hidden />
+          <div className="market-snapshot-item market-snapshot-item--wide">
+            <span className="market-snapshot-k">Öne çıkan kategori</span>
+            <span className="market-snapshot-v market-snapshot-v--truncate" title={largestLabel}>
+              {largestLabel}
+            </span>
+          </div>
         </div>
       </div>
 

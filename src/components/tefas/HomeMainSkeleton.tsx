@@ -1,3 +1,5 @@
+import { Fragment } from "react";
+
 /** Ana sayfa: kompakt hero + kategori ızgarası iskeleti. */
 export default function HomeMainSkeleton() {
   return (
@@ -7,6 +9,17 @@ export default function HomeMainSkeleton() {
           <div className="skeleton h-2.5 w-32 rounded-full" />
           <div className="skeleton h-7 w-[min(100%,16rem)] rounded-md" />
           <div className="skeleton h-10 w-full max-w-2xl rounded-lg" />
+        </div>
+        <div className="ds-hero-stats market-snapshot-bar mt-3 flex animate-pulse items-stretch">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <Fragment key={i}>
+              <div className="flex min-w-[4.25rem] flex-col justify-center gap-1.5 px-2 sm:px-3">
+                <div className="skeleton h-2 w-9 rounded-full opacity-60" />
+                <div className="skeleton h-[18px] w-[3.25rem] rounded-md opacity-80" />
+              </div>
+              {i < 4 ? <span className="market-snapshot-sep" aria-hidden /> : null}
+            </Fragment>
+          ))}
         </div>
       </div>
       <div className="category-rail-section px-0 pb-0 pt-2 sm:pt-2.5">

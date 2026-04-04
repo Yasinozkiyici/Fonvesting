@@ -14,12 +14,11 @@ import {
 import type { RankingMode } from "@/lib/scoring";
 import { RankingModeToggle } from "./ScoringComponents";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
-import { buildSevenDayPctMap } from "@/lib/fund-list-format";
 import { FundRowMobile, FundDataTableRow } from "@/components/ds/FundRow";
 
 export type { ScoredFund, ScoredResponse };
 
-type SortField = "portfolioSize" | "dailyReturn" | "investorCount" | "sevenDay" | "finalScore";
+type SortField = "portfolioSize" | "dailyReturn" | "investorCount" | "lastPrice" | "fundType" | "finalScore";
 
 type SortDir = "asc" | "desc";
 
@@ -28,16 +27,6 @@ interface ScoredFundsTableProps {
   defaultMode?: RankingMode;
   initialData?: ScoredResponse | null;
   initialCategories?: Array<{ code: string; name: string }>;
-}
-
-function sortSevenValue(
-  map: Map<string, number | null>,
-  id: string,
-  dir: SortDir
-): number {
-  const v = map.get(id);
-  if (v != null && Number.isFinite(v)) return v;
-  return dir === "desc" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
 }
 
 export default function ScoredFundsTable({
@@ -59,8 +48,6 @@ export default function ScoredFundsTable({
   const [categories, setCategories] = useState<Array<{ code: string; name: string }>>(initialCategories);
   const usedInitialDataRef = useRef(Boolean(initialData));
   const pageSize = 50;
-
-  const sevenDayMap = useMemo(() => buildSevenDayPctMap(data?.funds ?? []), [data?.funds]);
 
   useEffect(() => {
     const sectorParam = searchParams?.get("sector") ?? searchParams?.get("category") ?? "";
@@ -145,6 +132,13 @@ export default function ScoredFundsTable({
     });
 
     return [...list].sort((a, b) => {
+      if (sortField === "fundType") {
+        const as = (a.fundType?.name ?? "").toLocaleLowerCase("tr");
+        const bs = (b.fundType?.name ?? "").toLocaleLowerCase("tr");
+        const cmp = as.localeCompare(bs, "tr");
+        return sortDir === "desc" ? -cmp : cmp;
+      }
+
       let aVal: number;
       let bVal: number;
 
@@ -161,9 +155,9 @@ export default function ScoredFundsTable({
           aVal = a.investorCount;
           bVal = b.investorCount;
           break;
-        case "sevenDay":
-          aVal = sortSevenValue(sevenDayMap, a.fundId, sortDir);
-          bVal = sortSevenValue(sevenDayMap, b.fundId, sortDir);
+        case "lastPrice":
+          aVal = a.lastPrice;
+          bVal = b.lastPrice;
           break;
         case "finalScore":
         default:
@@ -173,7 +167,7 @@ export default function ScoredFundsTable({
 
       return sortDir === "desc" ? bVal - aVal : aVal - bVal;
     });
-  }, [data?.funds, enableCategoryFilter, category, search, sortField, sortDir, sevenDayMap]);
+  }, [data?.funds, enableCategoryFilter, category, search, sortField, sortDir]);
 
   const totalPages = Math.ceil(filteredFunds.length / pageSize);
   const paginatedFunds = filteredFunds.slice((page - 1) * pageSize, page * pageSize);
@@ -268,10 +262,11 @@ export default function ScoredFundsTable({
               className="research-select min-h-[2.75rem] text-xs font-semibold"
               aria-label="Sıralama alanı"
             >
-              <option value="portfolioSize">AUM</option>
+              <option value="portfolioSize">Portföy</option>
               <option value="finalScore">Skor</option>
               <option value="dailyReturn">1G</option>
-              <option value="sevenDay">7G</option>
+              <option value="lastPrice">Son fiyat</option>
+              <option value="fundType">Fon türü</option>
               <option value="investorCount">Yatırımcı</option>
             </select>
             <ChevronDown className="research-select-chevron h-4 w-4" strokeWidth={2} aria-hidden />
@@ -304,7 +299,6 @@ export default function ScoredFundsTable({
                   <div className="flex items-center gap-2">
                     <div className="h-4 min-w-0 flex-1 rounded" style={{ background: "var(--bg-muted)" }} />
                     <div className="h-4 w-14 shrink-0 rounded" style={{ background: "var(--bg-muted)" }} />
-                    <div className="h-5 w-11 shrink-0 rounded-full" style={{ background: "var(--bg-muted)" }} />
                   </div>
                   <div className="h-3 w-[88%] rounded" style={{ background: "var(--bg-muted)" }} />
                 </div>
@@ -320,41 +314,56 @@ export default function ScoredFundsTable({
             Sonuç bulunamadı.
           </p>
         ) : (
-          paginatedFunds.map((fund) => (
-            <FundRowMobile key={fund.fundId} fund={fund} sevenDayPct={sevenDayMap.get(fund.fundId) ?? null} />
-          ))
+          paginatedFunds.map((fund) => <FundRowMobile key={fund.fundId} fund={fund} />)
         )}
       </div>
 
       <div className="hidden md:block overflow-x-auto tefas-table-touch-scroll">
-        <table className="fund-data-table min-w-[720px] w-full text-left">
+        <table className="fund-data-table min-w-[800px] w-full text-left">
           <colgroup>
+            <col className="fund-col-rank" />
             <col className="fund-col-name" />
-            <col className="fund-col-aum" />
-            <col className="fund-col-inv" />
+            <col className="fund-col-type" />
+            <col className="fund-col-price" />
             <col className="fund-col-1d" />
-            <col className="fund-col-7d" />
-            <col className="fund-col-risk" />
+            <col className="fund-col-inv" />
+            <col className="fund-col-aum" />
           </colgroup>
           <thead>
             <tr className="table-header-row">
+              <th className="fund-th fund-th-rank table-num" scope="col">
+                <span className="scored-th-label">#</span>
+              </th>
               <th className="fund-th fund-th-name" scope="col">
                 <span className="scored-th-label">Fon</span>
               </th>
-              <th className="fund-th fund-th-num table-num" scope="col">
-                <SortableHeader label="AUM" field="portfolioSize" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("portfolioSize")} />
+              <th className="fund-th fund-th-type" scope="col">
+                <SortableHeader
+                  label="Fon türü"
+                  field="fundType"
+                  align="left"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  onClick={() => handleSort("fundType")}
+                />
               </th>
               <th className="fund-th fund-th-num table-num" scope="col">
-                <SortableHeader label="Yatırımcı" field="investorCount" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("investorCount")} />
+                <SortableHeader
+                  label="Son fiyat"
+                  field="lastPrice"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  onClick={() => handleSort("lastPrice")}
+                />
               </th>
               <th className="fund-th fund-th-num table-num" scope="col">
                 <SortableHeader label="1G" field="dailyReturn" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("dailyReturn")} />
               </th>
               <th className="fund-th fund-th-num table-num" scope="col">
-                <SortableHeader label="7G" field="sevenDay" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("sevenDay")} />
+                <SortableHeader label="Yatırımcı" field="investorCount" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("investorCount")} />
               </th>
-              <th className="fund-th fund-th-risk" scope="col">
-                <span className="scored-th-label">Risk</span>
+              <th className="fund-th fund-th-num table-num" scope="col">
+                <SortableHeader label="Portföy" field="portfolioSize" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("portfolioSize")} />
               </th>
             </tr>
           </thead>
@@ -362,29 +371,29 @@ export default function ScoredFundsTable({
             {loading ? (
               [...Array(10)].map((_, i) => (
                 <tr key={i} className="table-row">
-                  <td colSpan={6} className="px-6 py-3">
+                  <td colSpan={7} className="px-6 py-3">
                     <div className="h-10 rounded-lg animate-pulse" style={{ background: "var(--bg-muted)" }} />
                   </td>
                 </tr>
               ))
             ) : error ? (
               <tr>
-                <td colSpan={6} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={7} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   {error}
                 </td>
               </tr>
             ) : paginatedFunds.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={7} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   Sonuç bulunamadı.
                 </td>
               </tr>
             ) : (
-              paginatedFunds.map((fund) => (
+              paginatedFunds.map((fund, index) => (
                 <FundDataTableRow
                   key={fund.fundId}
                   fund={fund}
-                  sevenDayPct={sevenDayMap.get(fund.fundId) ?? null}
+                  rank={(page - 1) * pageSize + index + 1}
                 />
               ))
             )}
@@ -436,19 +445,21 @@ function SortableHeader({
   currentField,
   currentDir,
   onClick,
+  align = "right",
 }: {
   label: string;
   field: SortField;
   currentField: SortField;
   currentDir: SortDir;
   onClick: () => void;
+  align?: "left" | "right";
 }) {
   const isActive = currentField === field;
   return (
     <button
       type="button"
       onClick={onClick}
-      className="sortable-th-btn table-num text-[10px] font-semibold uppercase tracking-[0.12em]"
+      className={`sortable-th-btn table-num text-[10px] font-semibold uppercase tracking-[0.12em] ${align === "left" ? "sortable-th-btn--left" : ""}`}
       style={{ color: isActive ? "var(--accent-blue)" : "var(--text-secondary)" }}
     >
       <span className="sort-th-label">{label}</span>

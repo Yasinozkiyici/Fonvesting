@@ -1,13 +1,18 @@
 import Link from "next/link";
 import { fundDetailHref } from "@/lib/fund-routes";
 import type { ScoredFund } from "@/types/scored-funds";
-import { fundDisplaySubtitle, formatCompactCurrency, formatCompactNumber } from "@/lib/fund-list-format";
+import {
+  fundDisplaySubtitle,
+  formatCompactCurrency,
+  formatCompactNumber,
+  formatFundLastPrice,
+} from "@/lib/fund-list-format";
 import { FundLogoMark } from "@/components/tefas/FundLogoMark";
-import { RiskBadgeMobile, RiskBadgeTable } from "@/components/ds/Badge";
 import { PctChangeMobile, PctChangeTable } from "@/components/ds/PctChange";
 
-export function FundRowMobile({ fund, sevenDayPct }: { fund: ScoredFund; sevenDayPct: number | null }) {
+export function FundRowMobile({ fund }: { fund: ScoredFund }) {
   const subtitle = fundDisplaySubtitle(fund);
+  const typeLabel = fund.fundType?.name?.trim() || "—";
 
   return (
     <div className="mobile-fund-card">
@@ -34,22 +39,23 @@ export function FundRowMobile({ fund, sevenDayPct }: { fund: ScoredFund; sevenDa
                 </span>
               </div>
               <PctChangeMobile value={fund.dailyReturn} />
-              <RiskBadgeMobile level={fund.riskLevel} />
             </div>
             <div className="flex min-w-0 flex-nowrap items-center gap-x-0 overflow-hidden">
-              <span className="mobile-fund-card__metric shrink-0">{formatCompactCurrency(fund.portfolioSize)}</span>
+              <span className="mobile-fund-card__metric min-w-0 truncate" title={typeLabel}>
+                {typeLabel}
+              </span>
               <span className="mobile-fund-card__dot" aria-hidden>
                 ·
               </span>
-              <span className="mobile-fund-card__metric">{formatCompactNumber(fund.investorCount)}</span>
+              <span className="mobile-fund-card__metric shrink-0 tabular-nums">{formatFundLastPrice(fund.lastPrice)}</span>
               <span className="mobile-fund-card__dot" aria-hidden>
                 ·
               </span>
-              {sevenDayPct !== null ? (
-                <PctChangeMobile value={sevenDayPct} />
-              ) : (
-                <span className="mobile-fund-card__metric">—</span>
-              )}
+              <span className="mobile-fund-card__metric shrink-0 tabular-nums">{formatCompactNumber(fund.investorCount)}</span>
+              <span className="mobile-fund-card__dot" aria-hidden>
+                ·
+              </span>
+              <span className="mobile-fund-card__metric shrink-0 tabular-nums">{formatCompactCurrency(fund.portfolioSize)}</span>
             </div>
           </div>
         </div>
@@ -58,17 +64,20 @@ export function FundRowMobile({ fund, sevenDayPct }: { fund: ScoredFund; sevenDa
   );
 }
 
-export function FundDataTableRow({
-  fund,
-  sevenDayPct,
-}: {
-  fund: ScoredFund;
-  sevenDayPct: number | null;
-}) {
+export function FundDataTableRow({ fund, rank }: { fund: ScoredFund; rank: number }) {
   const subtitle = fundDisplaySubtitle(fund);
+  const typeLabel = fund.fundType?.name?.trim() || "—";
 
   return (
     <tr className="table-row fund-data-row group">
+      <td className="fund-col-rank table-num whitespace-nowrap">
+        <span
+          className="text-[11px] font-medium tabular-nums tracking-tight md:text-[12px]"
+          style={{ color: "var(--text-tertiary)" }}
+        >
+          {rank}
+        </span>
+      </td>
       <td className="fund-col-name">
         <Link
           href={fundDetailHref(fund.code)}
@@ -88,19 +97,41 @@ export function FundDataTableRow({
             initialsClassName="text-[9px] font-semibold tracking-tight tabular-nums"
           />
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="truncate text-[13px] font-semibold leading-tight tracking-[-0.02em] md:text-[14px]" style={{ color: "var(--text-primary)" }}>
+            <p
+              className="truncate text-[13px] font-semibold leading-tight tracking-[-0.02em] md:text-[14px]"
+              style={{ color: "var(--text-primary)" }}
+            >
               {fund.code}
             </p>
-            <p className="truncate text-[11px] leading-snug md:text-[12px]" style={{ color: "var(--text-tertiary)" }} title={fund.name}>
+            <p
+              className="truncate text-[11px] leading-snug md:text-[12px]"
+              style={{ color: "var(--text-tertiary)" }}
+              title={fund.name}
+            >
               {subtitle}
             </p>
           </div>
         </Link>
       </td>
-      <td className="fund-col-num table-num whitespace-nowrap">
-        <span className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] md:text-[13px]" style={{ color: "var(--text-primary)" }}>
-          {formatCompactCurrency(fund.portfolioSize)}
+      <td className="fund-col-type">
+        <span
+          className="block truncate text-[12px] font-medium leading-snug md:text-[13px]"
+          style={{ color: "var(--text-secondary)" }}
+          title={typeLabel}
+        >
+          {typeLabel}
         </span>
+      </td>
+      <td className="fund-col-num table-num whitespace-nowrap">
+        <span
+          className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] md:text-[13px]"
+          style={{ color: "var(--text-primary)" }}
+        >
+          {formatFundLastPrice(fund.lastPrice)}
+        </span>
+      </td>
+      <td className="fund-col-num table-num whitespace-nowrap">
+        <PctChangeTable value={fund.dailyReturn} />
       </td>
       <td className="fund-col-num table-num whitespace-nowrap">
         <span className="text-[12px] font-medium tabular-nums md:text-[13px]" style={{ color: "var(--text-secondary)" }}>
@@ -108,15 +139,9 @@ export function FundDataTableRow({
         </span>
       </td>
       <td className="fund-col-num table-num whitespace-nowrap">
-        <PctChangeTable value={fund.dailyReturn} />
-      </td>
-      <td className="fund-col-num table-num whitespace-nowrap">
-        {sevenDayPct !== null ? <PctChangeTable value={sevenDayPct} /> : (
-          <span className="text-[12px] sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>—</span>
-        )}
-      </td>
-      <td className="fund-col-risk text-center">
-        <RiskBadgeTable level={fund.riskLevel} />
+        <span className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] md:text-[13px]" style={{ color: "var(--text-primary)" }}>
+          {formatCompactCurrency(fund.portfolioSize)}
+        </span>
       </td>
     </tr>
   );
