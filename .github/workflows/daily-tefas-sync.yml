@@ -1,6 +1,13 @@
 # Günlük otomatik TEFAS: Selenium + Python burada çalışır, Vercel’de değil.
-# Gerekli sır: Repo → Settings → Secrets and variables → Actions → DATABASE_URL
-# Öneri: Supabase “doğrudan” bağlantı (db.*.supabase.co:5432); pooler uzun transaction’larda sorun çıkarabilir.
+# Secret: Repo → Settings → Secrets and variables → Actions → DATABASE_URL
+#
+# "Can't reach database server" (GitHub Actions) genelde şunlardan biri:
+# 1) Supabase → Project Settings → Database → Network / "Restrict …" KAPALI olmalı
+#    (sadece belirli IP’lere izin varsa GitHub runner’lar bağlanamaz).
+# 2) Proje duraklatılmışsa (free tier) Dashboard’dan Resume.
+# 3) Bağlantı dizesinde ?sslmode=require olsun.
+# 4) Doğrudan db.*:5432 GitHub’tan gitmiyorsa: Supabase "Connect" ekranından
+#    IPv4 uyumlu "Session pooler" URI’yi kopyalayıp secret olarak kullanın.
 name: Daily TEFAS sync
 
 on:
