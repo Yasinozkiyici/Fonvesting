@@ -15,9 +15,9 @@ CI: PostgreSQL servis konteyneri üzerinde `prisma migrate deploy`, `lint`, `nex
 
 ## Vercel
 
-1. Projeyi GitHub’dan içe aktarın. Kök dizinde `vercel.json` **build** sırasında `prisma migrate deploy` ve boş DB’de bir kez `prisma db seed` çalıştırır.
+1. Projeyi GitHub’dan içe aktarın. `vercel.json` build sırasında **`prisma db seed`** (boş DB’de örnek veri) ve `next build` çalıştırır. **`prisma migrate deploy` Vercel’de çalıştırılmaz** — Supabase doğrudan host’una birçok buluttan erişim kısıtlı olabiliyor; migration’ları yerelde veya CI’da doğrudan bağlantı ile uygulayın.
 2. **Settings → Environment Variables** (Production / Preview için):
-   - **`DATABASE_URL`** — Supabase veya Neon’dan **Transaction** veya doğrudan bağlantı dizesi (`?sslmode=require` ekleyin gerekirse).
+   - **`DATABASE_URL`** — Supabase **Transaction pooler** (port **6543**, `?pgbouncer=true&sslmode=require`). Bölge, dashboard’daki pooler host adından gelir (ör. `aws-0-eu-west-1.pooler.supabase.com`).
    - **`CRON_SECRET`** — güçlü rastgele bir dize (sync/job uçları için).
 3. **Install Command:** `pnpm install` (`vercel.json` içinde tanımlı).
 4. Ortam değişkenlerini ekledikten sonra **Redeploy** yapın.

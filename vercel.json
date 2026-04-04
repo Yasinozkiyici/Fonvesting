@@ -1,4 +1,4 @@
 {
   "installCommand": "pnpm install",
-  "buildCommand": "pnpm exec prisma migrate deploy && pnpm exec prisma db seed && pnpm exec next build"
+  "buildCommand": "pnpm exec prisma db seed && pnpm exec next build"
 }

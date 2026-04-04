@@ -4,6 +4,16 @@ import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Tanılama çıktısında kullanıcı adı / şifre sızdırmaz. */
+function redactDatabaseUrl(urlStr: string): string {
+  if (!urlStr) return "";
+  try {
+    return urlStr.replace(/\/\/([^/]*@)/, "//***:***@").split("?")[0] ?? urlStr;
+  } catch {
+    return "postgresql://(redacted)";
+  }
+}
+
 export async function GET() {
   const dbUrl = process.env.DATABASE_URL ?? "";
   let effective = "";
@@ -23,7 +33,7 @@ export async function GET() {
       database: {
         configured: Boolean(dbUrl || process.env.NODE_ENV === "development"),
         engine: isPostgres ? "postgresql" : "unknown",
-        effectiveUrlPrefix: effective.slice(0, 48) + (effective.length > 48 ? "…" : ""),
+        effectiveUrlPrefix: redactDatabaseUrl(effective).slice(0, 96),
         hint: "Yerel: docker compose up -d ve .env içinde DATABASE_URL. Vercel: proje ortam değişkenlerinde DATABASE_URL.",
       },
       funds: { count: fundCount },
@@ -39,7 +49,7 @@ export async function GET() {
         database: {
           configured: Boolean(dbUrl),
           engine: isPostgres ? "postgresql" : "unknown",
-          effectiveUrlPrefix: effective.slice(0, 48) + (effective.length > 48 ? "…" : ""),
+          effectiveUrlPrefix: redactDatabaseUrl(effective).slice(0, 96),
           hint: "PostgreSQL bağlantısını kontrol edin; migrate: pnpm exec prisma migrate deploy. Yerel varsayılan: localhost:5433 (docker-compose).",
         },
         error: message.slice(0, 500),
