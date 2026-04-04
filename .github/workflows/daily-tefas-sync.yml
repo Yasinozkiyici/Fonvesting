@@ -6,8 +6,12 @@
 #    (sadece belirli IP’lere izin varsa GitHub runner’lar bağlanamaz).
 # 2) Proje duraklatılmışsa (free tier) Dashboard’dan Resume.
 # 3) Bağlantı dizesinde ?sslmode=require olsun.
-# 4) Doğrudan db.*:5432 GitHub’tan gitmiyorsa: Supabase "Connect" ekranından
-#    IPv4 uyumlu "Session pooler" URI’yi kopyalayıp secret olarak kullanın.
+# 4) db.*:5432 = çoğu ortamda IPv6; GitHub Actions IPv4 kullanır → "Can't reach" normaldir.
+#    Çözüm: Supabase Dashboard → Connect → Method: "Session pooler" URI’yi kopyala,
+#    GitHub DATABASE_URL secret’ına yapıştır. Kullanıcı adı postgres.değil,
+#    postgres.PROJECT_REF şeklindedir; host aws-0-BÖLGE.pooler.supabase.com:5432 olur.
+#    Alternatif: Connect → Transaction mode (db.*:6543) + sorgu dizesine
+#    ?pgbouncer=true&sslmode=require ekleyin (Prisma uyumludur).
 name: Daily TEFAS sync
 
 on:
