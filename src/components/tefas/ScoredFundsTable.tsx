@@ -319,9 +319,8 @@ export default function ScoredFundsTable({
       </div>
 
       <div className="hidden md:block overflow-x-auto tefas-table-touch-scroll">
-        <table className="fund-data-table min-w-[800px] w-full text-left">
+        <table className="fund-data-table min-w-[760px] w-full text-left">
           <colgroup>
-            <col className="fund-col-rank" />
             <col className="fund-col-name" />
             <col className="fund-col-type" />
             <col className="fund-col-price" />
@@ -331,9 +330,6 @@ export default function ScoredFundsTable({
           </colgroup>
           <thead>
             <tr className="table-header-row">
-              <th className="fund-th fund-th-rank table-num" scope="col">
-                <span className="scored-th-label">#</span>
-              </th>
               <th className="fund-th fund-th-name" scope="col">
                 <span className="scored-th-label">Fon</span>
               </th>
@@ -347,7 +343,7 @@ export default function ScoredFundsTable({
                   onClick={() => handleSort("fundType")}
                 />
               </th>
-              <th className="fund-th fund-th-num table-num" scope="col">
+              <th className="fund-th fund-th-num fund-th-metric table-num" scope="col">
                 <SortableHeader
                   label="Son fiyat"
                   field="lastPrice"
@@ -356,13 +352,13 @@ export default function ScoredFundsTable({
                   onClick={() => handleSort("lastPrice")}
                 />
               </th>
-              <th className="fund-th fund-th-num table-num" scope="col">
+              <th className="fund-th fund-th-num fund-th-metric table-num" scope="col">
                 <SortableHeader label="1G" field="dailyReturn" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("dailyReturn")} />
               </th>
-              <th className="fund-th fund-th-num table-num" scope="col">
+              <th className="fund-th fund-th-num fund-th-metric table-num" scope="col">
                 <SortableHeader label="Yatırımcı" field="investorCount" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("investorCount")} />
               </th>
-              <th className="fund-th fund-th-num table-num" scope="col">
+              <th className="fund-th fund-th-num fund-th-metric table-num" scope="col">
                 <SortableHeader label="Portföy" field="portfolioSize" currentField={sortField} currentDir={sortDir} onClick={() => handleSort("portfolioSize")} />
               </th>
             </tr>
@@ -371,31 +367,25 @@ export default function ScoredFundsTable({
             {loading ? (
               [...Array(10)].map((_, i) => (
                 <tr key={i} className="table-row">
-                  <td colSpan={7} className="px-6 py-3">
+                  <td colSpan={6} className="px-6 py-3">
                     <div className="h-10 rounded-lg animate-pulse" style={{ background: "var(--bg-muted)" }} />
                   </td>
                 </tr>
               ))
             ) : error ? (
               <tr>
-                <td colSpan={7} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={6} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   {error}
                 </td>
               </tr>
             ) : paginatedFunds.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={6} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   Sonuç bulunamadı.
                 </td>
               </tr>
             ) : (
-              paginatedFunds.map((fund, index) => (
-                <FundDataTableRow
-                  key={fund.fundId}
-                  fund={fund}
-                  rank={(page - 1) * pageSize + index + 1}
-                />
-              ))
+              paginatedFunds.map((fund) => <FundDataTableRow key={fund.fundId} fund={fund} />)
             )}
           </tbody>
         </table>

@@ -41,7 +41,7 @@ export function FundRowMobile({ fund }: { fund: ScoredFund }) {
               <PctChangeMobile value={fund.dailyReturn} />
             </div>
             <div className="flex min-w-0 flex-nowrap items-center gap-x-0 overflow-hidden">
-              <span className="mobile-fund-card__metric min-w-0 truncate" title={typeLabel}>
+              <span className="fund-type-chip fund-type-chip--mobile min-w-0 max-w-[min(100%,11rem)] truncate" title={typeLabel}>
                 {typeLabel}
               </span>
               <span className="mobile-fund-card__dot" aria-hidden>
@@ -64,20 +64,12 @@ export function FundRowMobile({ fund }: { fund: ScoredFund }) {
   );
 }
 
-export function FundDataTableRow({ fund, rank }: { fund: ScoredFund; rank: number }) {
+export function FundDataTableRow({ fund }: { fund: ScoredFund }) {
   const subtitle = fundDisplaySubtitle(fund);
   const typeLabel = fund.fundType?.name?.trim() || "—";
 
   return (
     <tr className="table-row fund-data-row group">
-      <td className="fund-col-rank table-num whitespace-nowrap">
-        <span
-          className="text-[11px] font-medium tabular-nums tracking-tight md:text-[12px]"
-          style={{ color: "var(--text-tertiary)" }}
-        >
-          {rank}
-        </span>
-      </td>
       <td className="fund-col-name">
         <Link
           href={fundDetailHref(fund.code)}
@@ -114,15 +106,11 @@ export function FundDataTableRow({ fund, rank }: { fund: ScoredFund; rank: numbe
         </Link>
       </td>
       <td className="fund-col-type">
-        <span
-          className="block truncate text-[12px] font-medium leading-snug md:text-[13px]"
-          style={{ color: "var(--text-secondary)" }}
-          title={typeLabel}
-        >
+        <span className="fund-type-chip inline-block max-w-full truncate align-middle" title={typeLabel}>
           {typeLabel}
         </span>
       </td>
-      <td className="fund-col-num table-num whitespace-nowrap">
+      <td className="fund-col-num fund-col-metric table-num whitespace-nowrap">
         <span
           className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] md:text-[13px]"
           style={{ color: "var(--text-primary)" }}
@@ -130,15 +118,15 @@ export function FundDataTableRow({ fund, rank }: { fund: ScoredFund; rank: numbe
           {formatFundLastPrice(fund.lastPrice)}
         </span>
       </td>
-      <td className="fund-col-num table-num whitespace-nowrap">
+      <td className="fund-col-num fund-col-metric table-num whitespace-nowrap">
         <PctChangeTable value={fund.dailyReturn} />
       </td>
-      <td className="fund-col-num table-num whitespace-nowrap">
+      <td className="fund-col-num fund-col-metric table-num whitespace-nowrap">
         <span className="text-[12px] font-medium tabular-nums md:text-[13px]" style={{ color: "var(--text-secondary)" }}>
           {formatCompactNumber(fund.investorCount)}
         </span>
       </td>
-      <td className="fund-col-num table-num whitespace-nowrap">
+      <td className="fund-col-num fund-col-metric fund-col-aum table-num whitespace-nowrap">
         <span className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] md:text-[13px]" style={{ color: "var(--text-primary)" }}>
           {formatCompactCurrency(fund.portfolioSize)}
         </span>
