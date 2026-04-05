@@ -71,25 +71,26 @@ export function FundDetailChart({ series }: Props) {
   }, [windowed]);
 
   const w = 720;
-  const h = 220;
-  const padX = 4;
-  const padY = 10;
+  const h = 252;
+  const padX = 8;
+  const padY = 14;
   const pathD = norm.length >= 2 ? buildPathD(norm, w, h, padX, padY) : "";
+  const baselineY = h - padY;
 
   return (
-    <section className="mt-8 sm:mt-10" aria-labelledby="fund-detail-chart-heading">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+    <section aria-labelledby="fund-detail-chart-heading">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
+        <div className="min-w-0 flex-1">
           <FundDetailSectionTitle id="fund-detail-chart-heading">Performans</FundDetailSectionTitle>
-          <p className="mt-2 text-sm leading-snug" style={{ color: "var(--text-secondary)" }}>
-            Birim fiyat — seçili aralıkta endeks 100 normalize edilmiş seri.
+          <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed sm:text-sm" style={{ color: "var(--text-secondary)" }}>
+            Birim fiyat; seçili aralıkta başlangıç 100 olacak şekilde normalize edilir.
           </p>
         </div>
         <div
-          className="flex flex-wrap gap-1 rounded-lg border p-0.5"
+          className="flex shrink-0 flex-wrap gap-0.5 rounded-[10px] border p-0.5 sm:gap-px"
           style={{
             borderColor: "var(--border-subtle)",
-            background: "var(--bg-muted)",
+            background: "var(--surface-table-header)",
           }}
           role="tablist"
           aria-label="Zaman aralığı"
@@ -103,12 +104,14 @@ export function FundDetailChart({ series }: Props) {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setRange(r.id)}
-                className="min-h-[2rem] rounded-md px-2.5 text-[11px] font-semibold tracking-[-0.02em] transition-colors sm:px-3 sm:text-xs"
+                className="min-h-[2.125rem] min-w-[2.25rem] rounded-lg px-2.5 text-[11px] font-semibold tracking-[-0.02em] transition-[color,background,border-color,box-shadow] sm:px-3 sm:text-xs"
                 style={{
                   color: active ? "var(--text-primary)" : "var(--text-muted)",
-                  background: active ? "var(--card-bg)" : "transparent",
+                  background: active ? "var(--surface-control)" : "transparent",
                   boxShadow: active ? "var(--shadow-xs)" : "none",
-                  border: active ? "1px solid var(--border-default)" : "1px solid transparent",
+                  borderWidth: 1,
+                  borderStyle: "solid",
+                  borderColor: active ? "var(--segment-active-border)" : "transparent",
                 }}
               >
                 {r.label}
@@ -119,26 +122,26 @@ export function FundDetailChart({ series }: Props) {
       </div>
 
       <div
-        className="mt-4 rounded-xl border px-3 py-4 sm:px-5 sm:py-5"
+        className="mt-5 rounded-xl border px-4 py-5 sm:px-6 sm:py-6"
         style={{
           borderColor: "var(--border-subtle)",
           background: "var(--card-bg)",
         }}
       >
         {norm.length < 2 ? (
-          <p className="py-16 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-            Bu fon için yeterli fiyat geçmişi yok. Grafik yakında veri geldikçe görünecek.
+          <p className="py-14 text-center text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            Bu fon için yeterli fiyat geçmişi yok. Veri geldikçe grafik otomatik görünür.
           </p>
         ) : (
           <>
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="text-[10px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                  Dönem getirisi
-                </span>
+            <div className="flex flex-col gap-1 border-b pb-5 sm:pb-6" style={{ borderColor: "var(--border-subtle)" }}>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-muted)" }}>
+                Seçili dönem getirisi
+              </p>
+              <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
                 {periodReturnPct != null && Number.isFinite(periodReturnPct) ? (
                   <span
-                    className="tabular-nums text-lg font-semibold tracking-[-0.02em] sm:text-xl"
+                    className="tabular-nums text-2xl font-semibold tracking-[-0.03em] sm:text-[1.65rem]"
                     style={{
                       color:
                         periodReturnPct > 0
@@ -152,15 +155,21 @@ export function FundDetailChart({ series }: Props) {
                     {periodReturnPct.toFixed(2).replace(".", ",")}%
                   </span>
                 ) : (
-                  <span style={{ color: "var(--text-muted)" }}>—</span>
+                  <span className="text-xl font-semibold" style={{ color: "var(--text-muted)" }}>
+                    —
+                  </span>
                 )}
               </div>
-              <p className="text-[11px] tabular-nums sm:text-xs" style={{ color: "var(--text-tertiary)" }}>
-                {startLabel} — {endLabel}
+              <p className="text-[11px] font-normal tabular-nums leading-snug sm:text-xs" style={{ color: "var(--text-tertiary)" }}>
+                {startLabel}
+                <span className="mx-1 opacity-40" aria-hidden>
+                  ·
+                </span>
+                {endLabel}
               </p>
             </div>
 
-            <div className="relative mt-4 w-full overflow-hidden" style={{ maxHeight: h }}>
+            <div className="relative mt-5 w-full overflow-hidden" style={{ maxHeight: h }}>
               <svg
                 viewBox={`0 0 ${w} ${h}`}
                 className="block w-full"
@@ -168,15 +177,25 @@ export function FundDetailChart({ series }: Props) {
                 role="img"
                 aria-label="Fon birim fiyat performans grafiği"
               >
+                <line
+                  x1={padX}
+                  y1={baselineY}
+                  x2={w - padX}
+                  y2={baselineY}
+                  stroke="var(--border-subtle)"
+                  strokeWidth={1}
+                  vectorEffect="non-scaling-stroke"
+                />
                 {pathD ? (
                   <path
                     d={pathD}
                     fill="none"
                     stroke="var(--accent-blue)"
-                    strokeWidth={1.35}
+                    strokeWidth={1.2}
                     vectorEffect="non-scaling-stroke"
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                    opacity={0.92}
                   />
                 ) : null}
               </svg>

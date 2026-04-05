@@ -30,48 +30,48 @@ export default function Footer() {
 
   return (
     <footer
-      className="mt-12 border-t"
+      className="mt-8 border-t sm:mt-10"
       style={{
-        borderColor: "var(--border-default)",
+        borderColor: "var(--border-subtle)",
         background: "var(--bg-muted)",
       }}
     >
-      <div className="mx-auto max-w-[1320px] px-4 py-10 sm:px-6 sm:py-12 lg:px-8">
-        <div className="grid gap-10 lg:grid-cols-[1.35fr_1fr_1fr_1fr]">
+      <div className="mx-auto max-w-[1320px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+        <div className="grid gap-6 sm:gap-8 lg:grid-cols-[1.35fr_1fr_1fr_1fr]">
           <div className="max-w-md">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
               <SiteLogo size="footer" />
               <span
-                className="inline-flex rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
-                style={{ borderColor: "var(--border-default)", background: "var(--surface-glass)", color: "var(--text-tertiary)" }}
+                className="inline-flex rounded-md border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em]"
+                style={{ borderColor: "var(--border-subtle)", background: "var(--surface-glass)", color: "var(--text-tertiary)" }}
               >
                 Araştırma
               </span>
             </div>
-            <p className="mt-3.5 text-[13px] leading-[1.65]" style={{ color: "var(--text-secondary)" }}>
-              TEFAS fon verileri üzerinde sıralama, risk ve performans görünümleri. Yatırım kararı vermez; bilgilendirme içindir.
+            <p className="mt-2.5 text-[12px] leading-relaxed sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
+              TEFAS verileriyle sıralama ve risk görünümleri. Bilgilendirme amaçlıdır; yatırım önerisi değildir.
             </p>
 
             <div
-              className="mt-5 rounded-xl border px-3.5 py-3"
+              className="mt-4 rounded-lg border px-3 py-2.5"
               style={{
-                borderColor: "var(--border-default)",
+                borderColor: "var(--border-subtle)",
                 background: "var(--surface-glass)",
               }}
             >
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-start gap-2">
                 <div
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border"
                   style={{ borderColor: "var(--border-subtle)", background: "var(--surface-glass-strong)", color: "var(--text-tertiary)" }}
                 >
-                  <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} />
+                  <ShieldCheck className="h-3 w-3" strokeWidth={2} />
                 </div>
                 <div>
-                  <p className="text-xs font-semibold leading-snug" style={{ color: "var(--text-primary)" }}>
+                  <p className="text-[11px] font-semibold leading-snug sm:text-xs" style={{ color: "var(--text-primary)" }}>
                     Yatırım tavsiyesi değildir.
                   </p>
-                  <p className="mt-1 text-[11px] leading-5" style={{ color: "var(--text-secondary)" }}>
-                    Kararlarınızı risk profilinize ve yetkili danışmanlığa dayandırın.
+                  <p className="mt-0.5 text-[10px] leading-snug sm:text-[11px]" style={{ color: "var(--text-secondary)" }}>
+                    Kararlarınızı risk profilinize ve uzman görüşüne dayandırın.
                   </p>
                 </div>
               </div>
@@ -84,8 +84,8 @@ export default function Footer() {
         </div>
 
         <div
-          className="mt-10 flex flex-col gap-3 border-t pt-5 text-[13px] sm:flex-row sm:items-center sm:justify-between"
-          style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+          className="mt-6 flex flex-col gap-2 border-t pt-4 text-[12px] sm:flex-row sm:items-center sm:justify-between sm:text-[13px]"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
         >
           <p>© {currentYear} Yatirim.io</p>
           <div className="inline-flex items-center gap-2" style={{ color: "var(--text-tertiary)" }}>
@@ -109,10 +109,10 @@ function FooterLinkGroup({
 }) {
   return (
     <div>
-      <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--text-muted)" }}>
+      <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
         {title}
       </h3>
-      <ul className="mt-4 space-y-3">
+      <ul className="mt-2.5 space-y-2 sm:mt-3 sm:space-y-2.5">
         {links.map((link) => (
           <li key={`${title}-${link.label}`}>
             {link.external ? (

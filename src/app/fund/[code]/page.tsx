@@ -7,6 +7,7 @@ import { FundDetailChart } from "@/components/fund/FundDetailChart";
 import { FundDetailProfile } from "@/components/fund/FundDetailProfile";
 import { FundDetailRisk } from "@/components/fund/FundDetailRisk";
 import { FundDetailActions } from "@/components/fund/FundDetailActions";
+import { FundDetailSimilar } from "@/components/fund/FundDetailSimilar";
 import { loadFundDetailPageData } from "@/lib/services/fund-detail-load";
 import { fundDisplaySubtitle } from "@/lib/fund-list-format";
 
@@ -40,10 +41,13 @@ export default async function FundDetailPage({ params }: Props) {
 
         <main className="mx-auto w-full max-w-[1320px] flex-1 px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-6 sm:pb-7 lg:px-8">
           <FundDetailHero data={data} />
-          <FundDetailChart series={data.priceSeries} />
-          <FundDetailProfile data={data} />
-          <FundDetailRisk data={data} />
-          <FundDetailActions fundCode={data.fund.code} />
+          <div className="flex flex-col gap-10 sm:gap-12">
+            <FundDetailChart series={data.priceSeries} />
+            <FundDetailProfile data={data} />
+            <FundDetailRisk data={data} />
+            <FundDetailActions fundCode={data.fund.code} />
+            <FundDetailSimilar funds={data.similarFunds} categoryName={data.fund.category?.name ?? null} />
+          </div>
         </main>
 
         <Footer />
