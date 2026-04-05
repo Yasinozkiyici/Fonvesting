@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { FundDetailPricePoint } from "@/lib/services/fund-detail.service";
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
+import { formatFundLastPrice } from "@/lib/fund-list-format";
 
 const DAY_MS = 86400000;
 
@@ -16,6 +17,15 @@ const RANGES = [
 
 type RangeId = (typeof RANGES)[number]["id"];
 
+const VB_W = 820;
+const VB_H = 296;
+const PLOT_LEFT = 48;
+const PLOT_RIGHT = VB_W - 14;
+const PLOT_TOP = 16;
+const PLOT_BOTTOM = VB_H - 36;
+const INNER_W = PLOT_RIGHT - PLOT_LEFT;
+const INNER_H = PLOT_BOTTOM - PLOT_TOP;
+
 function filterWindow(series: FundDetailPricePoint[], rangeId: RangeId): FundDetailPricePoint[] {
   if (series.length === 0) return [];
   const cfg = RANGES.find((r) => r.id === rangeId);
@@ -26,37 +36,73 @@ function filterWindow(series: FundDetailPricePoint[], rangeId: RangeId): FundDet
   return win.length >= 2 ? win : series;
 }
 
-function buildPathD(norm: number[], width: number, height: number, padX: number, padY: number): string {
-  if (norm.length < 2) return "";
-  const innerW = width - padX * 2;
-  const innerH = height - padY * 2;
+function fmtIndexTr(v: number): string {
+  return v.toLocaleString("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function fmtAxisDateShort(t: number): string {
+  return new Date(t).toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+}
+
+type PlotBuild = {
+  pathD: string;
+  points: Array<{ x: number; y: number }>;
+  yLevels: Array<{ value: number; y: number }>;
+  minNorm: number;
+  maxNorm: number;
+};
+
+function buildPlot(norm: number[]): PlotBuild | null {
+  if (norm.length < 2) return null;
   const min = Math.min(...norm);
   const max = Math.max(...norm);
   const span = max - min || 1;
   const parts: string[] = [];
+  const points: Array<{ x: number; y: number }> = [];
   for (let i = 0; i < norm.length; i += 1) {
-    const x = padX + (i / (norm.length - 1)) * innerW;
-    const y = padY + innerH - ((norm[i]! - min) / span) * innerH;
+    const x = PLOT_LEFT + (i / (norm.length - 1)) * INNER_W;
+    const y = PLOT_TOP + INNER_H - ((norm[i]! - min) / span) * INNER_H;
+    points.push({ x, y });
     parts.push(`${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`);
   }
-  return parts.join(" ");
+  const midVal = min + span / 2;
+  const yLevels = [
+    { value: max, y: PLOT_TOP + INNER_H - ((max - min) / span) * INNER_H },
+    { value: midVal, y: PLOT_TOP + INNER_H - ((midVal - min) / span) * INNER_H },
+    { value: min, y: PLOT_TOP + INNER_H - ((min - min) / span) * INNER_H },
+  ];
+  return { pathD: parts.join(" "), points, yLevels, minNorm: min, maxNorm: max };
 }
 
 type Props = { series: FundDetailPricePoint[] };
 
 export function FundDetailChart({ series }: Props) {
   const [range, setRange] = useState<RangeId>("1y");
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<null | { idx: number; px: number; py: number }>(null);
 
   const windowed = useMemo(() => filterWindow(series, range), [series, range]);
 
-  const { norm, periodReturnPct, startLabel, endLabel } = useMemo(() => {
+  const { norm, periodReturnPct, startLabel, endLabel, windowedForTip } = useMemo(() => {
     if (windowed.length < 2) {
-      return { norm: [] as number[], periodReturnPct: null as number | null, startLabel: "", endLabel: "" };
+      return {
+        norm: [] as number[],
+        periodReturnPct: null as number | null,
+        startLabel: "",
+        endLabel: "",
+        windowedForTip: [] as FundDetailPricePoint[],
+      };
     }
     const p0 = windowed[0]!.p;
     const p1 = windowed[windowed.length - 1]!.p;
     if (!Number.isFinite(p0) || !Number.isFinite(p1) || p0 <= 0) {
-      return { norm: [] as number[], periodReturnPct: null as number | null, startLabel: "", endLabel: "" };
+      return {
+        norm: [] as number[],
+        periodReturnPct: null as number | null,
+        startLabel: "",
+        endLabel: "",
+        windowedForTip: [] as FundDetailPricePoint[],
+      };
     }
     const norm = windowed.map((pt) => (pt.p / p0) * 100);
     const periodReturnPct = (p1 / p0 - 1) * 100;
@@ -67,24 +113,78 @@ export function FundDetailChart({ series }: Props) {
       periodReturnPct,
       startLabel: fmt(windowed[0]!.t),
       endLabel: fmt(windowed[windowed.length - 1]!.t),
+      windowedForTip: windowed,
     };
   }, [windowed]);
 
-  const w = 720;
-  const h = 252;
-  const padX = 8;
-  const padY = 14;
-  const pathD = norm.length >= 2 ? buildPathD(norm, w, h, padX, padY) : "";
-  const baselineY = h - padY;
+  const plot = useMemo(() => buildPlot(norm), [norm]);
+
+  const xAxisTicks = useMemo(() => {
+    if (windowedForTip.length < 2) return [];
+    const last = windowedForTip.length - 1;
+    const mid = Math.floor(last / 2);
+    const indices = [0, mid, last] as const;
+    const uniq = [...new Set(indices)];
+    return uniq.map((i) => ({
+      i,
+      t: windowedForTip[i]!.t,
+      x: PLOT_LEFT + (i / last) * INNER_W,
+    }));
+  }, [windowedForTip]);
+
+  const clearHover = useCallback(() => setHover(null), []);
+
+  const onOverlayMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!plot || norm.length < 2) return;
+      const el = wrapRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const xRatio = (e.clientX - r.left) / r.width;
+      const clamped = Math.min(1, Math.max(0, xRatio));
+      const idx = Math.min(norm.length - 1, Math.max(0, Math.round(clamped * (norm.length - 1))));
+      setHover({
+        idx,
+        px: e.clientX - r.left,
+        py: e.clientY - r.top,
+      });
+    },
+    [plot, norm.length]
+  );
+
+  const tipData =
+    hover && windowedForTip[hover.idx]
+      ? {
+          date: new Date(windowedForTip[hover.idx]!.t).toLocaleDateString("tr-TR", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          }),
+          price: formatFundLastPrice(windowedForTip[hover.idx]!.p),
+          index: fmtIndexTr(norm[hover.idx] ?? 100),
+        }
+      : null;
+
+  let tipStyle: { left: number; top: number } | null = null;
+  if (hover && wrapRef.current) {
+    const bw = wrapRef.current.clientWidth;
+    const bh = wrapRef.current.clientHeight;
+    const tw = 168;
+    const th = 58;
+    let left = hover.px + 12;
+    let top = hover.py + 12;
+    if (left + tw > bw) left = hover.px - tw - 12;
+    if (top + th > bh) top = hover.py - th - 8;
+    left = Math.max(8, Math.min(left, bw - tw - 8));
+    top = Math.max(8, Math.min(top, bh - th - 8));
+    tipStyle = { left, top };
+  }
 
   return (
     <section aria-labelledby="fund-detail-chart-heading">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-8">
         <div className="min-w-0 flex-1">
           <FundDetailSectionTitle id="fund-detail-chart-heading">Performans</FundDetailSectionTitle>
-          <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed sm:text-sm" style={{ color: "var(--text-secondary)" }}>
-            Birim fiyat; seçili aralıkta başlangıç 100 olacak şekilde normalize edilir.
-          </p>
         </div>
         <div
           className="flex shrink-0 flex-wrap gap-0.5 rounded-[10px] border p-0.5 sm:gap-px"
@@ -169,26 +269,54 @@ export function FundDetailChart({ series }: Props) {
               </p>
             </div>
 
-            <div className="relative mt-5 w-full overflow-hidden" style={{ maxHeight: h }}>
+            <div
+              ref={wrapRef}
+              className="relative mt-5 w-full touch-none"
+              style={{ maxHeight: VB_H }}
+              onMouseLeave={clearHover}
+              onMouseMove={onOverlayMove}
+            >
               <svg
-                viewBox={`0 0 ${w} ${h}`}
-                className="block w-full"
+                viewBox={`0 0 ${VB_W} ${VB_H}`}
+                className="block w-full select-none"
                 preserveAspectRatio="xMidYMid meet"
                 role="img"
-                aria-label="Fon birim fiyat performans grafiği"
+                aria-label="Fon birim fiyat performans grafiği, seçili dönemde dönem başına göre endekslenmiş"
               >
-                <line
-                  x1={padX}
-                  y1={baselineY}
-                  x2={w - padX}
-                  y2={baselineY}
-                  stroke="var(--border-subtle)"
-                  strokeWidth={1}
-                  vectorEffect="non-scaling-stroke"
-                />
-                {pathD ? (
+                {plot
+                  ? plot.yLevels.map((lvl, i) => (
+                      <g key={i}>
+                        <line
+                          x1={PLOT_LEFT}
+                          y1={lvl.y}
+                          x2={PLOT_RIGHT}
+                          y2={lvl.y}
+                          stroke="var(--border-subtle)"
+                          strokeWidth={1}
+                          vectorEffect="non-scaling-stroke"
+                          opacity={0.35}
+                        />
+                        <text
+                          x={PLOT_LEFT - 6}
+                          y={lvl.y}
+                          textAnchor="end"
+                          dominantBaseline="middle"
+                          fill="var(--text-tertiary)"
+                          fontSize={10}
+                          fontWeight={500}
+                          opacity={0.72}
+                          className="tabular-nums"
+                          style={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {fmtIndexTr(lvl.value)}
+                        </text>
+                      </g>
+                    ))
+                  : null}
+
+                {plot ? (
                   <path
-                    d={pathD}
+                    d={plot.pathD}
                     fill="none"
                     stroke="var(--accent-blue)"
                     strokeWidth={1.2}
@@ -198,7 +326,69 @@ export function FundDetailChart({ series }: Props) {
                     opacity={0.92}
                   />
                 ) : null}
+
+                {plot && plot.points.length >= 2 ? (
+                  <>
+                    <circle
+                      cx={plot.points[0]!.x}
+                      cy={plot.points[0]!.y}
+                      r={3}
+                      fill="var(--card-bg)"
+                      stroke="var(--accent-blue)"
+                      strokeWidth={1}
+                      vectorEffect="non-scaling-stroke"
+                      opacity={0.85}
+                    />
+                    <circle
+                      cx={plot.points[plot.points.length - 1]!.x}
+                      cy={plot.points[plot.points.length - 1]!.y}
+                      r={3}
+                      fill="var(--card-bg)"
+                      stroke="var(--accent-blue)"
+                      strokeWidth={1}
+                      vectorEffect="non-scaling-stroke"
+                      opacity={0.85}
+                    />
+                  </>
+                ) : null}
+
+                {xAxisTicks.map((tick) => (
+                  <text
+                    key={tick.i}
+                    x={tick.x}
+                    y={PLOT_BOTTOM + 18}
+                    textAnchor="middle"
+                    fill="var(--text-tertiary)"
+                    fontSize={10}
+                    fontWeight={500}
+                    opacity={0.72}
+                    className="tabular-nums"
+                  >
+                    {fmtAxisDateShort(tick.t)}
+                  </text>
+                ))}
               </svg>
+
+              {hover && tipData && tipStyle ? (
+                <div
+                  className="pointer-events-none absolute z-10 rounded-md border px-2.5 py-2 shadow-sm tabular-nums"
+                  style={{
+                    left: tipStyle.left,
+                    top: tipStyle.top,
+                    width: 168,
+                    borderColor: "var(--border-subtle)",
+                    background: "var(--surface-glass-strong)",
+                    color: "var(--text-primary)",
+                    fontSize: 11,
+                    lineHeight: 1.35,
+                  }}
+                  role="status"
+                >
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>{tipData.date}</div>
+                  <div className="mt-0.5 font-semibold">{tipData.price}</div>
+                  <div style={{ color: "var(--text-tertiary)", fontSize: 10 }}>Endeks (dönem başı 100): {tipData.index}</div>
+                </div>
+              ) : null}
             </div>
           </>
         )}
