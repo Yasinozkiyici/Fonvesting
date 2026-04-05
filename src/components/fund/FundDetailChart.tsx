@@ -12,6 +12,7 @@ const RANGES = [
   { id: "3m", label: "3A", days: 93 },
   { id: "6m", label: "6A", days: 186 },
   { id: "1y", label: "1Y", days: 365 },
+  { id: "2y", label: "2Y", days: 730 },
   { id: "all", label: "Tümü", days: null },
 ] as const;
 

@@ -1,5 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import { deriveFundPerformanceFromHistory } from "@/lib/services/fund-daily-snapshot.service";
+import {
+  deriveFundPerformanceFromHistory,
+  FUND_PRICE_HISTORY_LOOKBACK_DAYS,
+} from "@/lib/services/fund-daily-snapshot.service";
 import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } from "@/lib/services/tefas-browser.service";
 import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.service";
 import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
@@ -213,7 +216,9 @@ export async function recomputeFundReturnsFromHistory(options?: {
   targetSessionDate?: Date;
 }): Promise<{ updatedFunds: number }> {
   const targetSessionDate = options?.targetSessionDate ?? null;
-  const horizon = new Date((targetSessionDate ?? new Date()).getTime() - 370 * DAY_MS);
+  const horizon = new Date(
+    (targetSessionDate ?? new Date()).getTime() - FUND_PRICE_HISTORY_LOOKBACK_DAYS * DAY_MS
+  );
 
   const [funds, historyRows] = await Promise.all([
     prisma.fund.findMany({

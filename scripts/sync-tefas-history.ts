@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import path from "node:path";
+import { prisma } from "../src/lib/prisma";
 import {
   appendRecentFundHistory,
   backfillFundHistoryDays,
@@ -34,6 +35,14 @@ function parseDateArg(raw: string): Date {
   throw new Error(`Geçersiz tarih argümanı: ${raw}`);
 }
 
+async function resolveLatestSnapshotDate(fallbackDate: Date): Promise<Date> {
+  const latestHistory = await prisma.fundPriceHistory.findFirst({
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  return startOfUtcDay(latestHistory?.date ?? fallbackDate);
+}
+
 async function main() {
   const daysRaw = readArg("--days");
   const fromRaw = readArg("--from");
@@ -57,14 +66,14 @@ async function main() {
       chunkDays,
     });
   } else {
-    const days = daysRaw ? Number(daysRaw) : 365;
+    const days = daysRaw ? Number(daysRaw) : 730;
     if (!Number.isFinite(days) || days <= 0) {
       throw new Error("--days pozitif sayı olmalı.");
     }
     result = await backfillFundHistoryDays(days, undefined, chunkDays);
   }
 
-  const snapshotDate = startOfUtcDay(new Date(result.endDate));
+  const snapshotDate = await resolveLatestSnapshotDate(startOfUtcDay(new Date(result.endDate)));
   const returns = await recomputeFundReturnsFromHistory({ targetSessionDate: snapshotDate });
   await rebuildMarketSnapshot(snapshotDate);
   const serving = await rebuildFundDailySnapshots(snapshotDate);

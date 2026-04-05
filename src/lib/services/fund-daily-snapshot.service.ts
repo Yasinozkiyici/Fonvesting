@@ -20,10 +20,13 @@ import { getCachedUsdTryEurTry, mergeSnapshotFx } from "@/lib/services/exchange-
 import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-compute.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SNAPSHOT_RETENTION_DAYS = 365;
+/** Günlük snapshot satırları: ~2 yıl tutulur (eski günler silinir). */
+const SNAPSHOT_RETENTION_DAYS = 730;
 const HISTORY_BATCH = 4000;
 const SPARKLINE_POINTS = 7;
-const RETURN_LOOKBACK_DAYS = 370;
+/** Metrik / skor için yüklenecek fiyat geçmişi: ~2 yıl + tampon. */
+export const FUND_PRICE_HISTORY_LOOKBACK_DAYS = 760;
+const RETURN_LOOKBACK_DAYS = FUND_PRICE_HISTORY_LOOKBACK_DAYS;
 
 function isRelationMissingError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021";

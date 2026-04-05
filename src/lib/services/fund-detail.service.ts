@@ -74,6 +74,8 @@ export type FundDetailSimilarFund = {
 export type FundDetailDerivedSummary = {
   /** Son gözlemden geriye ~365 gün veya mevcut seri başı. */
   returnApprox1YearPct: number | null;
+  /** Son gözlemden geriye ~730 gün veya mevcut seri başı. */
+  returnApprox2YearPct: number | null;
   /** Ardışık ~21 işlem günü pencereleri içinde en yüksek birikimli getiri (%). */
   bestRollingMonthPct: number | null;
   /** Aynı tanım için en düşük birikimli getiri (%). */
@@ -130,10 +132,10 @@ function bestWorstDailyReturn(
   return { bestPct: best, worstPct: worst };
 }
 
-function returnApproxCalendarYear(points: PricePoint[]): number | null {
+function returnApproxCalendarDays(points: PricePoint[], days: number): number | null {
   if (points.length < 2) return null;
   const last = points[points.length - 1]!;
-  const cutoff = last.date.getTime() - 365 * DAY_MS;
+  const cutoff = last.date.getTime() - days * DAY_MS;
   let start: PricePoint | null = null;
   for (let i = points.length - 1; i >= 0; i -= 1) {
     const p = points[i]!;
@@ -250,7 +252,8 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
 
   const rolling = bestWorstRollingTradingWindow(points, ROLLING_TRADING_DAYS);
   const derivedSummary: FundDetailDerivedSummary = {
-    returnApprox1YearPct: returnApproxCalendarYear(points),
+    returnApprox1YearPct: returnApproxCalendarDays(points, 365),
+    returnApprox2YearPct: returnApproxCalendarDays(points, 730),
     bestRollingMonthPct: rolling?.bestPct ?? null,
     worstRollingMonthPct: rolling?.worstPct ?? null,
   };

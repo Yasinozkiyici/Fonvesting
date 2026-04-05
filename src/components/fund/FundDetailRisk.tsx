@@ -37,6 +37,7 @@ export function FundDetailRisk({ data }: Props) {
   const hasDd = m && Number.isFinite(m.maxDrawdown) && m.maxDrawdown > 0;
   const hasDay = bw && (Number.isFinite(bw.bestPct) || Number.isFinite(bw.worstPct));
   const has1y = d.returnApprox1YearPct != null && Number.isFinite(d.returnApprox1YearPct);
+  const has2y = d.returnApprox2YearPct != null && Number.isFinite(d.returnApprox2YearPct);
   const hasRoll =
     d.bestRollingMonthPct != null &&
     d.worstRollingMonthPct != null &&
@@ -44,7 +45,7 @@ export function FundDetailRisk({ data }: Props) {
     Number.isFinite(d.worstRollingMonthPct);
   const hasWin = m && Number.isFinite(m.winRate) && m.dataPoints >= 20 && m.winRate > 0;
 
-  if (!hasVol && !hasDd && !hasDay && !has1y && !hasRoll && !hasWin) return null;
+  if (!hasVol && !hasDd && !hasDay && !has1y && !has2y && !hasRoll && !hasWin) return null;
 
   return (
     <section aria-labelledby="fund-detail-risk-heading">
@@ -61,6 +62,13 @@ export function FundDetailRisk({ data }: Props) {
             label="Yaklaşık 1Y getiri"
             value={fmtPct(d.returnApprox1YearPct!, 2)}
             hint="~365 gün veya mevcut serinin başı; takvim bazlı."
+          />
+        ) : null}
+        {has2y ? (
+          <Stat
+            label="Yaklaşık 2Y getiri"
+            value={fmtPct(d.returnApprox2YearPct!, 2)}
+            hint="~730 gün veya mevcut serinin başı; takvim bazlı."
           />
         ) : null}
         {hasRoll ? (
