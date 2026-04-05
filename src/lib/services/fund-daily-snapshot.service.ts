@@ -16,6 +16,7 @@ import {
 } from "@/lib/scoring";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
+import { getCachedUsdTryEurTry, mergeSnapshotFx } from "@/lib/services/exchange-rates.service";
 import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-compute.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -643,6 +644,9 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
       .sort((a, b) => a.dailyReturn - b.dailyReturn)
       .slice(0, 5);
 
+    const liveFx = await getCachedUsdTryEurTry();
+    const fx = mergeSnapshotFx(marketSnapshot?.usdTry, marketSnapshot?.eurTry, liveFx);
+
     return {
       summary: { avgDailyReturn, totalFundCount: fundCount },
       fundCount,
@@ -653,8 +657,8 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
       unchanged,
       lastSyncedAt: latest.updatedAt.toISOString(),
       snapshotDate: latest.date.toISOString(),
-      usdTry: marketSnapshot?.usdTry ?? null,
-      eurTry: marketSnapshot?.eurTry ?? null,
+      usdTry: fx.usdTry,
+      eurTry: fx.eurTry,
       topGainers,
       topLosers,
       formatted: {
@@ -725,6 +729,9 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
     const unchanged = Math.max(0, fundCount - advancers - decliners);
     const avgDailyReturn = nonZeroReturnAvg._avg.dailyReturn ?? 0;
 
+    const liveFx = await getCachedUsdTryEurTry();
+    const fx = mergeSnapshotFx(snapshot?.usdTry, snapshot?.eurTry, liveFx);
+
     return {
       summary: { avgDailyReturn, totalFundCount: fundCount },
       totalPortfolioSize,
@@ -735,8 +742,8 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
       unchanged,
       lastSyncedAt: fundFreshness._max.lastUpdatedAt?.toISOString() ?? null,
       snapshotDate: snapshot?.date?.toISOString() ?? null,
-      usdTry: snapshot?.usdTry ?? null,
-      eurTry: snapshot?.eurTry ?? null,
+      usdTry: fx.usdTry,
+      eurTry: fx.eurTry,
       topGainers,
       topLosers,
       formatted: {

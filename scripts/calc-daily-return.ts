@@ -9,6 +9,7 @@ import { config } from "dotenv";
 import { prisma } from "../src/lib/prisma";
 import { TefasBrowserClient, withTefasBrowserClient, type TefasExportRow } from "../src/lib/services/tefas-browser.service";
 import { rebuildMarketSnapshot, recomputeDailyReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
+import { fetchUsdTryEurTryLive } from "../src/lib/services/exchange-rates.service";
 import { parseTefasSessionDate, startOfUtcDay } from "../src/lib/trading-calendar-tr";
 
 config({ path: path.join(process.cwd(), ".env"), quiet: true });
@@ -16,20 +17,6 @@ config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: tr
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
-
-async function fetchExchangeRates(): Promise<{ usdTry: number; eurTry: number } | null> {
-  try {
-    const res = await fetch("https://open.er-api.com/v6/latest/USD");
-    const data = await res.json();
-    if (data.result !== "success") return null;
-    const usdTry = data.rates?.TRY ?? 0;
-    const eurRate = data.rates?.EUR ?? 1;
-    const eurTry = usdTry / eurRate;
-    return { usdTry, eurTry };
-  } catch {
-    return null;
-  }
-}
 
 function normalizeHistorySessionDate(date: Date): Date {
   return startOfUtcDay(new Date(date.getTime() + TURKEY_UTC_OFFSET_MS));
@@ -215,7 +202,7 @@ async function main() {
 
   await rebuildMarketSnapshot(targetSessionDate);
 
-  const rates = await fetchExchangeRates();
+  const rates = await fetchUsdTryEurTryLive();
   if (rates) {
     await prisma.marketSnapshot.updateMany({
       where: { date: targetSessionDate },

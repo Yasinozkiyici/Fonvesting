@@ -6,6 +6,7 @@ import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
 import { rebuildFundDailySnapshots } from "@/lib/services/fund-daily-snapshot.service";
 import { warmAllScoresApiCaches } from "@/lib/services/fund-scores-cache.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
+import { fetchUsdTryEurTryLive } from "@/lib/services/exchange-rates.service";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
@@ -324,6 +325,14 @@ export async function rebuildMarketSnapshot(snapshotDate: Date): Promise<void> {
       },
     });
   });
+
+  const rates = await fetchUsdTryEurTryLive();
+  if (rates) {
+    await prisma.marketSnapshot.updateMany({
+      where: { date: sessionDayStart },
+      data: { usdTry: rates.usdTry, eurTry: rates.eurTry },
+    });
+  }
 }
 
 async function ensureFundTypes(fundTypeCode: number): Promise<string> {
