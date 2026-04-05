@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import path from "node:path";
 import { prisma } from "../src/lib/prisma";
 import { rebuildFundDailySnapshots } from "../src/lib/services/fund-daily-snapshot.service";
+import { rebuildFundDerivedMetrics } from "../src/lib/services/fund-derived-metrics.service";
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import {
   appendRecentFundHistory,
@@ -47,6 +48,7 @@ async function main() {
   const returns = await recomputeFundReturnsFromHistory({ targetSessionDate: snapshotDate });
   await rebuildMarketSnapshot(snapshotDate);
   const serving = await rebuildFundDailySnapshots(snapshotDate);
+  await rebuildFundDerivedMetrics();
   const warm = await warmAllScoresApiCaches();
   await refreshFundHistorySyncState({
     phase: "daily_maintenance",

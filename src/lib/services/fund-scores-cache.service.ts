@@ -4,14 +4,16 @@ import { Prisma } from "@prisma/client";
 import { computeScoresPayload, type ScoresApiPayload } from "@/lib/services/fund-scores-compute.service";
 import { normalizeScoresPayloadFundTypes } from "@/lib/fund-type-display";
 
-const KEY_PREFIX = "scores:v4";
+const KEY_PREFIX = "scores:v6";
 
 function isRelationMissingError(e: unknown): boolean {
   return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2021";
 }
 
-export function scoresApiCacheKey(mode: RankingMode, categoryKey: string): string {
-  return `${KEY_PREFIX}:${mode}:${categoryKey || "all"}`;
+export function scoresApiCacheKey(mode: RankingMode, categoryKey: string, queryTrim = ""): string {
+  const q = queryTrim.trim();
+  const qPart = q ? `:q:${q.slice(0, 64)}` : "";
+  return `${KEY_PREFIX}:${mode}:${categoryKey || "all"}${qPart}`;
 }
 
 /**
@@ -19,8 +21,12 @@ export function scoresApiCacheKey(mode: RankingMode, categoryKey: string): strin
  * ScoresApiCache tablosu yoksa (migrate edilmemiş Supabase vb.) önbelleği atlayıp
  * yalnızca hesaplanan yanıtı döner — API 500 vermez.
  */
-export async function getScoresPayloadCached(mode: RankingMode, categoryKey: string): Promise<ScoresApiPayload> {
-  const cacheKey = scoresApiCacheKey(mode, categoryKey);
+export async function getScoresPayloadCached(
+  mode: RankingMode,
+  categoryKey: string,
+  queryTrim = ""
+): Promise<ScoresApiPayload> {
+  const cacheKey = scoresApiCacheKey(mode, categoryKey, queryTrim);
 
   try {
     const row = await prisma.scoresApiCache.findUnique({ where: { cacheKey } });
@@ -31,7 +37,7 @@ export async function getScoresPayloadCached(mode: RankingMode, categoryKey: str
     if (!isRelationMissingError(e)) throw e;
   }
 
-  const payload = await computeScoresPayload(mode, categoryKey);
+  const payload = await computeScoresPayload(mode, categoryKey, queryTrim);
 
   try {
     const json = JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue;
@@ -74,8 +80,8 @@ export async function warmAllScoresApiCaches(): Promise<{ written: number }> {
   let written = 0;
   for (const mode of modes) {
     for (const cat of categoryKeys) {
-      const payload = await computeScoresPayload(mode, cat);
-      const cacheKey = scoresApiCacheKey(mode, cat);
+      const payload = await computeScoresPayload(mode, cat, "");
+      const cacheKey = scoresApiCacheKey(mode, cat, "");
       const json = JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue;
       await prisma.scoresApiCache.upsert({
         where: { cacheKey },

@@ -54,12 +54,48 @@ model Fund {
   lastUpdatedAt  DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  priceHistory   FundPriceHistory[]
-  dailySnapshots FundDailySnapshot[]
-  watchlistItems WatchlistItem[]
+  priceHistory     FundPriceHistory[]
+  dailySnapshots   FundDailySnapshot[]
+  derivedMetrics   FundDerivedMetrics?
+  watchlistItems   WatchlistItem[]
   @@index([portfolioSize(sort: Desc)])
   @@index([dailyReturn(sort: Desc)])
   @@index([categoryId])
+}
+
+/**
+ * ~2 yıllık fiyat geçmişinden günlük job ile üretilen türetilmiş metrikler.
+ * Liste/skor API’si ham FundPriceHistory taramadan buradan okur.
+ */
+model FundDerivedMetrics {
+  fundId             String   @id
+  fund               Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  categoryCode       String?
+  fundTypeCode       Int?
+  latestPrice        Float    @default(0)
+  return1d           Float    @default(0)
+  return7d           Float?
+  return30d          Float?
+  return90d          Float?
+  return180d         Float?
+  return1y           Float?
+  return2y           Float?
+  volatility1y       Float?
+  volatility2y       Float?
+  maxDrawdown1y      Float?
+  maxDrawdown2y      Float?
+  annualizedReturn1y Float    @default(0)
+  sharpe1y           Float    @default(0)
+  sortino1y          Float    @default(0)
+  totalReturn2y      Float?
+  investorCount      Int      @default(0)
+  aum                Float    @default(0)
+  historySessions    Int      @default(0)
+  sparkline          Json
+  computedAt         DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  @@index([categoryCode])
+  @@index([categoryCode, return1y(sort: Desc)])
 }
 
 /** Günlük senkron sonrası /api/funds/scores yanıtı — anında okuma için (hesap sunucuda bir kez). */

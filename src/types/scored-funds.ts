@@ -26,4 +26,6 @@ export interface ScoredResponse {
   mode: RankingMode;
   total: number;
   funds: ScoredFund[];
+  /** Sunucu metin filtresi uygulandıysa (q/query) */
+  appliedQuery?: string;
 }

@@ -18,7 +18,7 @@ import {
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import { getCachedUsdTryEurTry, mergeSnapshotFx } from "@/lib/services/exchange-rates.service";
-import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-compute.service";
+import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Günlük snapshot satırları: ~2 yıl tutulur (eski günler silinir). */
@@ -142,7 +142,7 @@ export type MarketSnapshotSummaryPayload = {
   };
 };
 
-async function loadPriceHistoryByFundId(
+export async function loadPriceHistoryByFundId(
   fundIds: string[],
   fromDate: Date
 ): Promise<Map<string, Array<{ date: Date; price: number }>>> {

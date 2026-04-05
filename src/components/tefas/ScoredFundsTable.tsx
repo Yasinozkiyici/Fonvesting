@@ -79,6 +79,12 @@ export default function ScoredFundsTable({
     return category;
   }, [enableCategoryFilter, searchParams, category]);
 
+  const searchForApi = useMemo(() => {
+    const fromUrl = (searchParams?.get("q") ?? "").trim();
+    if (fromUrl) return fromUrl;
+    return search.trim();
+  }, [searchParams, search]);
+
   useEffect(() => {
     if (initialCategories.length > 0) return;
     fetch("/api/categories")
@@ -96,6 +102,9 @@ export default function ScoredFundsTable({
     const params = new URLSearchParams({ mode: rankingMode });
     if (enableCategoryFilter && categoryForApi) {
       params.set("category", categoryForApi);
+    }
+    if (searchForApi) {
+      params.set("q", searchForApi);
     }
 
     try {
@@ -121,15 +130,15 @@ export default function ScoredFundsTable({
     } finally {
       setLoading(false);
     }
-  }, [rankingMode, enableCategoryFilter, categoryForApi]);
+  }, [rankingMode, enableCategoryFilter, categoryForApi, searchForApi]);
 
   useEffect(() => {
-    if (usedInitialDataRef.current && rankingMode === defaultMode && !categoryForApi) {
+    if (usedInitialDataRef.current && rankingMode === defaultMode && !categoryForApi && !searchForApi) {
       usedInitialDataRef.current = false;
       return;
     }
     fetchData();
-  }, [categoryForApi, defaultMode, fetchData, rankingMode]);
+  }, [categoryForApi, defaultMode, fetchData, rankingMode, searchForApi]);
 
   useEffect(() => {
     if (prevRankingModeRef.current === null) {
@@ -174,7 +183,8 @@ export default function ScoredFundsTable({
   const filteredFunds = useMemo(() => {
     const list = (data?.funds ?? []).filter((fund) => {
       if (enableCategoryFilter && category && fund.category?.code !== category) return false;
-      if (!search) return true;
+      if (!search.trim()) return true;
+      if (data?.appliedQuery === search.trim()) return true;
       const q = search.toLowerCase();
       return fund.code.toLowerCase().includes(q) || fund.name.toLowerCase().includes(q);
     });
@@ -213,7 +223,7 @@ export default function ScoredFundsTable({
 
       return sortDir === "desc" ? bVal - aVal : aVal - bVal;
     });
-  }, [data?.funds, enableCategoryFilter, category, search, sortField, sortDir]);
+  }, [data?.appliedQuery, data?.funds, enableCategoryFilter, category, search, sortField, sortDir]);
 
   const totalPages = Math.ceil(filteredFunds.length / pageSize);
   const paginatedFunds = filteredFunds.slice((page - 1) * pageSize, page * pageSize);

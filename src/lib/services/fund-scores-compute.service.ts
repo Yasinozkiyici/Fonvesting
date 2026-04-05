@@ -8,7 +8,6 @@ import {
   determineRiskLevel,
   calculateAlpha,
   type FundMetrics,
-  type FundScore,
   type FundScaleFields,
   type RankingMode,
   type PricePoint,
@@ -16,21 +15,10 @@ import {
 import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
+import { getScoresPayloadFromDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
+import type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
 
-/** API satırı: skor alanları + tabloda gösterilen alanlar */
-export type ScoredFundRow = FundScore & {
-  name: string;
-  shortName: string | null;
-  logoUrl: string | null;
-  lastPrice: number;
-  dailyReturn: number;
-  monthlyReturn: number;
-  yearlyReturn: number;
-  portfolioSize: number;
-  investorCount: number;
-  category: { code: string; name: string } | null;
-  fundType: { code: number; name: string } | null;
-};
+export type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
 
 interface FundRow {
   id: string;
@@ -80,12 +68,6 @@ async function loadPriceHistoryByFundId(
   }
   return map;
 }
-
-export type ScoresApiPayload = {
-  mode: RankingMode;
-  total: number;
-  funds: ScoredFundRow[];
-};
 
 /**
  * Tüm fon skorlarını hesaplar (ağır). Günlük job veya cache miss’te çağrılmalı;
@@ -208,8 +190,26 @@ async function computeScoresPayloadFromRawData(mode: RankingMode, categoryKey: s
   };
 }
 
-export async function computeScoresPayload(mode: RankingMode, categoryKey: string): Promise<ScoresApiPayload> {
+export async function computeScoresPayload(
+  mode: RankingMode,
+  categoryKey: string,
+  queryTrim = ""
+): Promise<ScoresApiPayload> {
+  const derivedPayload = await getScoresPayloadFromDerivedMetrics(mode, categoryKey, queryTrim);
+  if (derivedPayload) return derivedPayload;
   const snapshotPayload = await getScoresPayloadFromDailySnapshot(mode, categoryKey);
-  if (snapshotPayload) return snapshotPayload;
-  return computeScoresPayloadFromRawData(mode, categoryKey);
+  if (snapshotPayload) {
+    return queryTrim ? filterScoresPayloadByQuery(snapshotPayload, queryTrim) : snapshotPayload;
+  }
+  const raw = await computeScoresPayloadFromRawData(mode, categoryKey);
+  return queryTrim ? filterScoresPayloadByQuery(raw, queryTrim) : raw;
+}
+
+function filterScoresPayloadByQuery(payload: ScoresApiPayload, q: string): ScoresApiPayload {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return { ...payload, appliedQuery: undefined };
+  const funds = payload.funds.filter(
+    (f) => f.code.toLowerCase().includes(needle) || f.name.toLowerCase().includes(needle)
+  );
+  return { ...payload, total: funds.length, funds, appliedQuery: q.trim() };
 }

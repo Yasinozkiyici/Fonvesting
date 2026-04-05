@@ -1,4 +1,4 @@
-import type { ScoresApiPayload } from "@/lib/services/fund-scores-compute.service";
+import type { ScoresApiPayload } from "@/lib/services/fund-scores-types";
 
 /**
  * TEFAS fon türü kodu — Fund.fundTypeId ile eşleşen kayıt; kategori (Hisse, Para Piyasası vb.) değil.

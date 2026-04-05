@@ -7,6 +7,7 @@ import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } f
 import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.service";
 import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
 import { rebuildFundDailySnapshots } from "@/lib/services/fund-daily-snapshot.service";
+import { rebuildFundDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
 import { warmAllScoresApiCaches } from "@/lib/services/fund-scores-cache.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchUsdTryEurTryLive } from "@/lib/services/exchange-rates.service";
@@ -572,6 +573,12 @@ export async function runTefasSync(options?: {
     await recomputeFundReturnsFromHistory({ targetSessionDate: sessionDayStart });
     await rebuildMarketSnapshot(sessionDayStart);
     await rebuildFundDailySnapshots(sessionDayStart);
+    try {
+      const derived = await rebuildFundDerivedMetrics();
+      console.log("[tefas-sync] fund derived metrics:", derived);
+    } catch (e) {
+      console.error("[tefas-sync] fund derived metrics failed:", e);
+    }
     await refreshFundHistorySyncState({
       phase: "daily_sync",
       sessionDate: sessionDayStart.toISOString(),
@@ -647,7 +654,7 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
   }
 
   try {
-      const latestSession = await prisma.fundPriceHistory.findFirst({
+    const latestSession = await prisma.fundPriceHistory.findFirst({
       orderBy: { date: "desc" },
       select: { date: true },
     });
@@ -660,6 +667,13 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
     }
   } catch (e) {
     console.error("[tefas-sync] daily snapshot rebuild failed:", e);
+  }
+
+  try {
+    const derived = await rebuildFundDerivedMetrics();
+    console.log("[tefas-sync] fund derived metrics:", derived);
+  } catch (e) {
+    console.error("[tefas-sync] fund derived metrics failed:", e);
   }
 
   try {
