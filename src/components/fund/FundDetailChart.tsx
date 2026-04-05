@@ -19,18 +19,18 @@ type RangeId = (typeof RANGES)[number]["id"];
 
 /** Tüm eksen etiketleri viewBox içinde kalsın; dış sarmalayıcı aynı en-boy oranını kullanır (kesme/yer değiştirme olmaz). */
 const VB_W = 820;
-const VB_H = 264;
+const VB_H = 192;
 const PAD_L = 46;
 const PAD_R = 16;
-const PAD_T = 12;
-const PAD_B = 34;
+const PAD_T = 8;
+const PAD_B = 30;
 const PLOT_LEFT = PAD_L;
 const PLOT_RIGHT = VB_W - PAD_R;
 const PLOT_TOP = PAD_T;
 const PLOT_BOTTOM = VB_H - PAD_B;
 const INNER_W = PLOT_RIGHT - PLOT_LEFT;
 const INNER_H = PLOT_BOTTOM - PLOT_TOP;
-const X_LABEL_Y = PLOT_BOTTOM + 13;
+const X_LABEL_Y = PLOT_BOTTOM + 11;
 
 function filterWindow(series: FundDetailPricePoint[], rangeId: RangeId): FundDetailPricePoint[] {
   if (series.length === 0) return [];
