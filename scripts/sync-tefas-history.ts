@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   appendRecentFundHistory,
   backfillFundHistoryDays,
+  refreshFundHistorySyncState,
   recoverStaleHistorySyncState,
   syncFundHistoryRange,
 } from "../src/lib/services/tefas-history.service";
@@ -42,12 +43,13 @@ async function main() {
   const append = process.argv.includes("--append");
   const chunkDays = chunkDaysRaw ? Number(chunkDaysRaw) : undefined;
   const staleMinutes = staleMinutesRaw ? Number(staleMinutesRaw) : 120;
+  const appendOverlapDays = 7;
 
   const recovery = await recoverStaleHistorySyncState(Number.isFinite(staleMinutes) ? staleMinutes : 120);
 
   let result;
   if (append) {
-    result = await appendRecentFundHistory();
+    result = await appendRecentFundHistory(appendOverlapDays);
   } else if (fromRaw && toRaw) {
     result = await syncFundHistoryRange({
       startDate: parseDateArg(fromRaw),
@@ -67,6 +69,37 @@ async function main() {
   await rebuildMarketSnapshot(snapshotDate);
   const serving = await rebuildFundDailySnapshots(snapshotDate);
   const warm = await warmAllScoresApiCaches();
+  await refreshFundHistorySyncState({
+    phase: append ? "history_append" : "history_backfill",
+    source: "scripts/sync-tefas-history.ts",
+    lastHistoryRun: {
+      mode: append ? "append" : fromRaw && toRaw ? "range" : "backfill_days",
+      startDate: result.startDate,
+      endDate: result.endDate,
+      chunkDays: result.chunkDays,
+      chunks: result.chunks,
+      fetchedRows: result.fetchedRows,
+      writtenRows: result.writtenRows,
+      touchedDates: result.touchedDates,
+      completedAt: new Date().toISOString(),
+    },
+    lastAppendRange: append
+      ? {
+          overlapDays: appendOverlapDays,
+          startDate: result.startDate,
+          endDate: result.endDate,
+          completedAt: new Date().toISOString(),
+        }
+      : undefined,
+    lastDerivedRebuild: {
+      snapshotDate: snapshotDate.toISOString(),
+      updatedFunds: returns.updatedFunds,
+      writtenSnapshots: serving.written,
+      warmedCaches: warm.written,
+      completedAt: new Date().toISOString(),
+    },
+    lastRecovery: recovery,
+  });
 
   console.log(
     JSON.stringify(

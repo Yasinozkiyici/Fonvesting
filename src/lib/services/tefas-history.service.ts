@@ -26,6 +26,8 @@ export type HistorySyncRecoveryResult = {
   reason?: string;
 };
 
+type HistorySyncDetails = Record<string, unknown>;
+
 function formatDate(d: Date): string {
   return `${String(d.getUTCDate()).padStart(2, "0")}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.${d.getUTCFullYear()}`;
 }
@@ -78,6 +80,13 @@ function chunkDates(dates: Date[], chunkDays: number): Array<{ start: Date; end:
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function asDetailsRecord(value: unknown): HistorySyncDetails {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as HistorySyncDetails;
+  }
+  return {};
 }
 
 function normalizeSessionDate(raw: string | null | undefined, fallbackDate: Date): Date {
@@ -213,6 +222,14 @@ export async function refreshFundHistorySyncState(details?: Record<string, unkno
       select: { date: true },
     }),
   ]);
+  const current = await prisma.historySyncState.findUnique({
+    where: { key: HISTORY_SYNC_KEY },
+    select: { details: true },
+  });
+  const mergedDetails = {
+    ...asDetailsRecord(current?.details),
+    ...asDetailsRecord(details),
+  };
 
   await prisma.historySyncState.upsert({
     where: { key: HISTORY_SYNC_KEY },
@@ -222,14 +239,14 @@ export async function refreshFundHistorySyncState(details?: Record<string, unkno
       earliestHistoryDate: minDate?.date ?? null,
       latestHistoryDate: maxDate?.date ?? null,
       lastCompletedAt: new Date(),
-      details: toJson(details ?? {}),
+      details: toJson(mergedDetails),
     },
     update: {
       status: "READY",
       earliestHistoryDate: minDate?.date ?? null,
       latestHistoryDate: maxDate?.date ?? null,
       lastCompletedAt: new Date(),
-      details: toJson(details ?? {}),
+      details: toJson(mergedDetails),
     },
   });
 }

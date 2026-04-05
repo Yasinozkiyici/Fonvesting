@@ -1,0 +1,14 @@
+type Props = { children: React.ReactNode; id?: string };
+
+/** Liste / MarketHeader ile uyumlu sakin bölüm başlığı */
+export function FundDetailSectionTitle({ children, id }: Props) {
+  return (
+    <h2
+      id={id}
+      className="text-[11px] font-semibold uppercase tracking-[0.14em]"
+      style={{ color: "var(--text-muted)" }}
+    >
+      {children}
+    </h2>
+  );
+}

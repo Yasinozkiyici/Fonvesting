@@ -5,6 +5,7 @@ import { rebuildFundDailySnapshots } from "../src/lib/services/fund-daily-snapsh
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import {
   appendRecentFundHistory,
+  refreshFundHistorySyncState,
   recoverStaleHistorySyncState,
 } from "../src/lib/services/tefas-history.service";
 import { rebuildMarketSnapshot, recomputeFundReturnsFromHistory, runFullTefasSync } from "../src/lib/services/tefas-sync.service";
@@ -47,6 +48,42 @@ async function main() {
   await rebuildMarketSnapshot(snapshotDate);
   const serving = await rebuildFundDailySnapshots(snapshotDate);
   const warm = await warmAllScoresApiCaches();
+  await refreshFundHistorySyncState({
+    phase: "daily_maintenance",
+    source: "scripts/tefas-daily-maintenance.ts",
+    lastFundSync: {
+      ok: "ok" in sync ? sync.ok : false,
+      skipped: "skipped" in sync ? sync.skipped : false,
+      updated: "updated" in sync ? sync.updated : 0,
+      message: "message" in sync ? sync.message ?? null : null,
+      completedAt: new Date().toISOString(),
+    },
+    lastHistoryRun: {
+      mode: "append",
+      startDate: history.startDate,
+      endDate: history.endDate,
+      chunkDays: history.chunkDays,
+      chunks: history.chunks,
+      fetchedRows: history.fetchedRows,
+      writtenRows: history.writtenRows,
+      touchedDates: history.touchedDates,
+      completedAt: new Date().toISOString(),
+    },
+    lastAppendRange: {
+      overlapDays: Number.isFinite(overlapDays) ? overlapDays : 7,
+      startDate: history.startDate,
+      endDate: history.endDate,
+      completedAt: new Date().toISOString(),
+    },
+    lastDerivedRebuild: {
+      snapshotDate: snapshotDate.toISOString(),
+      updatedFunds: returns.updatedFunds,
+      writtenSnapshots: serving.written,
+      warmedCaches: warm.written,
+      completedAt: new Date().toISOString(),
+    },
+    lastRecovery: recovery,
+  });
 
   console.log(
     JSON.stringify(
