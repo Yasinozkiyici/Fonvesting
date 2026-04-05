@@ -17,14 +17,20 @@ const RANGES = [
 
 type RangeId = (typeof RANGES)[number]["id"];
 
+/** Tüm eksen etiketleri viewBox içinde kalsın; dış sarmalayıcı aynı en-boy oranını kullanır (kesme/yer değiştirme olmaz). */
 const VB_W = 820;
-const VB_H = 296;
-const PLOT_LEFT = 48;
-const PLOT_RIGHT = VB_W - 14;
-const PLOT_TOP = 16;
-const PLOT_BOTTOM = VB_H - 36;
+const VB_H = 328;
+const PAD_L = 46;
+const PAD_R = 16;
+const PAD_T = 14;
+const PAD_B = 40;
+const PLOT_LEFT = PAD_L;
+const PLOT_RIGHT = VB_W - PAD_R;
+const PLOT_TOP = PAD_T;
+const PLOT_BOTTOM = VB_H - PAD_B;
 const INNER_W = PLOT_RIGHT - PLOT_LEFT;
 const INNER_H = PLOT_BOTTOM - PLOT_TOP;
+const X_LABEL_Y = PLOT_BOTTOM + 14;
 
 function filterWindow(series: FundDetailPricePoint[], rangeId: RangeId): FundDetailPricePoint[] {
   if (series.length === 0) return [];
@@ -271,14 +277,14 @@ export function FundDetailChart({ series }: Props) {
 
             <div
               ref={wrapRef}
-              className="relative mt-5 w-full touch-none"
-              style={{ maxHeight: VB_H }}
+              className="relative mt-5 w-full touch-none overflow-visible pb-1 sm:pb-2"
+              style={{ aspectRatio: `${VB_W} / ${VB_H}` }}
               onMouseLeave={clearHover}
               onMouseMove={onOverlayMove}
             >
               <svg
                 viewBox={`0 0 ${VB_W} ${VB_H}`}
-                className="block w-full select-none"
+                className="absolute inset-0 h-full w-full max-w-full select-none"
                 preserveAspectRatio="xMidYMid meet"
                 role="img"
                 aria-label="Fon birim fiyat performans grafiği, seçili dönemde dönem başına göre endekslenmiş"
@@ -297,7 +303,7 @@ export function FundDetailChart({ series }: Props) {
                           opacity={0.35}
                         />
                         <text
-                          x={PLOT_LEFT - 6}
+                          x={PLOT_LEFT - 8}
                           y={lvl.y}
                           textAnchor="end"
                           dominantBaseline="middle"
@@ -356,7 +362,7 @@ export function FundDetailChart({ series }: Props) {
                   <text
                     key={tick.i}
                     x={tick.x}
-                    y={PLOT_BOTTOM + 18}
+                    y={X_LABEL_Y}
                     textAnchor="middle"
                     fill="var(--text-tertiary)"
                     fontSize={10}
