@@ -18,20 +18,20 @@ const RANGES = [
 
 type RangeId = (typeof RANGES)[number]["id"];
 
-/** Tüm eksen etiketleri viewBox içinde kalsın; dış sarmalayıcı aynı en-boy oranını kullanır (kesme/yer değiştirme olmaz). */
+/** Kısa grafik yüksekliği; eksen etiketleri viewBox içinde. */
 const VB_W = 820;
-const VB_H = 192;
-const PAD_L = 46;
+const VB_H = 132;
+const PAD_L = 54;
 const PAD_R = 16;
-const PAD_T = 8;
-const PAD_B = 30;
+const PAD_T = 5;
+const PAD_B = 24;
 const PLOT_LEFT = PAD_L;
 const PLOT_RIGHT = VB_W - PAD_R;
 const PLOT_TOP = PAD_T;
 const PLOT_BOTTOM = VB_H - PAD_B;
 const INNER_W = PLOT_RIGHT - PLOT_LEFT;
 const INNER_H = PLOT_BOTTOM - PLOT_TOP;
-const X_LABEL_Y = PLOT_BOTTOM + 11;
+const X_LABEL_Y = PLOT_BOTTOM + 10;
 
 function filterWindow(series: FundDetailPricePoint[], rangeId: RangeId): FundDetailPricePoint[] {
   if (series.length === 0) return [];
@@ -43,8 +43,10 @@ function filterWindow(series: FundDetailPricePoint[], rangeId: RangeId): FundDet
   return win.length >= 2 ? win : series;
 }
 
-function fmtIndexTr(v: number): string {
-  return v.toLocaleString("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+/** Y ekseni — gerçek birim fiyat, okunaklı. */
+function fmtChartAxisPrice(n: number): string {
+  const s = formatFundLastPrice(n);
+  return s === "—" ? s : `₺${s}`;
 }
 
 function fmtAxisDateShort(t: number): string {
@@ -54,31 +56,39 @@ function fmtAxisDateShort(t: number): string {
 type PlotBuild = {
   pathD: string;
   points: Array<{ x: number; y: number }>;
-  yLevels: Array<{ value: number; y: number }>;
-  minNorm: number;
-  maxNorm: number;
+  yLevels: Array<{ y: number; label: string }>;
 };
 
-function buildPlot(norm: number[]): PlotBuild | null {
-  if (norm.length < 2) return null;
-  const min = Math.min(...norm);
-  const max = Math.max(...norm);
+/** Çizim gerçek fiyatlara göre (min–max); şekil endeksle aynı, eksen sezgisel. */
+function buildPlotFromPrices(prices: number[]): PlotBuild | null {
+  if (prices.length < 2) return null;
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
   const span = max - min || 1;
   const parts: string[] = [];
   const points: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i < norm.length; i += 1) {
-    const x = PLOT_LEFT + (i / (norm.length - 1)) * INNER_W;
-    const y = PLOT_TOP + INNER_H - ((norm[i]! - min) / span) * INNER_H;
+  for (let i = 0; i < prices.length; i += 1) {
+    const x = PLOT_LEFT + (i / (prices.length - 1)) * INNER_W;
+    const y = PLOT_TOP + INNER_H - ((prices[i]! - min) / span) * INNER_H;
     points.push({ x, y });
     parts.push(`${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`);
   }
   const midVal = min + span / 2;
   const yLevels = [
-    { value: max, y: PLOT_TOP + INNER_H - ((max - min) / span) * INNER_H },
-    { value: midVal, y: PLOT_TOP + INNER_H - ((midVal - min) / span) * INNER_H },
-    { value: min, y: PLOT_TOP + INNER_H - ((min - min) / span) * INNER_H },
+    {
+      y: PLOT_TOP + INNER_H - ((max - min) / span) * INNER_H,
+      label: fmtChartAxisPrice(max),
+    },
+    {
+      y: PLOT_TOP + INNER_H - ((midVal - min) / span) * INNER_H,
+      label: fmtChartAxisPrice(midVal),
+    },
+    {
+      y: PLOT_TOP + INNER_H,
+      label: fmtChartAxisPrice(min),
+    },
   ];
-  return { pathD: parts.join(" "), points, yLevels, minNorm: min, maxNorm: max };
+  return { pathD: parts.join(" "), points, yLevels };
 }
 
 type Props = { series: FundDetailPricePoint[] };
@@ -90,10 +100,10 @@ export function FundDetailChart({ series }: Props) {
 
   const windowed = useMemo(() => filterWindow(series, range), [series, range]);
 
-  const { norm, periodReturnPct, startLabel, endLabel, windowedForTip } = useMemo(() => {
+  const { prices, periodReturnPct, startLabel, endLabel, windowedForTip } = useMemo(() => {
     if (windowed.length < 2) {
       return {
-        norm: [] as number[],
+        prices: [] as number[],
         periodReturnPct: null as number | null,
         startLabel: "",
         endLabel: "",
@@ -104,19 +114,19 @@ export function FundDetailChart({ series }: Props) {
     const p1 = windowed[windowed.length - 1]!.p;
     if (!Number.isFinite(p0) || !Number.isFinite(p1) || p0 <= 0) {
       return {
-        norm: [] as number[],
+        prices: [] as number[],
         periodReturnPct: null as number | null,
         startLabel: "",
         endLabel: "",
         windowedForTip: [] as FundDetailPricePoint[],
       };
     }
-    const norm = windowed.map((pt) => (pt.p / p0) * 100);
+    const prices = windowed.map((pt) => pt.p);
     const periodReturnPct = (p1 / p0 - 1) * 100;
     const fmt = (t: number) =>
       new Date(t).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" });
     return {
-      norm,
+      prices,
       periodReturnPct,
       startLabel: fmt(windowed[0]!.t),
       endLabel: fmt(windowed[windowed.length - 1]!.t),
@@ -124,7 +134,7 @@ export function FundDetailChart({ series }: Props) {
     };
   }, [windowed]);
 
-  const plot = useMemo(() => buildPlot(norm), [norm]);
+  const plot = useMemo(() => buildPlotFromPrices(prices), [prices]);
 
   const xAxisTicks = useMemo(() => {
     if (windowedForTip.length < 2) return [];
@@ -143,41 +153,49 @@ export function FundDetailChart({ series }: Props) {
 
   const onOverlayMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!plot || norm.length < 2) return;
+      if (!plot || prices.length < 2) return;
       const el = wrapRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
       const xRatio = (e.clientX - r.left) / r.width;
       const clamped = Math.min(1, Math.max(0, xRatio));
-      const idx = Math.min(norm.length - 1, Math.max(0, Math.round(clamped * (norm.length - 1))));
+      const idx = Math.min(prices.length - 1, Math.max(0, Math.round(clamped * (prices.length - 1))));
       setHover({
         idx,
         px: e.clientX - r.left,
         py: e.clientY - r.top,
       });
     },
-    [plot, norm.length]
+    [plot, prices.length]
   );
 
   const tipData =
-    hover && windowedForTip[hover.idx]
-      ? {
-          date: new Date(windowedForTip[hover.idx]!.t).toLocaleDateString("tr-TR", {
-            day: "numeric",
-            month: "short",
-            year: "numeric",
-          }),
-          price: formatFundLastPrice(windowedForTip[hover.idx]!.p),
-          index: fmtIndexTr(norm[hover.idx] ?? 100),
-        }
+    hover && windowedForTip[hover.idx] && windowedForTip[0]
+      ? (() => {
+          const pt = windowedForTip[hover.idx]!;
+          const p0 = windowedForTip[0]!.p;
+          const pctFromStart = p0 > 0 ? (pt.p / p0 - 1) * 100 : null;
+          return {
+            date: new Date(pt.t).toLocaleDateString("tr-TR", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            }),
+            priceLabel: `₺${formatFundLastPrice(pt.p)}`,
+            vsStart:
+              pctFromStart != null && Number.isFinite(pctFromStart)
+                ? `${pctFromStart > 0 ? "+" : ""}${pctFromStart.toFixed(2).replace(".", ",")}% (dönem başı)`
+                : null,
+          };
+        })()
       : null;
 
   let tipStyle: { left: number; top: number } | null = null;
   if (hover && wrapRef.current) {
     const bw = wrapRef.current.clientWidth;
     const bh = wrapRef.current.clientHeight;
-    const tw = 168;
-    const th = 58;
+    const tw = 172;
+    const th = tipData?.vsStart ? 58 : 44;
     let left = hover.px + 12;
     let top = hover.py + 12;
     if (left + tw > bw) left = hover.px - tw - 12;
@@ -235,7 +253,7 @@ export function FundDetailChart({ series }: Props) {
           background: "var(--card-bg)",
         }}
       >
-        {norm.length < 2 ? (
+        {prices.length < 2 ? (
           <p className="py-14 text-center text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
             Bu fon için yeterli fiyat geçmişi yok. Veri geldikçe grafik otomatik görünür.
           </p>
@@ -288,7 +306,7 @@ export function FundDetailChart({ series }: Props) {
                 className="absolute inset-0 h-full w-full max-w-full select-none"
                 preserveAspectRatio="xMidYMid meet"
                 role="img"
-                aria-label="Fon birim fiyat performans grafiği, seçili dönemde dönem başına göre endekslenmiş"
+                aria-label="Fon birim fiyatı (TL), seçili zaman aralığında"
               >
                 {plot
                   ? plot.yLevels.map((lvl, i) => (
@@ -309,13 +327,13 @@ export function FundDetailChart({ series }: Props) {
                           textAnchor="end"
                           dominantBaseline="middle"
                           fill="var(--text-tertiary)"
-                          fontSize={10}
+                          fontSize={9.5}
                           fontWeight={500}
                           opacity={0.72}
                           className="tabular-nums"
                           style={{ fontVariantNumeric: "tabular-nums" }}
                         >
-                          {fmtIndexTr(lvl.value)}
+                          {lvl.label}
                         </text>
                       </g>
                     ))
@@ -339,7 +357,7 @@ export function FundDetailChart({ series }: Props) {
                     <circle
                       cx={plot.points[0]!.x}
                       cy={plot.points[0]!.y}
-                      r={3}
+                      r={2.75}
                       fill="var(--card-bg)"
                       stroke="var(--accent-blue)"
                       strokeWidth={1}
@@ -349,7 +367,7 @@ export function FundDetailChart({ series }: Props) {
                     <circle
                       cx={plot.points[plot.points.length - 1]!.x}
                       cy={plot.points[plot.points.length - 1]!.y}
-                      r={3}
+                      r={2.75}
                       fill="var(--card-bg)"
                       stroke="var(--accent-blue)"
                       strokeWidth={1}
@@ -366,7 +384,7 @@ export function FundDetailChart({ series }: Props) {
                     y={X_LABEL_Y}
                     textAnchor="middle"
                     fill="var(--text-tertiary)"
-                    fontSize={10}
+                    fontSize={9.5}
                     fontWeight={500}
                     opacity={0.72}
                     className="tabular-nums"
@@ -382,7 +400,7 @@ export function FundDetailChart({ series }: Props) {
                   style={{
                     left: tipStyle.left,
                     top: tipStyle.top,
-                    width: 168,
+                    width: 172,
                     borderColor: "var(--border-subtle)",
                     background: "var(--surface-glass-strong)",
                     color: "var(--text-primary)",
@@ -392,8 +410,12 @@ export function FundDetailChart({ series }: Props) {
                   role="status"
                 >
                   <div style={{ color: "var(--text-muted)", fontSize: 10 }}>{tipData.date}</div>
-                  <div className="mt-0.5 font-semibold">{tipData.price}</div>
-                  <div style={{ color: "var(--text-tertiary)", fontSize: 10 }}>Endeks (dönem başı 100): {tipData.index}</div>
+                  <div className="mt-0.5 text-sm font-semibold">{tipData.priceLabel}</div>
+                  {tipData.vsStart ? (
+                    <div className="mt-0.5 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
+                      {tipData.vsStart}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
