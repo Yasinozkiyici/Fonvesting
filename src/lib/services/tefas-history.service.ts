@@ -7,6 +7,7 @@ import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr"
 const HISTORY_SYNC_KEY = "tefas_fund_history";
 const DEFAULT_CHUNK_DAYS = 14;
 const UPSERT_CHUNK = 500;
+const DEFAULT_STALE_RUN_MINUTES = 120;
 
 export type FundHistorySyncResult = {
   ok: boolean;
@@ -17,6 +18,12 @@ export type FundHistorySyncResult = {
   fetchedRows: number;
   writtenRows: number;
   touchedDates: number;
+};
+
+export type HistorySyncRecoveryResult = {
+  recovered: boolean;
+  previousStatus: string | null;
+  reason?: string;
 };
 
 function formatDate(d: Date): string {
@@ -225,6 +232,67 @@ export async function refreshFundHistorySyncState(details?: Record<string, unkno
       details: toJson(details ?? {}),
     },
   });
+}
+
+export async function recoverStaleHistorySyncState(staleAfterMinutes: number = DEFAULT_STALE_RUN_MINUTES): Promise<HistorySyncRecoveryResult> {
+  const state = await prisma.historySyncState.findUnique({
+    where: { key: HISTORY_SYNC_KEY },
+    select: {
+      status: true,
+      lastStartedAt: true,
+      details: true,
+    },
+  });
+
+  if (!state || state.status !== "RUNNING" || !state.lastStartedAt) {
+    return { recovered: false, previousStatus: state?.status ?? null };
+  }
+
+  const staleAfterMs = Math.max(1, staleAfterMinutes) * 60 * 1000;
+  const ageMs = Date.now() - state.lastStartedAt.getTime();
+  if (ageMs < staleAfterMs) {
+    return { recovered: false, previousStatus: state.status };
+  }
+
+  const previousDetails =
+    state.details && typeof state.details === "object" && !Array.isArray(state.details)
+      ? (state.details as Record<string, unknown>)
+      : {};
+
+  await prisma.historySyncState.update({
+    where: { key: HISTORY_SYNC_KEY },
+    data: {
+      status: "FAILED",
+      lastCompletedAt: new Date(),
+      details: toJson({
+        ...previousDetails,
+        phase: "stale_run_recovered",
+        recoveredAt: new Date().toISOString(),
+        staleAfterMinutes,
+        previousStatus: state.status,
+        previousLastStartedAt: state.lastStartedAt.toISOString(),
+      }),
+    },
+  });
+
+  await prisma.syncLog.create({
+    data: {
+      syncType: "TEFAS_HISTORY",
+      status: "FAILED",
+      fundsUpdated: 0,
+      fundsCreated: 0,
+      errorMessage: `stale_run_recovered_after_${staleAfterMinutes}m`,
+      startedAt: state.lastStartedAt,
+      completedAt: new Date(),
+      durationMs: ageMs,
+    },
+  });
+
+  return {
+    recovered: true,
+    previousStatus: state.status,
+    reason: `stale_run_recovered_after_${staleAfterMinutes}m`,
+  };
 }
 
 export async function syncFundHistoryRange(options: {

@@ -55,7 +55,7 @@ export default function Header() {
           </nav>
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2 md:flex-initial md:pl-3">
-            <div className="header-tools hidden sm:inline-flex">
+            <div className="header-tools hidden md:inline-flex">
               <div className="header-tools__search">
                 <Search
                   className="pointer-events-none absolute left-2.5 top-1/2 h-[14px] w-[14px] -translate-y-1/2 opacity-[0.78]"

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-Her gün 19:00 (Europe/Istanbul) sync-tefas.ts çalıştırır.
+Her gün 19:00 (Europe/Istanbul) günlük TEFAS bakım işini çalıştırır.
+Akış:
+1) Günlük fon sync
+2) History incremental append
+3) Derived rebuild + cache warm
+
 Kullanım: proje kökünde PYTHONPATH=. python3 scripts/scheduler.py
-veya: npx tsx scripts/sync-tefas.ts zamanlamasını cron ile verin.
+veya: npx tsx scripts/tefas-daily-maintenance.ts zamanlamasını cron ile verin.
 """
 import os
 import subprocess
@@ -23,11 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def job():
     env = {**os.environ, "FORCE_COLOR": "0"}
     r = subprocess.run(
-        ["npx", "tsx", "scripts/sync-tefas.ts", "--all"],
+        ["npx", "tsx", "scripts/tefas-daily-maintenance.ts"],
         cwd=str(ROOT),
         env=env,
     )
-    print(f"[scheduler] sync-tefas çıkış kodu: {r.returncode}")
+    print(f"[scheduler] tefas-daily-maintenance çıkış kodu: {r.returncode}")
 
 
 def main():

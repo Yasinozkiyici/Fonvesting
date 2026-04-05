@@ -1,6 +1,11 @@
 import { config } from "dotenv";
 import path from "node:path";
-import { appendRecentFundHistory, backfillFundHistoryDays, syncFundHistoryRange } from "../src/lib/services/tefas-history.service";
+import {
+  appendRecentFundHistory,
+  backfillFundHistoryDays,
+  recoverStaleHistorySyncState,
+  syncFundHistoryRange,
+} from "../src/lib/services/tefas-history.service";
 import { rebuildFundDailySnapshots } from "../src/lib/services/fund-daily-snapshot.service";
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import { rebuildMarketSnapshot, recomputeFundReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
@@ -33,8 +38,12 @@ async function main() {
   const fromRaw = readArg("--from");
   const toRaw = readArg("--to");
   const chunkDaysRaw = readArg("--chunk-days");
+  const staleMinutesRaw = readArg("--stale-minutes");
   const append = process.argv.includes("--append");
   const chunkDays = chunkDaysRaw ? Number(chunkDaysRaw) : undefined;
+  const staleMinutes = staleMinutesRaw ? Number(staleMinutesRaw) : 120;
+
+  const recovery = await recoverStaleHistorySyncState(Number.isFinite(staleMinutes) ? staleMinutes : 120);
 
   let result;
   if (append) {
@@ -63,6 +72,7 @@ async function main() {
     JSON.stringify(
       {
         history: result,
+        recovery,
         returns,
         serving,
         warm,

@@ -11,13 +11,13 @@ export default function HomeMainSkeleton() {
           <div className="skeleton h-10 w-full max-w-2xl rounded-lg" />
         </div>
         <div className="ds-hero-stats market-snapshot-bar mt-3 flex animate-pulse items-stretch">
-          {[0, 1, 2, 3, 4].map((i) => (
+          {[0, 1, 2, 3, 4, 5].map((i) => (
             <Fragment key={i}>
               <div className="flex min-w-[4.25rem] flex-col justify-center gap-1.5 px-2 sm:px-3">
                 <div className="skeleton h-2 w-9 rounded-full opacity-60" />
                 <div className="skeleton h-[18px] w-[3.25rem] rounded-md opacity-80" />
               </div>
-              {i < 4 ? <span className="market-snapshot-sep" aria-hidden /> : null}
+              {i < 5 ? <span className="market-snapshot-sep" aria-hidden /> : null}
             </Fragment>
           ))}
         </div>

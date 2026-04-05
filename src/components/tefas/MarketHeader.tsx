@@ -51,22 +51,22 @@ const PRIMARY_CATEGORIES: Record<string, { name: string; short: string; icon: Re
   KTL: { name: "Katılım Fonları", short: "Katılım", icon: <Shield className="h-[11px] w-[11px]" strokeWidth={1.75} /> },
 };
 
-function formatCompactTl(n: number) {
+/** Piyasa özeti: kısaltma yok, Türkçe gruplu tam gösterim */
+function formatFullTl(n: number) {
   const v = Number(n);
   if (!Number.isFinite(v)) return "—";
-  if (v >= 1e12) return `₺${(v / 1e12).toFixed(1)}Tn`;
-  if (v >= 1e9) return `₺${(v / 1e9).toFixed(1)}Mr`;
-  if (v >= 1e6) return `₺${(v / 1e6).toFixed(1)}Mn`;
-  if (v >= 1e3) return `₺${(v / 1e3).toFixed(1)}K`;
-  return `₺${v.toLocaleString("tr-TR")}`;
+  return `₺${Math.round(v).toLocaleString("tr-TR")}`;
 }
 
-function formatCompactNumber(n: number) {
+function formatFullInteger(n: number) {
   const v = Number(n);
-  if (!Number.isFinite(v)) return "—";
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
-  return v.toLocaleString("tr-TR");
+  if (!Number.isFinite(v) || v < 0) return "—";
+  return Math.round(v).toLocaleString("tr-TR");
+}
+
+function formatUsdTry(n: number | null) {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
 function isCompleteMarketApi(x: unknown): x is MarketApi {
@@ -138,13 +138,13 @@ export default function MarketHeader({
             <div className="skeleton h-2.5 w-32 rounded-full" />
             <div className="skeleton h-7 w-[min(100%,16rem)] rounded-md" />
             <div className="ds-hero-stats market-snapshot-bar mt-3 flex animate-pulse items-stretch">
-              {[0, 1, 2, 3, 4].map((i) => (
+              {[0, 1, 2, 3, 4, 5].map((i) => (
                 <Fragment key={i}>
                   <div className="flex min-w-[4.25rem] flex-col justify-center gap-1.5 px-2 sm:px-3">
                     <div className="skeleton h-2 w-9 rounded-full opacity-60" />
                     <div className="skeleton h-[18px] w-[3.25rem] rounded-md opacity-80" />
                   </div>
-                  {i < 4 ? (
+                  {i < 5 ? (
                     <span
                       className="market-snapshot-sep my-1 shrink-0 opacity-40"
                       style={{ background: "var(--border-subtle)" }}
@@ -233,12 +233,12 @@ export default function MarketHeader({
         <div className="ds-hero-stats market-snapshot-bar" role="group" aria-label="Piyasa metrikleri">
           <div className="market-snapshot-item">
             <span className="market-snapshot-k">AUM</span>
-            <span className="market-snapshot-v tabular-nums">{formatCompactTl(data.totalPortfolioSize)}</span>
+            <span className="market-snapshot-v tabular-nums">{formatFullTl(data.totalPortfolioSize)}</span>
           </div>
           <span className="market-snapshot-sep" aria-hidden />
           <div className="market-snapshot-item">
             <span className="market-snapshot-k">Yatırımcı</span>
-            <span className="market-snapshot-v tabular-nums">{formatCompactNumber(data.totalInvestorCount)}</span>
+            <span className="market-snapshot-v tabular-nums">{formatFullInteger(data.totalInvestorCount)}</span>
           </div>
           <span className="market-snapshot-sep" aria-hidden />
           <div className="market-snapshot-item">
@@ -252,6 +252,13 @@ export default function MarketHeader({
               className={`market-snapshot-v tabular-nums ${avg1g >= 0 ? "market-snapshot-v--pos" : "market-snapshot-v--neg"}`}
             >
               {avg1gStr}
+            </span>
+          </div>
+          <span className="market-snapshot-sep" aria-hidden />
+          <div className="market-snapshot-item">
+            <span className="market-snapshot-k">USD/TRY</span>
+            <span className="market-snapshot-v tabular-nums" title={data.usdTry != null ? `1 USD = ${formatUsdTry(data.usdTry)} TRY` : undefined}>
+              {formatUsdTry(data.usdTry)}
             </span>
           </div>
           <span className="market-snapshot-sep" aria-hidden />

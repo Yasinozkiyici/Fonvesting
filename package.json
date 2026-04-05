@@ -23,6 +23,7 @@
     "db:docker:warm": "pnpm run db:docker:migrate && pnpm run warm:scores:docker",
     "sync:tefas": "tsx scripts/sync-tefas.ts",
     "sync:tefas-history": "tsx scripts/sync-tefas-history.ts",
+    "sync:tefas-daily": "tsx scripts/tefas-daily-maintenance.ts",
     "import:tefas-full": "tsx scripts/full-tefas-import.ts",
     "tefas:metadata": "tsx scripts/tefas-metadata-only.ts",
     "tefas:daily-returns": "tsx scripts/calc-daily-return.ts",
