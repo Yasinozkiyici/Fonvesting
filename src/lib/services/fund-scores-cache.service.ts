@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { computeScoresPayload, type ScoresApiPayload } from "@/lib/services/fund-scores-compute.service";
 import { normalizeScoresPayloadFundTypes } from "@/lib/fund-type-display";
 
-const KEY_PREFIX = "scores:v3";
+const KEY_PREFIX = "scores:v4";
 
 function isRelationMissingError(e: unknown): boolean {
   return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2021";

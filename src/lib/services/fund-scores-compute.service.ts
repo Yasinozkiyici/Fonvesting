@@ -2,13 +2,14 @@ import { prisma } from "@/lib/prisma";
 import { deriveFundPerformanceFromHistory } from "@/lib/services/fund-daily-snapshot.service";
 import {
   calculateAllMetrics,
-  buildNormalizationContext,
-  calculateNormalizedScoresWithContext,
+  buildExtendedNormalizationContext,
+  calculateNormalizedScoresExtended,
   calculateFinalScore,
   determineRiskLevel,
   calculateAlpha,
   type FundMetrics,
   type FundScore,
+  type FundScaleFields,
   type RankingMode,
   type PricePoint,
 } from "@/lib/scoring";
@@ -160,10 +161,15 @@ async function computeScoresPayloadFromRawData(mode: RankingMode, categoryKey: s
   }
 
   const allMetrics = fundsWithMetrics.map((f) => f.metrics);
-  const normCtx = buildNormalizationContext(allMetrics);
+  const scales: FundScaleFields[] = fundsWithMetrics.map(({ fund, performance }) => ({
+    portfolioSize: fund.portfolioSize,
+    investorCount: fund.investorCount,
+    yearlyReturn: performance.yearlyReturn,
+  }));
+  const extCtx = buildExtendedNormalizationContext(allMetrics, scales);
 
-  const scoredFunds: ScoredFundRow[] = fundsWithMetrics.map(({ fund, metrics, performance }) => {
-    const scores = calculateNormalizedScoresWithContext(metrics, normCtx);
+  const scoredFunds: ScoredFundRow[] = fundsWithMetrics.map(({ fund, metrics, performance }, i) => {
+    const scores = calculateNormalizedScoresExtended(metrics, extCtx, scales[i]!);
     const finalScore = calculateFinalScore(scores, mode);
 
     const riskLevel = determineRiskLevel(fund.category?.code || "DGR", fund.name);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronUp,
   ChevronDown,
@@ -23,6 +23,11 @@ type SortField = "portfolioSize" | "dailyReturn" | "investorCount" | "lastPrice"
 
 type SortDir = "asc" | "desc";
 
+function parseRankingModeParam(raw: string | null): RankingMode {
+  if (raw === "LOW_RISK" || raw === "HIGH_RETURN" || raw === "STABLE") return raw;
+  return "BEST";
+}
+
 interface ScoredFundsTableProps {
   enableCategoryFilter?: boolean;
   defaultMode?: RankingMode;
@@ -37,17 +42,21 @@ export default function ScoredFundsTable({
   initialCategories = [],
 }: ScoredFundsTableProps) {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+  const modeFromUrl = parseRankingModeParam(searchParams?.get("mode") ?? null);
   const [data, setData] = useState<ScoredResponse | null>(initialData);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [sortField, setSortField] = useState<SortField>("portfolioSize");
+  const [sortField, setSortField] = useState<SortField>("finalScore");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
-  const [rankingMode, setRankingMode] = useState<RankingMode>(defaultMode);
+  const [rankingMode, setRankingMode] = useState<RankingMode>(modeFromUrl);
   const [categories, setCategories] = useState<Array<{ code: string; name: string }>>(initialCategories);
   const usedInitialDataRef = useRef(Boolean(initialData));
+  const prevRankingModeRef = useRef<RankingMode | null>(null);
   const pageSize = 50;
 
   useEffect(() => {
@@ -57,6 +66,18 @@ export default function ScoredFundsTable({
     setSearch(qParam);
     setPage(1);
   }, [searchParams, enableCategoryFilter]);
+
+  const modeParamKey = searchParams?.get("mode") ?? "";
+  useEffect(() => {
+    setRankingMode(parseRankingModeParam(modeParamKey || null));
+  }, [modeParamKey]);
+
+  const categoryForApi = useMemo(() => {
+    if (!enableCategoryFilter) return "";
+    const fromUrl = (searchParams?.get("sector") ?? searchParams?.get("category") ?? "").trim();
+    if (fromUrl) return fromUrl;
+    return category;
+  }, [enableCategoryFilter, searchParams, category]);
 
   useEffect(() => {
     if (initialCategories.length > 0) return;
@@ -72,9 +93,10 @@ export default function ScoredFundsTable({
     setLoading(true);
     setError(null);
 
-    const params = new URLSearchParams({
-      mode: rankingMode,
-    });
+    const params = new URLSearchParams({ mode: rankingMode });
+    if (enableCategoryFilter && categoryForApi) {
+      params.set("category", categoryForApi);
+    }
 
     try {
       const res = await fetch(`/api/funds/scores?${params}`);
@@ -99,15 +121,40 @@ export default function ScoredFundsTable({
     } finally {
       setLoading(false);
     }
-  }, [rankingMode]);
+  }, [rankingMode, enableCategoryFilter, categoryForApi]);
 
   useEffect(() => {
-    if (usedInitialDataRef.current && rankingMode === defaultMode) {
+    if (usedInitialDataRef.current && rankingMode === defaultMode && !categoryForApi) {
       usedInitialDataRef.current = false;
       return;
     }
     fetchData();
-  }, [defaultMode, fetchData, rankingMode]);
+  }, [categoryForApi, defaultMode, fetchData, rankingMode]);
+
+  useEffect(() => {
+    if (prevRankingModeRef.current === null) {
+      prevRankingModeRef.current = rankingMode;
+      return;
+    }
+    if (prevRankingModeRef.current === rankingMode) return;
+    prevRankingModeRef.current = rankingMode;
+    setSortField("finalScore");
+    setSortDir("desc");
+    setPage(1);
+  }, [rankingMode]);
+
+  const handleRankingModeChange = useCallback(
+    (next: RankingMode) => {
+      setRankingMode(next);
+      const p = new URLSearchParams(searchParams?.toString() ?? "");
+      if (next === "BEST") p.delete("mode");
+      else p.set("mode", next);
+      const qs = p.toString();
+      const base = pathname ?? "/";
+      router.replace(qs ? `${base}?${qs}` : base, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
   const resetFilters = () => {
     setSearch("");
@@ -244,7 +291,7 @@ export default function ScoredFundsTable({
 
               <div className="flex min-w-0 flex-col justify-center gap-1.5 lg:items-end lg:justify-center">
                 <span className="screener-sort-label lg:text-right">Sıralama modu</span>
-                <RankingModeToggle mode={rankingMode} onChange={setRankingMode} />
+                <RankingModeToggle mode={rankingMode} onChange={handleRankingModeChange} />
               </div>
             </div>
           </div>

@@ -13,6 +13,12 @@ export interface NormalizedScores {
   sharpeScore: number;      // 0-100, normalized sharpe
   sortinoScore: number;     // 0-100, normalized sortino
   drawdownScore: number;    // 0-100, lower drawdown = higher score
+  /** Aktif evren (tüm fonlar veya seçili kategori) içinde portföy büyüklüğü yüzdelik dilimi */
+  portfolioScaleScore?: number;
+  /** Yatırımcı sayısı yüzdelik dilimi */
+  investorStrengthScore?: number;
+  /** ~1Y getiri (satırdaki yearlyReturn) yüzdelik dilimi */
+  periodReturnScore?: number;
 }
 
 export interface FundScore {
@@ -31,35 +37,46 @@ export interface RankingWeights {
   stability: number;
   sharpe: number;
   sortino: number;
+  portfolio?: number;
+  investor?: number;
+  /** HIGH_RETURN: referans dönem getirisi (yearlyReturn) ağırlığı */
+  periodReturn?: number;
 }
 
 /**
  * Weight configurations for each ranking mode
  */
 export const RANKING_WEIGHTS: Record<RankingMode, RankingWeights> = {
+  /** En İyi: yıllıklandırılmış getiri + istikrar + risk-ayarlı + portföy/yatırımcı gücü */
   BEST: {
-    return: 0.35,
-    stability: 0.25,
-    sharpe: 0.25,
-    sortino: 0.15,
+    return: 0.26,
+    stability: 0.16,
+    sharpe: 0.16,
+    sortino: 0.1,
+    portfolio: 0.16,
+    investor: 0.16,
   },
+  /** Düşük risk: düşük oynaklık + düşük drawdown (stability ağırlıklı) */
   LOW_RISK: {
-    return: 0.15,
-    stability: 0.45,
-    sharpe: 0.25,
-    sortino: 0.15,
+    return: 0.06,
+    stability: 0.52,
+    sharpe: 0.24,
+    sortino: 0.18,
   },
+  /** Yüksek getiri: ~1Y getiri dilimi + yıllıklandırılmış getiri; istikrar düşük ağırlık */
   HIGH_RETURN: {
-    return: 0.55,
-    stability: 0.10,
-    sharpe: 0.20,
-    sortino: 0.15,
+    return: 0.18,
+    stability: 0.05,
+    sharpe: 0.12,
+    sortino: 0.1,
+    periodReturn: 0.55,
   },
+  /** Stabil: LOW_RISK’e yakın; biraz daha getiri payı */
   STABLE: {
-    return: 0.20,
-    stability: 0.50,
-    sharpe: 0.15,
-    sortino: 0.15,
+    return: 0.1,
+    stability: 0.58,
+    sharpe: 0.18,
+    sortino: 0.14,
   },
 };
 
@@ -91,9 +108,14 @@ function countStrictlyLessThan(sortedAsc: number[], value: number): number {
 
 function percentileFromSortedAsc(value: number, sortedAsc: number[], higherIsBetter: boolean): number {
   if (sortedAsc.length === 0) return 50;
+  if (sortedAsc.length === 1) return 50;
   const rank = countStrictlyLessThan(sortedAsc, value);
   const percentile = (rank / sortedAsc.length) * 100;
   return higherIsBetter ? percentile : 100 - percentile;
+}
+
+function safeMetricNumber(n: number): number {
+  return Number.isFinite(n) ? n : 0;
 }
 
 /** Tüm fonlar için skor hesabında bir kez oluşturulur; tekrarlayan O(n log n) sıralamaları önler. */
@@ -108,11 +130,64 @@ export interface NormalizationContext {
 export function buildNormalizationContext(allMetrics: FundMetrics[]): NormalizationContext {
   const sortAsc = (xs: number[]) => [...xs].sort((a, b) => a - b);
   return {
-    sortedReturns: sortAsc(allMetrics.map((m) => m.annualizedReturn)),
-    sortedVolatility: sortAsc(allMetrics.map((m) => m.volatility)),
-    sortedDrawdown: sortAsc(allMetrics.map((m) => m.maxDrawdown)),
-    sortedSharpe: sortAsc(allMetrics.map((m) => m.sharpeRatio)),
-    sortedSortino: sortAsc(allMetrics.map((m) => m.sortinoRatio)),
+    sortedReturns: sortAsc(allMetrics.map((m) => safeMetricNumber(m.annualizedReturn))),
+    sortedVolatility: sortAsc(allMetrics.map((m) => safeMetricNumber(m.volatility))),
+    sortedDrawdown: sortAsc(allMetrics.map((m) => safeMetricNumber(m.maxDrawdown))),
+    sortedSharpe: sortAsc(allMetrics.map((m) => safeMetricNumber(m.sharpeRatio))),
+    sortedSortino: sortAsc(allMetrics.map((m) => safeMetricNumber(m.sortinoRatio))),
+  };
+}
+
+/** Portföy / yatırımcı / ~1Y getiri yüzdelikleri için ham alanlar (snapshot veya canlı satır) */
+export type FundScaleFields = {
+  portfolioSize: number;
+  investorCount: number;
+  yearlyReturn: number;
+};
+
+export interface ExtendedNormalizationContext extends NormalizationContext {
+  sortedPortfolioSize: number[];
+  sortedInvestorCount: number[];
+  sortedYearlyReturn: number[];
+}
+
+export function buildExtendedNormalizationContext(
+  allMetrics: FundMetrics[],
+  scales: FundScaleFields[]
+): ExtendedNormalizationContext {
+  const base = buildNormalizationContext(allMetrics);
+  const sortAsc = (xs: number[]) => [...xs].sort((a, b) => a - b);
+  return {
+    ...base,
+    sortedPortfolioSize: sortAsc(scales.map((s) => safeMetricNumber(s.portfolioSize))),
+    sortedInvestorCount: sortAsc(scales.map((s) => safeMetricNumber(s.investorCount))),
+    sortedYearlyReturn: sortAsc(scales.map((s) => safeMetricNumber(s.yearlyReturn))),
+  };
+}
+
+export function calculateNormalizedScoresExtended(
+  metrics: FundMetrics,
+  ctx: ExtendedNormalizationContext,
+  scale: FundScaleFields
+): NormalizedScores {
+  const base = calculateNormalizedScoresWithContext(metrics, ctx);
+  const n = ctx.sortedPortfolioSize.length;
+  if (n <= 1) {
+    return {
+      ...base,
+      portfolioScaleScore: 50,
+      investorStrengthScore: 50,
+      periodReturnScore: 50,
+    };
+  }
+  const ps = safeMetricNumber(scale.portfolioSize);
+  const ic = safeMetricNumber(scale.investorCount);
+  const yr = safeMetricNumber(scale.yearlyReturn);
+  return {
+    ...base,
+    portfolioScaleScore: Math.round(percentileFromSortedAsc(ps, ctx.sortedPortfolioSize, true)),
+    investorStrengthScore: Math.round(percentileFromSortedAsc(ic, ctx.sortedInvestorCount, true)),
+    periodReturnScore: Math.round(percentileFromSortedAsc(yr, ctx.sortedYearlyReturn, true)),
   };
 }
 
@@ -120,14 +195,19 @@ export function calculateNormalizedScoresWithContext(
   metrics: FundMetrics,
   ctx: NormalizationContext
 ): NormalizedScores {
-  const returnScore = percentileFromSortedAsc(metrics.annualizedReturn, ctx.sortedReturns, true);
-  const volScore = percentileFromSortedAsc(metrics.volatility, ctx.sortedVolatility, false);
-  const ddScore = percentileFromSortedAsc(metrics.maxDrawdown, ctx.sortedDrawdown, false);
+  const ar = safeMetricNumber(metrics.annualizedReturn);
+  const vol = safeMetricNumber(metrics.volatility);
+  const dd = safeMetricNumber(metrics.maxDrawdown);
+  const sh = safeMetricNumber(metrics.sharpeRatio);
+  const so = safeMetricNumber(metrics.sortinoRatio);
+  const returnScore = percentileFromSortedAsc(ar, ctx.sortedReturns, true);
+  const volScore = percentileFromSortedAsc(vol, ctx.sortedVolatility, false);
+  const ddScore = percentileFromSortedAsc(dd, ctx.sortedDrawdown, false);
   const riskScore = 100 - (volScore * 0.6 + ddScore * 0.4);
   const stabilityScore = volScore * 0.6 + ddScore * 0.4;
-  const sharpeScore = percentileFromSortedAsc(metrics.sharpeRatio, ctx.sortedSharpe, true);
-  const sortinoScore = percentileFromSortedAsc(metrics.sortinoRatio, ctx.sortedSortino, true);
-  const drawdownScore = percentileFromSortedAsc(metrics.maxDrawdown, ctx.sortedDrawdown, false);
+  const sharpeScore = percentileFromSortedAsc(sh, ctx.sortedSharpe, true);
+  const sortinoScore = percentileFromSortedAsc(so, ctx.sortedSortino, true);
+  const drawdownScore = percentileFromSortedAsc(dd, ctx.sortedDrawdown, false);
 
   return {
     returnScore: Math.round(returnScore),
@@ -173,15 +253,19 @@ export function calculateFinalScore(
   scores: NormalizedScores,
   mode: RankingMode
 ): number {
-  const weights = RANKING_WEIGHTS[mode];
-  
-  const finalScore = 
-    weights.return * scores.returnScore +
-    weights.stability * scores.stabilityScore +
-    weights.sharpe * scores.sharpeScore +
-    weights.sortino * scores.sortinoScore;
-  
-  return Math.round(Math.max(0, Math.min(100, finalScore)));
+  const w = RANKING_WEIGHTS[mode];
+  let s =
+    w.return * scores.returnScore +
+    w.stability * scores.stabilityScore +
+    w.sharpe * scores.sharpeScore +
+    w.sortino * scores.sortinoScore;
+  const ps = scores.portfolioScaleScore ?? 50;
+  const inv = scores.investorStrengthScore ?? 50;
+  const pr = scores.periodReturnScore ?? 50;
+  if (w.portfolio != null) s += w.portfolio * ps;
+  if (w.investor != null) s += w.investor * inv;
+  if (w.periodReturn != null) s += w.periodReturn * pr;
+  return Math.round(Math.max(0, Math.min(100, s)));
 }
 
 /**

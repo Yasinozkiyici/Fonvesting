@@ -2,13 +2,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import {
-  buildNormalizationContext,
+  buildExtendedNormalizationContext,
   calculateAllMetrics,
   calculateAlpha,
   calculateFinalScore,
-  calculateNormalizedScoresWithContext,
+  calculateNormalizedScoresExtended,
   determineRiskLevel,
   type FundMetrics,
+  type FundScaleFields,
   type NormalizedScores,
   type PricePoint,
   type RankingMode,
@@ -27,6 +28,27 @@ const SPARKLINE_POINTS = 7;
 /** Metrik / skor için yüklenecek fiyat geçmişi: ~2 yıl + tampon. */
 export const FUND_PRICE_HISTORY_LOOKBACK_DAYS = 760;
 const RETURN_LOOKBACK_DAYS = FUND_PRICE_HISTORY_LOOKBACK_DAYS;
+
+const EMPTY_METRICS: FundMetrics = {
+  totalReturn: 0,
+  annualizedReturn: 0,
+  volatility: 0,
+  maxDrawdown: 0,
+  sharpeRatio: 0,
+  sortinoRatio: 0,
+  calmarRatio: 0,
+  winRate: 0,
+  avgGain: 0,
+  avgLoss: 0,
+  dataPoints: 0,
+};
+
+function parseSnapshotMetrics(raw: Prisma.JsonValue): FundMetrics {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as unknown as FundMetrics;
+  }
+  return EMPTY_METRICS;
+}
 
 function isRelationMissingError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021";
@@ -281,10 +303,18 @@ function buildSnapshotRecords(fundRows: FundRow[], historyByFund: Map<string, Ar
     return { fund, metrics, pricePoints, performance };
   });
 
-  const normCtx = buildNormalizationContext(computed.map((item) => item.metrics));
+  const scales: FundScaleFields[] = computed.map((item) => ({
+    portfolioSize: item.fund.portfolioSize,
+    investorCount: item.fund.investorCount,
+    yearlyReturn: item.performance.yearlyReturn,
+  }));
+  const extCtx = buildExtendedNormalizationContext(
+    computed.map((item) => item.metrics),
+    scales
+  );
 
-  return computed.map(({ fund, metrics, performance }) => {
-    const scores = calculateNormalizedScoresWithContext(metrics, normCtx);
+  return computed.map(({ fund, metrics, performance }, i) => {
+    const scores = calculateNormalizedScoresExtended(metrics, extCtx, scales[i]!);
     const riskLevel = determineRiskLevel(fund.category?.code ?? "DGR", fund.name);
     const alpha = calculateAlpha(metrics.annualizedReturn, fund.category?.code ?? "DGR");
 
@@ -503,8 +533,33 @@ export async function getScoresPayloadFromDailySnapshot(
     throw error;
   }
 
+  if (rows.length === 0) {
+    return { mode, total: 0, funds: [] };
+  }
+
+  const metricsList = rows.map((row) => parseSnapshotMetrics(row.metrics));
+  const scales: FundScaleFields[] = rows.map((row) => ({
+    portfolioSize: row.portfolioSize,
+    investorCount: row.investorCount,
+    yearlyReturn: row.yearlyReturn,
+  }));
+  const extCtx = buildExtendedNormalizationContext(metricsList, scales);
+
   const funds = rows
-    .map((row) => snapshotRowToScoredFund(row, mode))
+    .map((row, i) => {
+      const scores = calculateNormalizedScoresExtended(metricsList[i]!, extCtx, scales[i]!);
+      return snapshotRowToScoredFund(
+        {
+          ...row,
+          scores: scores as unknown as (typeof rows)[number]["scores"],
+          finalScoreBest: calculateFinalScore(scores, "BEST"),
+          finalScoreLowRisk: calculateFinalScore(scores, "LOW_RISK"),
+          finalScoreHighReturn: calculateFinalScore(scores, "HIGH_RETURN"),
+          finalScoreStable: calculateFinalScore(scores, "STABLE"),
+        },
+        mode
+      );
+    })
     .sort((a, b) => b.finalScore - a.finalScore);
 
   return {
