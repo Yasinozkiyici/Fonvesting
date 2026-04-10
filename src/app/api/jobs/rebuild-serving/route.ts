@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isCronAuthorized } from "@/lib/jobs-auth";
+import { isCronAuthorized } from "../../../../lib/jobs-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
