@@ -1,4 +1,3 @@
-import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import type { RankingMode } from "@/lib/scoring";
 import { Prisma } from "@prisma/client";
@@ -14,7 +13,6 @@ import { LIVE_DATA_CACHE_SEC } from "@/lib/data-freshness";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 
 const KEY_PREFIX = "scores:v8";
-const SCORES_CACHE_TTL_SEC = 300;
 const DB_SCORES_STALE_MS = 23 * 60 * 60 * 1000;
 
 type SupabaseScoresCacheRow = {
@@ -226,12 +224,7 @@ export async function getScoresPayloadServerCached(
   categoryKey: string,
   queryTrim = ""
 ): Promise<ScoresApiPayload> {
-  const loadCached = unstable_cache(
-    async () => getScoresPayloadCached(mode, categoryKey, ""),
-    ["scores-server-cache-v10", mode, categoryKey || "all"],
-    { revalidate: SCORES_CACHE_TTL_SEC }
-  );
-  const payload = await loadCached();
+  const payload = await getScoresPayloadCached(mode, categoryKey, "");
   return queryTrim.trim() ? filterScoresPayloadByQuery(payload, queryTrim) : payload;
 }
 

@@ -1,4 +1,3 @@
-import { cache } from "react";
 import { prisma } from "@/lib/prisma";
 
 export const LIVE_DATA_CACHE_SEC = 300;
@@ -46,47 +45,47 @@ async function readHeadWithLocalCache<T>(key: string, loader: () => Promise<T>):
   return value;
 }
 
-const readLatestSnapshot = cache(async (): Promise<SnapshotHead> => {
+const readLatestSnapshot = async (): Promise<SnapshotHead> => {
   return readHeadWithLocalCache("latestSnapshot", () =>
     prisma.fundDailySnapshot.findFirst({
       orderBy: [{ date: "desc" }, { updatedAt: "desc" }],
       select: { date: true, updatedAt: true },
     })
   );
-});
+};
 
-const readLatestMarketSnapshot = cache(async (): Promise<MarketHead> => {
+const readLatestMarketSnapshot = async (): Promise<MarketHead> => {
   return readHeadWithLocalCache("latestMarketSnapshot", () =>
     prisma.marketSnapshot.findFirst({
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       select: { date: true, createdAt: true },
     })
   );
-});
+};
 
-const readLatestScoresCache = cache(async (): Promise<ScoresHead> => {
+const readLatestScoresCache = async (): Promise<ScoresHead> => {
   return readHeadWithLocalCache("latestScoresCache", () =>
     prisma.scoresApiCache.findFirst({
       orderBy: { updatedAt: "desc" },
       select: { updatedAt: true },
     })
   );
-});
+};
 
-const readLatestMacroObservation = cache(async (): Promise<MacroHead> => {
+const readLatestMacroObservation = async (): Promise<MacroHead> => {
   return readHeadWithLocalCache("latestMacroObservation", () =>
     prisma.macroObservation.findFirst({
       orderBy: [{ date: "desc" }, { updatedAt: "desc" }],
       select: { date: true, updatedAt: true },
     })
   );
-});
+};
 
 function stamp(date: Date | null | undefined): string {
   return date ? date.toISOString() : "none";
 }
 
-export const readServingDataVersion = cache(async (): Promise<string> => {
+export const readServingDataVersion = async (): Promise<string> => {
   const [latestSnapshot, latestMarketSnapshot] = await Promise.all([
     readLatestSnapshot(),
     readLatestMarketSnapshot(),
@@ -97,9 +96,9 @@ export const readServingDataVersion = cache(async (): Promise<string> => {
     stamp(latestMarketSnapshot?.date),
     stamp(latestMarketSnapshot?.createdAt),
   ].join("|");
-});
+};
 
-export const readScoresDataVersion = cache(async (): Promise<string> => {
+export const readScoresDataVersion = async (): Promise<string> => {
   const [latestSnapshot, latestScoresCache] = await Promise.all([
     readLatestSnapshot(),
     readLatestScoresCache(),
@@ -109,26 +108,26 @@ export const readScoresDataVersion = cache(async (): Promise<string> => {
     stamp(latestSnapshot?.updatedAt),
     stamp(latestScoresCache?.updatedAt),
   ].join("|");
-});
+};
 
-export const readLatestSnapshotHead = cache(async (): Promise<SnapshotHead> => {
+export const readLatestSnapshotHead = async (): Promise<SnapshotHead> => {
   return readLatestSnapshot();
-});
+};
 
-export const readFundDetailVersion = cache(async (): Promise<string> => {
+export const readFundDetailVersion = async (): Promise<string> => {
   const latestSnapshot = await readLatestSnapshot();
   return [stamp(latestSnapshot?.date), stamp(latestSnapshot?.updatedAt)].join("|");
-});
+};
 
-export const readMacroDataVersion = cache(async (): Promise<string> => {
+export const readMacroDataVersion = async (): Promise<string> => {
   const latestMacroObservation = await readLatestMacroObservation();
   return [
     stamp(latestMacroObservation?.date),
     stamp(latestMacroObservation?.updatedAt),
   ].join("|");
-});
+};
 
-export const readCompareDataVersion = cache(async (): Promise<string> => {
+export const readCompareDataVersion = async (): Promise<string> => {
   const [latestSnapshot, latestMacroObservation] = await Promise.all([
     readLatestSnapshot(),
     readLatestMacroObservation(),
@@ -139,4 +138,4 @@ export const readCompareDataVersion = cache(async (): Promise<string> => {
     stamp(latestMacroObservation?.date),
     stamp(latestMacroObservation?.updatedAt),
   ].join("|");
-});
+};
