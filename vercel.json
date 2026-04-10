@@ -1,34 +1,8 @@
 {
-  "installCommand": "pnpm install",
-  "buildCommand": "pnpm exec next build",
   "crons": [
     {
-      "path": "/api/jobs/source-refresh",
-      "schedule": "0 17 * * *"
-    },
-    {
-      "path": "/api/jobs/rebuild-serving",
-      "schedule": "12 17 * * *"
-    },
-    {
-      "path": "/api/jobs/warm-scores",
-      "schedule": "24 17 * * *"
-    },
-    {
-      "path": "/api/jobs/recover-daily",
-      "schedule": "40 17 * * *"
-    },
-    {
-      "path": "/api/jobs/recover-daily",
-      "schedule": "20 18 * * *"
-    },
-    {
-      "path": "/api/jobs/health-check",
-      "schedule": "50 17 * * *"
-    },
-    {
-      "path": "/api/jobs/health-check",
-      "schedule": "35 18 * * *"
+      "path": "/api/cron/daily",
+      "schedule": "0 16 * * *"
     }
   ]
 }
