@@ -1,10 +1,11 @@
-"use client";
-
-import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
+import { SitePageShell } from "@/components/SitePageShell";
 import Footer from "@/components/tefas/Footer";
 import FundsTable from "@/components/tefas/FundsTable";
+import { LIVE_DATA_PAGE_REVALIDATE_SEC } from "@/lib/data-freshness";
+import { readSearchParam, type RouteSearchParams } from "@/lib/route-search-params";
+import { getFundTypeSummariesFromDailySnapshotSafe } from "@/lib/services/fund-daily-snapshot.service";
 
 type TypeRow = {
   code: string;
@@ -13,74 +14,92 @@ type TypeRow = {
   value: number;
 };
 
-export default function IndicesPage() {
-  const [types, setTypes] = useState<TypeRow[]>([]);
+export const revalidate = LIVE_DATA_PAGE_REVALIDATE_SEC;
 
-  useEffect(() => {
-    fetch("/api/indices")
-      .then((r) => r.json())
-      .then((rows: TypeRow[]) => setTypes(rows))
-      .catch(console.error);
-  }, []);
+export default async function IndicesPage({
+  searchParams,
+}: {
+  searchParams?: RouteSearchParams;
+}) {
+  const initialFundType = readSearchParam(searchParams, "index", "fundType");
+  const initialQuery = readSearchParam(searchParams, "q", "query");
+  const types: TypeRow[] = (await getFundTypeSummariesFromDailySnapshotSafe()).map((fundType) => ({
+    code: String(fundType.code),
+    name: fundType.name,
+    stockCount: fundType.fundCount,
+    value: fundType.totalPortfolioSize,
+  }));
 
   return (
-    <div className="relative isolate flex min-h-screen flex-col">
-      <div className="gradient-mesh">
-        <div className="mesh-layer-1" />
-        <div className="mesh-layer-2" />
-        <div className="mesh-layer-3" />
-        <div className="noise" />
-      </div>
-
-      <div className="relative z-10 flex min-h-screen flex-col">
+    <SitePageShell>
         <Header />
 
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
+          <header className="mb-6 max-w-2xl">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
+              Resmi sınıflandırma
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
               Fon türleri
             </h1>
-            <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-              Yatırım fonları (0) ve emeklilik fonları (1) listelerini ayırın. Kartlardaki tutar toplam portföy büyüklüğüdür.
+            <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+              İki resmi sınıf; karttaki tutar, o sınıftaki fonların toplam portföy büyüklüğüdür.
+            </p>
+          </header>
+
+          <div className="mb-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
+              Sınıflar
             </p>
           </div>
-
-          <div className="mb-6 grid gap-3 sm:grid-cols-2">
+          <div className="mb-8 grid gap-3 sm:grid-cols-2">
             {types.map((t) => (
               <Link
                 key={t.code}
                 href={`/indices?index=${encodeURIComponent(t.code)}`}
-                className="rounded-xl border p-4 transition"
+                prefetch={false}
+                className="rounded-xl border p-4 transition-[opacity,border-color] hover:opacity-[0.97]"
                 style={{
-                  borderColor: "var(--border-default)",
+                  borderColor: "var(--border-subtle)",
                   background: "var(--card-bg)",
                   color: "var(--text-primary)",
+                  boxShadow: "var(--shadow-xs, none)",
                 }}
               >
-                <p className="text-sm font-semibold">{t.name}</p>
-                <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                  {t.stockCount} fon
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-muted)" }}>
+                  Tür · {t.code}
                 </p>
-                <p className="mt-2 text-sm tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                  ₺{t.value.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
+                <p className="mt-2 text-sm font-semibold leading-snug">{t.name}</p>
+                <p className="mt-3 text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+                  <span className="tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                    {t.stockCount.toLocaleString("tr-TR")}
+                  </span>{" "}
+                  fon
+                  <span className="mx-1.5 opacity-35" aria-hidden>
+                    ·
+                  </span>
+                  toplam portföy{" "}
+                  <span className="tabular-nums font-semibold" style={{ color: "var(--text-primary)" }}>
+                    ₺{t.value.toLocaleString("tr-TR", { maximumFractionDigits: 0 })}
+                  </span>
                 </p>
               </Link>
             ))}
           </div>
 
-          <Suspense
-            fallback={
-              <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-                Tablo yükleniyor...
-              </div>
-            }
-          >
-            <FundsTable />
-          </Suspense>
+          <div>
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
+              Fon listesi
+            </p>
+            <FundsTable
+              initialFundTypes={types.map((item) => ({ code: Number(item.code), name: item.name }))}
+              initialFundType={initialFundType}
+              initialQuery={initialQuery}
+            />
+          </div>
         </main>
 
         <Footer />
-      </div>
-    </div>
+    </SitePageShell>
   );
 }

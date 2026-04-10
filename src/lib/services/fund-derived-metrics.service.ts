@@ -1,20 +1,23 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { computeDerivedFromPricePoints } from "@/lib/derived-metrics/compute-from-history";
 import {
   buildExtendedNormalizationContext,
-  calculateAlpha,
   calculateFinalScore,
   calculateNormalizedScoresExtended,
-  determineRiskLevel,
+  compareRankedFunds,
+  percentileFromSortedAsc,
   type FundMetrics,
   type FundScaleFields,
   type NormalizedScores,
   type RankingMode,
 } from "@/lib/scoring";
+import { fetchKiyasMacroBuckets, kiyasMacroTotalReturnPct, type KiyasRefKey } from "@/lib/services/fund-detail-kiyas.service";
 import {
   deriveFundPerformanceFromHistory,
   FUND_PRICE_HISTORY_LOOKBACK_DAYS,
+  type FundHistoryPoint,
   loadPriceHistoryByFundId,
 } from "@/lib/services/fund-daily-snapshot.service";
 import type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
@@ -59,6 +62,15 @@ export async function rebuildFundDerivedMetrics(): Promise<{ written: number }> 
         const perf = deriveFundPerformanceFromHistory(rows);
         const derived = computeDerivedFromPricePoints(perf.pricePoints);
         const spark = JSON.parse(JSON.stringify(derived.sparklinePrices)) as Prisma.InputJsonValue;
+        const latestStats = rows.length > 0 ? rows[rows.length - 1] : null;
+        const latestInvestorCount =
+          latestStats && Number.isFinite((latestStats as FundHistoryPoint).investorCount)
+            ? latestStats.investorCount
+            : fund.investorCount;
+        const latestPortfolioSize =
+          latestStats && Number.isFinite((latestStats as FundHistoryPoint).portfolioSize)
+            ? latestStats.portfolioSize
+            : fund.portfolioSize;
 
         return prisma.fundDerivedMetrics.upsert({
           where: { fundId: fund.id },
@@ -82,8 +94,8 @@ export async function rebuildFundDerivedMetrics(): Promise<{ written: number }> 
             sharpe1y: derived.sharpe1y,
             sortino1y: derived.sortino1y,
             totalReturn2y: derived.totalReturn2y,
-            investorCount: fund.investorCount,
-            aum: fund.portfolioSize,
+            investorCount: latestInvestorCount,
+            aum: latestPortfolioSize,
             historySessions: derived.historySessions,
             sparkline: spark,
             computedAt: now,
@@ -107,8 +119,8 @@ export async function rebuildFundDerivedMetrics(): Promise<{ written: number }> 
             sharpe1y: derived.sharpe1y,
             sortino1y: derived.sortino1y,
             totalReturn2y: derived.totalReturn2y,
-            investorCount: fund.investorCount,
-            aum: fund.portfolioSize,
+            investorCount: latestInvestorCount,
+            aum: latestPortfolioSize,
             historySessions: derived.historySessions,
             sparkline: spark,
             computedAt: now,
@@ -143,20 +155,14 @@ type DerivedRow = {
   investorCount: number;
   aum: number;
   historySessions: number;
-  sparkline: Prisma.JsonValue;
   categoryCode: string | null;
   fund: {
     id: string;
+    categoryId: string | null;
     code: string;
     name: string;
     shortName: string | null;
     logoUrl: string | null;
-    lastPrice: number;
-    dailyReturn: number;
-    monthlyReturn: number;
-    yearlyReturn: number;
-    portfolioSize: number;
-    investorCount: number;
     category: { code: string; name: string } | null;
     fundType: { code: number; name: string } | null;
   };
@@ -179,21 +185,100 @@ function toFundMetrics(r: DerivedRow): FundMetrics {
 }
 
 function toScale(r: DerivedRow): FundScaleFields {
-  const f = r.fund;
   return {
     portfolioSize: r.aum,
     investorCount: r.investorCount,
-    yearlyReturn: r.return1y ?? f.yearlyReturn ?? 0,
+    yearlyReturn: r.return1y ?? 0,
   };
 }
 
-/** Yüksek getiri: önce 1Y, yoksa kısa dönem zinciri; hiçbiri yoksa listenin sonuna. */
-export function highReturnSortKey(r: DerivedRow): number {
-  const chain = [r.return1y, r.return180d, r.return90d, r.return30d, r.return7d, r.return1d];
-  for (const v of chain) {
-    if (v != null && Number.isFinite(v)) return v;
+const MIN_CATEGORY_FUNDS = 5;
+
+/** Çok pencereli (1y ağırlıklı) trailing getiri — yüksek getiri sırası için. */
+export function highReturnTrailingBlend(r: DerivedRow): number {
+  let acc = 0;
+  let wsum = 0;
+  const parts: Array<[number | null | undefined, number]> = [
+    [r.return1y, 0.45],
+    [r.return180d, 0.25],
+    [r.return90d, 0.15],
+    [r.return30d, 0.15],
+  ];
+  for (const [v, w] of parts) {
+    if (v != null && Number.isFinite(v)) {
+      acc += w * v;
+      wsum += w;
+    }
   }
-  return Number.NEGATIVE_INFINITY;
+  return wsum > 0 ? acc / wsum : Number.NEGATIVE_INFINITY;
+}
+
+function buildCategory1yAggregates(rows: DerivedRow[]): Map<string, { sum: number; count: number }> {
+  const m = new Map<string, { sum: number; count: number }>();
+  for (const r of rows) {
+    const cid = r.fund.categoryId;
+    if (!cid || r.return1y == null || !Number.isFinite(r.return1y)) continue;
+    const a = m.get(cid) ?? { sum: 0, count: 0 };
+    a.sum += r.return1y;
+    a.count += 1;
+    m.set(cid, a);
+  }
+  return m;
+}
+
+function category1yEdge(row: DerivedRow, agg: Map<string, { sum: number; count: number }>): number | null {
+  const cid = row.fund.categoryId;
+  const y = row.return1y;
+  if (!cid || y == null || !Number.isFinite(y)) return null;
+  const a = agg.get(cid);
+  if (!a || a.count < MIN_CATEGORY_FUNDS) return null;
+  const othersSum = a.sum - y;
+  const others = a.count - 1;
+  if (others < MIN_CATEGORY_FUNDS - 1) return null;
+  return y - othersSum / others;
+}
+
+function returnWindowStd(row: DerivedRow): number | null {
+  const v = [row.return30d, row.return90d, row.return180d, row.return1y].filter(
+    (x): x is number => x != null && Number.isFinite(x)
+  );
+  if (v.length < 3) return null;
+  const mean = v.reduce((s, x) => s + x, 0) / v.length;
+  const varp = v.reduce((s, x) => s + (x - mean) ** 2, 0) / v.length;
+  return Math.sqrt(varp);
+}
+
+function pickReferenceExcess1y(
+  row: DerivedRow,
+  macroByRef: Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>>,
+  anchor: Date
+): number | null {
+  const r1 = row.return1y;
+  if (r1 == null || !Number.isFinite(r1)) return null;
+  const c = (row.fund.category?.code ?? "").toUpperCase();
+  const n = row.fund.name.toUpperCase();
+  const b = macroByRef.bist100;
+  const g = macroByRef.gold;
+  const u = macroByRef.usdtry;
+
+  const bistR = b && b.length >= 2 ? kiyasMacroTotalReturnPct(b, anchor, 365) : null;
+  const goldR = g && g.length >= 2 ? kiyasMacroTotalReturnPct(g, anchor, 365) : null;
+  const usdR = u && u.length >= 2 ? kiyasMacroTotalReturnPct(u, anchor, 365) : null;
+
+  if (c === "ALT") {
+    if (goldR != null) return r1 - goldR;
+    return bistR != null ? r1 - bistR : null;
+  }
+  if (c === "DYF" || n.includes("DÖVİZ") || n.includes("DOVIZ") || n.includes("DOLAR") || n.includes("EURO")) {
+    return usdR != null ? r1 - usdR : null;
+  }
+  if (c === "PPF" || c === "BRC" || c === "BYF" || c === "OKS" || c === "OKCF" || c === "GYIF") {
+    return null;
+  }
+  if (c === "HSF" || c === "HYF" || c === "KTL") {
+    return bistR != null ? r1 - bistR : usdR != null ? r1 - usdR : null;
+  }
+  return bistR != null ? r1 - bistR : null;
 }
 
 /**
@@ -258,21 +343,15 @@ export async function getScoresPayloadFromDerivedMetrics(
         investorCount: true,
         aum: true,
         historySessions: true,
-        sparkline: true,
         categoryCode: true,
         fund: {
           select: {
             id: true,
+            categoryId: true,
             code: true,
             name: true,
             shortName: true,
             logoUrl: true,
-            lastPrice: true,
-            dailyReturn: true,
-            monthlyReturn: true,
-            yearlyReturn: true,
-            portfolioSize: true,
-            investorCount: true,
             category: { select: { code: true, name: true } },
             fundType: { select: { code: true, name: true } },
           },
@@ -294,34 +373,70 @@ export async function getScoresPayloadFromDerivedMetrics(
   const scales = rows.map(toScale);
   const extCtx = buildExtendedNormalizationContext(metricsList, scales);
 
-  const scored: Array<{ row: DerivedRow; finalScore: number; scores: NormalizedScores }> = rows.map(
-    (row, i) => {
+  const anchor = startOfUtcDay(new Date());
+  const macroByRef = await fetchKiyasMacroBuckets(anchor);
+  const catAgg = buildCategory1yAggregates(rows);
+  const catEdgeRaw = rows.map((r) => category1yEdge(r, catAgg));
+  const refExcRaw = rows.map((r) => pickReferenceExcess1y(r, macroByRef, anchor));
+  const consSdRaw = rows.map((r) => returnWindowStd(r));
+
+  const sortAsc = (xs: number[]) => [...xs].sort((a, b) => a - b);
+  const sortedCE = sortAsc(catEdgeRaw.filter((x): x is number => x != null && Number.isFinite(x)));
+  const sortedRE = sortAsc(refExcRaw.filter((x): x is number => x != null && Number.isFinite(x)));
+  const sortedSD = sortAsc(consSdRaw.filter((x): x is number => x != null && Number.isFinite(x)));
+
+  const scored: Array<{ row: DerivedRow; finalScore: number; scores: NormalizedScores; metrics: FundMetrics }> =
+    rows.map((row, i) => {
       const metrics = metricsList[i]!;
-      const scores = calculateNormalizedScoresExtended(metrics, extCtx, scales[i]!);
+      const base = calculateNormalizedScoresExtended(metrics, extCtx, scales[i]!);
+      const ce = catEdgeRaw[i]!;
+      const categoryRelativeScore =
+        ce == null || !Number.isFinite(ce)
+          ? 50
+          : Math.round(percentileFromSortedAsc(ce, sortedCE, true));
+      const re = refExcRaw[i]!;
+      const referenceStrengthScore =
+        re == null || !Number.isFinite(re)
+          ? 50
+          : Math.round(percentileFromSortedAsc(re, sortedRE, true));
+      const sd = consSdRaw[i]!;
+      const consistencyScore =
+        sd == null || !Number.isFinite(sd)
+          ? 50
+          : Math.round(percentileFromSortedAsc(sd, sortedSD, false));
+
+      const scores: NormalizedScores = {
+        ...base,
+        categoryRelativeScore,
+        referenceStrengthScore,
+        consistencyScore,
+      };
       const finalScore = calculateFinalScore(scores, mode);
-      return { row, finalScore, scores };
-    }
+      return { row, finalScore, scores, metrics };
+    });
+
+  scored.sort((a, b) =>
+    compareRankedFunds(mode, {
+      code: a.row.fund.code,
+      finalScore: a.finalScore,
+      scores: a.scores,
+      yearlyReturn: a.row.return1y ?? 0,
+      monthlyReturn: a.row.return30d ?? 0,
+      metrics: a.metrics,
+      trailingReturnBlend: highReturnTrailingBlend(a.row),
+    }, {
+      code: b.row.fund.code,
+      finalScore: b.finalScore,
+      scores: b.scores,
+      yearlyReturn: b.row.return1y ?? 0,
+      monthlyReturn: b.row.return30d ?? 0,
+      metrics: b.metrics,
+      trailingReturnBlend: highReturnTrailingBlend(b.row),
+    })
   );
 
-  scored.sort((a, b) => {
-    if (mode === "HIGH_RETURN") {
-      const ka = highReturnSortKey(a.row);
-      const kb = highReturnSortKey(b.row);
-      if (kb !== ka) return kb - ka;
-    }
-    if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-    return a.row.fund.code.localeCompare(b.row.fund.code, "tr");
-  });
-
-  const funds: ScoredFundRow[] = scored.map(({ row, finalScore, scores }) => {
+  const funds: ScoredFundRow[] = scored.map(({ row, finalScore }) => {
     const f = row.fund;
-    const catCode = f.category?.code ?? row.categoryCode ?? "DGR";
-    const metrics = toFundMetrics(row);
-    const alpha = calculateAlpha(metrics.annualizedReturn, catCode);
-    const riskLevel = determineRiskLevel(catCode, f.name);
-    const spark = Array.isArray(row.sparkline)
-      ? (row.sparkline as unknown[]).map((x) => Number(x)).filter((n) => Number.isFinite(n))
-      : [];
 
     return {
       fundId: f.id,
@@ -329,20 +444,13 @@ export async function getScoresPayloadFromDerivedMetrics(
       name: f.name,
       shortName: f.shortName,
       logoUrl: getFundLogoUrlForUi(f.id, f.code, f.logoUrl, f.name),
-      lastPrice: row.latestPrice > 0 ? row.latestPrice : f.lastPrice,
+      lastPrice: row.latestPrice,
       dailyReturn: row.return1d,
-      monthlyReturn: f.monthlyReturn !== 0 ? f.monthlyReturn : row.return30d ?? 0,
-      yearlyReturn: row.return1y ?? f.yearlyReturn,
-      portfolioSize: f.portfolioSize,
-      investorCount: f.investorCount,
+      portfolioSize: row.aum,
+      investorCount: row.investorCount,
       category: f.category,
       fundType: fundTypeForApi(f.fundType),
       finalScore,
-      riskLevel,
-      scores,
-      metrics,
-      alpha,
-      sparkline: spark.length > 0 ? spark : [f.lastPrice].filter((p) => p > 0),
     };
   });
 

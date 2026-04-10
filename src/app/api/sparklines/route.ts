@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
 import { fetchBistSparklines } from "@/lib/services/yahoo-finance.service";
 
 export const dynamic = "force-dynamic";
@@ -9,8 +10,8 @@ function parseSymbols(req: NextRequest): string[] {
   if (!raw) return [];
   return raw
     .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+    .map((s) => s.trim().toUpperCase().slice(0, 12))
+    .filter((value) => /^[A-Z0-9._-]+$/.test(value));
 }
 
 export async function GET(req: NextRequest) {
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
       { ok: true, items },
       {
         headers: {
-          "Cache-Control": "s-maxage=300, stale-while-revalidate=600",
+          "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
         },
       }
     );
@@ -37,4 +38,3 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, items: {} }, { status: 200 });
   }
 }
-

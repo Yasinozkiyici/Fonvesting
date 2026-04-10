@@ -1,11 +1,7 @@
 /** TEFAS çekmeden yalnızca kategori + logo DB pass (hızlı). */
-import { config } from "dotenv";
-import path from "node:path";
+import "./load-env";
 import { prisma } from "../src/lib/prisma";
 import { runTefasMetadataPass } from "../src/lib/services/tefas-metadata.service";
-
-config({ path: path.join(process.cwd(), ".env"), quiet: true });
-config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
 
 runTefasMetadataPass(prisma)
   .then((m) => {

@@ -12,8 +12,9 @@ const fontSans = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Yatirim.io — TEFAS yatırım fonları",
-  description: "TEFAS yatırım fonları: fiyat, günlük getiri, portföy büyüklüğü ve yatırımcı sayısı",
+  title: "Yatirim.io — Yatırım fonları",
+  description:
+    "Türk yatırım fonlarını daha hızlı inceleyin, daha net karşılaştırın; teknik detayda kaybolmadan daha iyi kararlar için güncel fon verisi.",
 };
 
 export const viewport = {
@@ -34,6 +35,9 @@ export default function RootLayout({
         <style
           dangerouslySetInnerHTML={{
             __html: `
+              /* Tailwind/preflight gecikse bile sayfa çökmez (margin + kutu modeli) */
+              *, *::before, *::after { box-sizing: border-box; }
+              body { margin: 0; }
               html { background-color: #fdfdfb; color: #0c1628; }
               html[data-theme="dark"] { background-color: #0f1419; color: #e8eaed; }
             `,

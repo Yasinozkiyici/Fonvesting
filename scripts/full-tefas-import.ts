@@ -5,12 +5,8 @@
  * Kullanım: pnpm exec tsx scripts/full-tefas-import.ts
  * Ortam: .env.local içinde DATABASE_URL (Supabase pooler veya doğrudan).
  */
-import { config } from "dotenv";
-import path from "node:path";
+import "./load-env";
 import { runFullTefasSync } from "../src/lib/services/tefas-sync.service";
-
-config({ path: path.join(process.cwd(), ".env"), quiet: true });
-config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
 
 runFullTefasSync()
   .then((r) => {

@@ -1,5 +1,4 @@
-import { config } from "dotenv";
-import path from "node:path";
+import "./load-env";
 import { prisma } from "../src/lib/prisma";
 import {
   appendRecentFundHistory,
@@ -13,9 +12,6 @@ import { rebuildFundDerivedMetrics } from "../src/lib/services/fund-derived-metr
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import { rebuildMarketSnapshot, recomputeFundReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
 import { startOfUtcDay } from "../src/lib/trading-calendar-tr";
-
-config({ path: path.join(process.cwd(), ".env"), quiet: true });
-config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
 
 function readArg(name: string): string | null {
   const idx = process.argv.indexOf(name);
@@ -67,7 +63,7 @@ async function main() {
       chunkDays,
     });
   } else {
-    const days = daysRaw ? Number(daysRaw) : 730;
+    const days = daysRaw ? Number(daysRaw) : 1095;
     if (!Number.isFinite(days) || days <= 0) {
       throw new Error("--days pozitif sayı olmalı.");
     }

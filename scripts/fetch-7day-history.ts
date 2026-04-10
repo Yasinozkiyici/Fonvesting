@@ -1,6 +1,7 @@
 /**
  * Son 7 iş gününün TEFAS verilerini çekip FundPriceHistory tablosuna kaydeder
  */
+import "./load-env";
 import { PrismaClient } from "@prisma/client";
 import { TefasBrowserClient, withTefasBrowserClient } from "../src/lib/services/tefas-browser.service";
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * .env sonra .env.local ile DATABASE_URL’ü yükler (yerel sqlite .env’i ezer),
- * ardından verilen komutu çalıştırır.
+ * Production DB komut yardımcısı.
+ * Öncelik: shell env > .env.local > .env
+ * Migration için DIRECT_URL varsa onu kullanır.
  */
 import { config } from "dotenv";
 import { spawnSync } from "node:child_process";
@@ -9,8 +10,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-config({ path: path.join(root, ".env") });
-config({ path: path.join(root, ".env.local"), override: true });
+const shellDatabaseUrl = process.env.DATABASE_URL;
+const shellDirectUrl = process.env.DIRECT_URL;
+
+config({ path: path.join(root, ".env.local"), quiet: true });
+config({ path: path.join(root, ".env"), quiet: true });
+
+if (shellDatabaseUrl !== undefined && shellDatabaseUrl !== "") {
+  process.env.DATABASE_URL = shellDatabaseUrl;
+}
+if (shellDirectUrl !== undefined && shellDirectUrl !== "") {
+  process.env.DIRECT_URL = shellDirectUrl;
+}
 
 const [, , ...args] = process.argv;
 if (args.length === 0) {

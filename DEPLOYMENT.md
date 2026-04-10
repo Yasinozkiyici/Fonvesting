@@ -1,37 +1,95 @@
-# Dağıtım notları
+# Deployment
 
-Uygulama **PostgreSQL** kullanır (Vercel’de SQLite dosyası çalışmaz). Yerel ve üretim aynı şema + migration ile uyumludur.
+Uygulama tek bir PostgreSQL veritabanı üstünde çalışır. Docker geliştirme doğrulaması için kullanılabilir, production mimarisinin parçası değildir.
 
-## Yerel
+## Hedef Mimari
+
+- Vercel: Next.js uygulaması
+- PostgreSQL / Supabase: kalıcı veri
+- Prisma: şema ve erişim katmanı
+- Vercel Cron: günlük 3 aşamalı update zinciri (`/api/jobs/source-refresh` → `/api/jobs/rebuild-serving` → `/api/jobs/warm-scores`)
+- Harici kaynaklar: TEFAS, Yahoo, TCMB
+
+## Gerekli Environment Variables
+
+- `DATABASE_URL`: uygulamanın kullandığı PostgreSQL bağlantısı, tercihen Supabase transaction pooler
+- `DIRECT_URL`: migration için doğrudan PostgreSQL bağlantısı
+- `CRON_SECRET`: `/api/jobs/*` cron endpoint'leri için Bearer token
+- `OPS_ALERT_WEBHOOK_URL` veya `SLACK_WEBHOOK_URL`: cron failure / degraded health alarmı için webhook
+- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`: alarmı Telegram'a da göndermek isterseniz
+- `SOURCE_REFRESH_WORKER_WEBHOOK_URL` + `SOURCE_REFRESH_WORKER_TOKEN` (opsiyonel): ağır `source-refresh` işini route dışı worker'a dispatch etmek için
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+- `NEXT_PUBLIC_BASE_URL`
+
+Örnekler için [.env.example](/Users/vandv/Desktop/Fonvesting/.env.example) ve [.env.local.example](/Users/vandv/Desktop/Fonvesting/.env.local.example) dosyalarına bakın.
+
+## İlk Kurulum
+
+1. `pnpm install`
+2. `pnpm prod:check`
+3. `pnpm prod:migrate`
+4. `pnpm prod:bootstrap`
+
+`prod:bootstrap` tek komutta şunları yapar:
+
+- TEFAS master veri sync
+- 2 yıllık fon history backfill
+- 2 yıllık makro backfill
+- returns / snapshot / derived rebuild
+- score cache warm
+
+Özel parametre örneği:
+
+```bash
+pnpm prod:bootstrap -- --history-days 730 --macro-days 730 --history-chunk-days 14
+```
+
+## Günlük Çalışma
+
+Vercel cron tanımı [vercel.json](/Users/vandv/Desktop/Fonvesting/vercel.json) içinde durur. Günlük update zinciri `Europe/Istanbul` için akşam penceresinde çalışır:
+
+- `17:00 UTC` → `/api/jobs/source-refresh`
+- `17:12 UTC` → `/api/jobs/rebuild-serving`
+- `17:24 UTC` → `/api/jobs/warm-scores`
+- `17:50 UTC` → `/api/jobs/health-check`
+
+Bu üç çağrı birlikte İstanbul saatiyle 20:00 sonrası günlük veri yenilemesini tamamlar. Route’lar sırasıyla [route.ts](/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/source-refresh/route.ts), [route.ts](/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/rebuild-serving/route.ts) ve [route.ts](/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/warm-scores/route.ts) üzerinden çalışır.
+
+`SOURCE_REFRESH_WORKER_WEBHOOK_URL` + `SOURCE_REFRESH_WORKER_TOKEN` tanımlıysa `/api/jobs/source-refresh` ağır history append işini route içinde çalıştırmak yerine dış worker'a dispatch eder. Worker örnek komutu: `pnpm worker:source-refresh`.
+
+`health-check` route'u [route.ts](/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/health-check/route.ts) içinde yer alır; 19:50 İstanbul sonrası günlük SLA kaçırılmışsa veya sistem `degraded` ise alarm yollar.
+
+## Operasyon Dayanıklılığı
+
+- Her cron fazı `SyncLog` tablosuna `RUNNING / SUCCESS / FAILED / TIMEOUT` olarak yazılır.
+- Aynı faz yeniden tetiklenirse aktif koşu varken `409 already_running` döner; üst üste binme engellenir.
+- 120 dakikadan uzun süren yarım kalmış job kayıtları bir sonraki koşuda `TIMEOUT` olarak işaretlenir.
+- `/api/health` artık son `source_refresh`, `serving_rebuild` ve `warm_scores` durumlarını da döner.
+- 20:08 / 20:22 / 20:36 İstanbul sonrası ilgili job o gün `SUCCESS` değilse health `degraded/error` üretir.
+
+Günlük akış şunları içerir:
+
+- TEFAS güncel sync
+- fon history append
+- macro append
+- returns rebuild
+- market snapshot rebuild
+- daily snapshot rebuild
+- derived metrics rebuild
+- score cache warm
+
+## Vercel Kuralları
+
+- Build sırasında seed çalışmaz; build sadece `next build` yapar.
+- Migration Vercel request/build aşamasına bırakılmaz; `pnpm prod:migrate` ile kontrollü yürütülür.
+- İlk 2 yıllık backfill web request süresine bağlanmaz; `prod:bootstrap` script’i ile yürütülür.
+
+## Yerel Doğrulama
+
+İsterseniz yerelde PostgreSQL ile test edebilirsiniz:
 
 1. `docker compose up -d`
-2. `.env` veya `.env.local`: `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting"` (bkz. `.env.example`)
-3. `pnpm install` → `pnpm exec prisma migrate deploy` → isteğe bağlı `pnpm exec prisma db seed`
-4. Eski `DATABASE_URL="file:./dev.db"` satırını kaldırın; aksi halde uygulama hata verir.
-5. Yerelde yapılan değişiklikler otomatik deploy edilmez; sadece local geliştirme akışı (`pnpm dev`) beklenir.
-6. Bu repo için yayın kuralı: kullanıcı açıkça `push deploy et` demeden `git push` veya deploy çalıştırılmaz.
-
-## GitHub
-
-CI: PostgreSQL servis konteyneri üzerinde `prisma migrate deploy`, `lint`, `next build`.
-
-## Vercel
-
-1. Projeyi GitHub’dan içe aktarın. `vercel.json` build sırasında **`prisma db seed`** (boş DB’de örnek veri) ve `next build` çalıştırır. **`prisma migrate deploy` Vercel’de çalıştırılmaz** — Supabase doğrudan host’una birçok buluttan erişim kısıtlı olabiliyor; migration’ları yerelde veya CI’da doğrudan bağlantı ile uygulayın.
-2. **Settings → Environment Variables** (Production / Preview için):
-   - **`DATABASE_URL`** — Supabase **Transaction pooler** (port **6543**, `?pgbouncer=true&sslmode=require`). Bölge, dashboard’daki pooler host adından gelir (ör. `aws-0-eu-west-1.pooler.supabase.com`).
-   - **`CRON_SECRET`** — güçlü rastgele bir dize (sync/job uçları için).
-3. **Install Command:** `pnpm install` (`vercel.json` içinde tanımlı).
-4. Ortam değişkenlerini ekledikten sonra **Redeploy** yapın.
-5. Git push sonrası otomatik Vercel deploy istemiyorsanız Vercel proje ayarlarından auto-deploy kapatılmalıdır; bu davranış repo içi kodla güvenilir biçimde kapatılamaz.
-
-### Supabase (özet)
-
-1. **Project Settings → Database** → **Connection string** → URI, şifreyi yerleştirin; sonuna `?sslmode=require` ekleyin.
-2. Vercel’e ekleyin: `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`, `CRON_SECRET`.
-3. Yoğun trafikte **Transaction pooler** (6543) + Prisma `directUrl` ayrımı düşünülebilir; başlangıç için doğrudan `db....supabase.co:5432` yeterlidir.
-4. **Güvenlik:** Veritabanı şifresi ve anahtarlar yalnızca `.env.local` (gitignore) ve Vercel env’de tutulur; repoya yazılmaz. Sızıntı olursa Supabase’de şifreyi ve API anahtarlarını yenileyin.
-
-### Neon (özet)
-
-1. [Neon](https://neon.tech) → proje oluştur → connection string → Vercel’e `DATABASE_URL`.
+2. `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting" pnpm exec prisma migrate deploy`
+3. `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting" pnpm sync:macro -- --days 730`
+4. `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting" pnpm dev`

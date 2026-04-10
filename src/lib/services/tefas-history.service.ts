@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { DAILY_SOURCE_REFRESH_CUTOFF_MINUTES, latestExpectedBusinessSessionDate } from "@/lib/daily-sync-policy";
 import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } from "@/lib/services/tefas-browser.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
 
@@ -52,6 +53,10 @@ function parseInputDate(input: string): Date {
   return startOfUtcDay(date);
 }
 
+function latestExpectedAppendEndDate(now: Date = new Date()): Date {
+  return latestExpectedBusinessSessionDate(now, DAILY_SOURCE_REFRESH_CUTOFF_MINUTES);
+}
+
 function businessDaysBetween(startDate: Date, endDate: Date): Date[] {
   const out: Date[] = [];
   const cursor = new Date(startDate);
@@ -87,6 +92,53 @@ function asDetailsRecord(value: unknown): HistorySyncDetails {
     return value as HistorySyncDetails;
   }
   return {};
+}
+
+function readHistoryHeartbeat(details: unknown): Date | null {
+  const heartbeatRaw =
+    details && typeof details === "object" && !Array.isArray(details)
+      ? (details as Record<string, unknown>).lastHeartbeatAt
+      : null;
+  if (typeof heartbeatRaw !== "string" || !heartbeatRaw.trim()) return null;
+  const parsed = new Date(heartbeatRaw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function mergeHistorySyncDetails(details: HistorySyncDetails, options?: {
+  status?: string;
+  startedAt?: Date | null;
+  completedAt?: Date | null;
+}): Promise<void> {
+  const current = await prisma.historySyncState.findUnique({
+    where: { key: HISTORY_SYNC_KEY },
+    select: { details: true },
+  });
+  const merged = {
+    ...asDetailsRecord(current?.details),
+    ...details,
+    lastHeartbeatAt: new Date().toISOString(),
+  };
+
+  await prisma.historySyncState.upsert({
+    where: { key: HISTORY_SYNC_KEY },
+    create: {
+      key: HISTORY_SYNC_KEY,
+      status: options?.status ?? "RUNNING",
+      lastStartedAt: options?.startedAt ?? new Date(),
+      lastCompletedAt: options?.completedAt ?? null,
+      details: toJson(merged),
+    },
+    update: {
+      ...(options?.status ? { status: options.status } : {}),
+      ...(options?.startedAt !== undefined ? { lastStartedAt: options.startedAt } : {}),
+      ...(options?.completedAt !== undefined ? { lastCompletedAt: options.completedAt } : {}),
+      details: toJson(merged),
+    },
+  });
+}
+
+export async function patchFundHistorySyncStateDetails(details: HistorySyncDetails): Promise<void> {
+  await mergeHistorySyncDetails(details);
 }
 
 function normalizeSessionDate(raw: string | null | undefined, fallbackDate: Date): Date {
@@ -266,7 +318,9 @@ export async function recoverStaleHistorySyncState(staleAfterMinutes: number = D
   }
 
   const staleAfterMs = Math.max(1, staleAfterMinutes) * 60 * 1000;
-  const ageMs = Date.now() - state.lastStartedAt.getTime();
+  const heartbeatAt = readHistoryHeartbeat(state.details);
+  const lastSignalAt = heartbeatAt ?? state.lastStartedAt;
+  const ageMs = Date.now() - lastSignalAt.getTime();
   if (ageMs < staleAfterMs) {
     return { recovered: false, previousStatus: state.status };
   }
@@ -288,6 +342,7 @@ export async function recoverStaleHistorySyncState(staleAfterMinutes: number = D
         staleAfterMinutes,
         previousStatus: state.status,
         previousLastStartedAt: state.lastStartedAt.toISOString(),
+        previousLastHeartbeatAt: heartbeatAt?.toISOString() ?? null,
       }),
     },
   });
@@ -328,37 +383,40 @@ export async function syncFundHistoryRange(options: {
   const chunks = chunkDates(dates, chunkDays);
   const fundIdByCode = await loadActiveFundMap();
 
-  await prisma.historySyncState.upsert({
-    where: { key: HISTORY_SYNC_KEY },
-    create: {
-      key: HISTORY_SYNC_KEY,
-      status: "RUNNING",
-      lastStartedAt: new Date(),
-      details: toJson({
-        phase: "history_backfill",
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        chunkDays,
-      }),
+  await mergeHistorySyncDetails(
+    {
+      phase: "history_backfill",
+      stage: "starting",
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      chunkDays,
+      totalChunks: chunks.length,
+      completedChunks: 0,
+      fetchedRows: 0,
+      writtenRows: 0,
+      touchedDates: 0,
     },
-    update: {
-      status: "RUNNING",
-      lastStartedAt: new Date(),
-      details: toJson({
-        phase: "history_backfill",
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        chunkDays,
-      }),
-    },
-  });
+    { status: "RUNNING", startedAt: new Date(), completedAt: null }
+  );
 
   try {
     let fetchedRows = 0;
     let writtenRows = 0;
     const touchedDates = new Set<number>();
     await withTefasBrowserClient(async (client) => {
-      for (const chunk of chunks) {
+      for (const [index, chunk] of chunks.entries()) {
+        await mergeHistorySyncDetails({
+          phase: "history_backfill",
+          stage: "fetching_chunk",
+          currentChunk: index + 1,
+          totalChunks: chunks.length,
+          chunkStartDate: chunk.start.toISOString(),
+          chunkEndDate: chunk.end.toISOString(),
+          fetchedRows,
+          writtenRows,
+          touchedDates: touchedDates.size,
+        });
+
         const payloads: TefasExportPayload[] = [];
 
         for (const fundTypeCode of [0, 1] as const) {
@@ -380,6 +438,20 @@ export async function syncFundHistoryRange(options: {
         const rows = mergePayloadRows(payloads, fundIdByCode, chunk.end);
         for (const row of rows) touchedDates.add(row.date.getTime());
         writtenRows += await upsertHistoryRows(rows);
+
+        await mergeHistorySyncDetails({
+          phase: "history_backfill",
+          stage: "chunk_completed",
+          currentChunk: index + 1,
+          totalChunks: chunks.length,
+          completedChunks: index + 1,
+          chunkStartDate: chunk.start.toISOString(),
+          chunkEndDate: chunk.end.toISOString(),
+          lastChunkFetchedRows: rows.length,
+          fetchedRows,
+          writtenRows,
+          touchedDates: touchedDates.size,
+        });
       }
     });
 
@@ -418,31 +490,17 @@ export async function syncFundHistoryRange(options: {
       touchedDates: touchedDates.size,
     };
   } catch (error) {
-    await prisma.historySyncState.upsert({
-      where: { key: HISTORY_SYNC_KEY },
-      create: {
-        key: HISTORY_SYNC_KEY,
-        status: "FAILED",
-        lastStartedAt: new Date(),
-        details: toJson({
-          phase: "history_backfill",
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          chunkDays,
-          error: error instanceof Error ? error.message : String(error),
-        }),
+    await mergeHistorySyncDetails(
+      {
+        phase: "history_backfill",
+        stage: "failed",
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        chunkDays,
+        error: error instanceof Error ? error.message : String(error),
       },
-      update: {
-        status: "FAILED",
-        details: toJson({
-          phase: "history_backfill",
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          chunkDays,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      },
-    });
+      { status: "FAILED", completedAt: new Date() }
+    );
     throw error;
   }
 }
@@ -459,7 +517,7 @@ export async function appendRecentFundHistory(overlapDays: number = 7): Promise<
     select: { date: true },
   });
 
-  const endDate = startOfUtcDay(new Date());
+  const endDate = latestExpectedAppendEndDate();
   const startDate = latest?.date
     ? new Date(startOfUtcDay(latest.date).getTime() - Math.max(1, overlapDays) * 24 * 60 * 60 * 1000)
     : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);

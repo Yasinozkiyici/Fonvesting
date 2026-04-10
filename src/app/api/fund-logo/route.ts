@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import {
   resolveFundLogoUrl,
   isResolvedLogoFetchAllowed,
@@ -11,7 +12,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_LOGO_BYTES = 2_500_000;
-const UPSTREAM_MS = 12_000;
+const UPSTREAM_MS = 4_500;
+const ALLOWED_IMAGE_CONTENT_TYPES = new Set([
+  "image/png",
+  "image/webp",
+  "image/svg+xml",
+  "image/jpeg",
+  "image/gif",
+  "image/avif",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+]);
 
 function readLocalFundLogoBuffer(code: string): { buf: Buffer; contentType: string } | null {
   const base = path.join(process.cwd(), "public", "fund-logos");
@@ -33,6 +44,37 @@ function readLocalFundLogoBuffer(code: string): { buf: Buffer; contentType: stri
   return null;
 }
 
+type FundLogoRow = {
+  code: string;
+  name: string;
+  logoUrl: string | null;
+};
+
+async function loadFundLogoRowById(id: string): Promise<FundLogoRow | null> {
+  if (hasSupabaseRestConfig()) {
+    try {
+      const query = new URLSearchParams({
+        select: "code,name,logoUrl",
+        id: `eq.${id}`,
+        limit: "1",
+      });
+      const rows = await fetchSupabaseRestJson<FundLogoRow[]>(`Fund?${query.toString()}`, { revalidate: 86_400 });
+      const row = rows[0];
+      if (row) return row;
+      return null;
+    } catch (error) {
+      console.error("[fund-logo] supabase-rest lookup failed", error);
+    }
+  }
+
+  const fund = await prisma.fund.findUnique({
+    where: { id },
+    select: { name: true, logoUrl: true, code: true },
+  });
+  if (!fund) return null;
+  return fund;
+}
+
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   const n = req.nextUrl.searchParams.get("n") ?? "";
@@ -42,10 +84,7 @@ export async function GET(req: NextRequest) {
   let stored = s;
 
   if (id) {
-    const fund = await prisma.fund.findUnique({
-      where: { id },
-      select: { name: true, logoUrl: true, code: true },
-    });
+    const fund = await loadFundLogoRowById(id);
     if (!fund) {
       return new NextResponse(null, { status: 404 });
     }
@@ -92,7 +131,10 @@ export async function GET(req: NextRequest) {
     }
 
     const ct =
-      upstream.headers.get("content-type")?.split(";")[0]?.trim() || "application/octet-stream";
+      upstream.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
+    if (!ALLOWED_IMAGE_CONTENT_TYPES.has(ct)) {
+      return new NextResponse(null, { status: 502 });
+    }
 
     return new NextResponse(buf, {
       status: 200,

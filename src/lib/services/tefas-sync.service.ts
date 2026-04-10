@@ -67,6 +67,56 @@ function getDistinctHistorySessions(
   return [...sessions.values()].sort((a, b) => b.sessionDate.getTime() - a.sessionDate.getTime());
 }
 
+type ExistingSyncFundRow = {
+  id: string;
+  code: string;
+  lastPrice: number;
+  previousPrice: number;
+  dailyReturn: number;
+};
+
+type RecentSyncHistoryRow = {
+  id: string;
+  fundId: string;
+  date: Date;
+  price: number;
+};
+
+async function loadExistingFundsForSync(codes: string[]): Promise<Map<string, ExistingSyncFundRow>> {
+  if (codes.length === 0) return new Map();
+
+  const rows = await prisma.fund.findMany({
+    where: { code: { in: codes } },
+    select: { id: true, code: true, lastPrice: true, previousPrice: true, dailyReturn: true },
+  });
+
+  return new Map(rows.map((row) => [row.code, row]));
+}
+
+async function loadRecentHistoryForSync(
+  fundIds: string[],
+  sessionDayStart: Date
+): Promise<Map<string, RecentSyncHistoryRow[]>> {
+  if (fundIds.length === 0) return new Map();
+
+  const rows = await prisma.fundPriceHistory.findMany({
+    where: {
+      fundId: { in: fundIds },
+      date: { gte: new Date(sessionDayStart.getTime() - 7 * DAY_MS) },
+    },
+    orderBy: [{ fundId: "asc" }, { date: "desc" }],
+    select: { id: true, fundId: true, date: true, price: true },
+  });
+
+  const map = new Map<string, RecentSyncHistoryRow[]>();
+  for (const row of rows) {
+    const bucket = map.get(row.fundId) ?? [];
+    bucket.push(row);
+    map.set(row.fundId, bucket);
+  }
+  return map;
+}
+
 /**
  * Günlük %: TEFAS sütunu → satır (önceki/son fiyat) → history’de önceki gün → DB’deki son kapanış.
  * UI ile uyum için |%| > 100 sapmaları 0 sayılır (badge ile aynı eşik).
@@ -469,6 +519,11 @@ export async function runTefasSync(options?: {
   const now = new Date();
   const parsedSession = "date" in payload && payload.date ? parseTefasSessionDate(payload.date) : null;
   const sessionDayStart = startOfUtcDay(parsedSession ?? now);
+  const existingFundsByCode = await loadExistingFundsForSync(payload.rows.map((row) => row.code));
+  const recentHistoryByFundId = await loadRecentHistoryForSync(
+    [...new Set([...existingFundsByCode.values()].map((row) => row.id))],
+    sessionDayStart
+  );
 
   let created = 0;
   let updatedRows = 0;
@@ -481,24 +536,13 @@ export async function runTefasSync(options?: {
     const slice = rows.slice(i, i + CHUNK);
     await prisma.$transaction(async (tx) => {
       for (const r of slice) {
-        const existing = await tx.fund.findUnique({
-          where: { code: r.code },
-          select: { id: true, lastPrice: true, previousPrice: true, dailyReturn: true },
-        });
+        const existing = existingFundsByCode.get(r.code) ?? null;
         const dbPreviousClose = existing?.lastPrice ?? 0;
 
         let historyPreviousPrice = 0;
         let sameSessionPrice = 0;
         if (existing?.id) {
-          const recentHistory = await tx.fundPriceHistory.findMany({
-            where: {
-              fundId: existing.id,
-              date: { gte: new Date(sessionDayStart.getTime() - 7 * DAY_MS) },
-            },
-            orderBy: { date: "desc" },
-            take: 8,
-            select: { id: true, date: true, price: true },
-          });
+          const recentHistory = recentHistoryByFundId.get(existing.id) ?? [];
           const sessions = getDistinctHistorySessions(recentHistory);
           sameSessionPrice =
             sessions.find((session) => sameUtcDay(session.sessionDate, sessionDayStart))?.price ?? 0;
@@ -546,7 +590,16 @@ export async function runTefasSync(options?: {
           },
         });
         if (existing) updatedRows += 1;
-        else created += 1;
+        else {
+          created += 1;
+          existingFundsByCode.set(r.code, {
+            id: fund.id,
+            code: r.code,
+            lastPrice: r.lastPrice,
+            previousPrice,
+            dailyReturn,
+          });
+        }
 
         await tx.fundPriceHistory.upsert({
           where: { fundId_date: { fundId: fund.id, date: sessionDayStart } },
@@ -565,6 +618,17 @@ export async function runTefasSync(options?: {
             investorCount: r.investorCount,
           },
         });
+
+        if (fund.id) {
+          const currentHistory = recentHistoryByFundId.get(fund.id) ?? [];
+          currentHistory.unshift({
+            id: `${fund.id}:${sessionDayStart.toISOString()}`,
+            fundId: fund.id,
+            date: sessionDayStart,
+            price: r.lastPrice,
+          });
+          recentHistoryByFundId.set(fund.id, currentHistory.slice(0, 12));
+        }
       }
     }, txOpts);
   }

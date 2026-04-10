@@ -9,6 +9,20 @@ import { publicFundLogoUrlFromManifest } from "@/lib/fund-logos-manifest";
 
 type LogoRule = { needle: string; logoUrl: string };
 
+function sanitizeStoredLogoUrl(raw: string | null | undefined): string | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  if (value.startsWith("/")) return null;
+  if (value.startsWith("data:") || value.startsWith("blob:")) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * İlk eşleşen kazanır. Daha spesifik ifadeler (ör. DENİZBANK PORTFÖY) üstte olmalı.
  */
@@ -19,6 +33,12 @@ const PORTFOLIO_COMPANY_RULES: LogoRule[] = [
   { needle: "KUVEYT TURK", logoUrl: "https://www.kuveytturkportfoy.com.tr/Content/images/favicon/apple-touch-icon.png" },
   { needle: "PUSULA PORTFÖY", logoUrl: "https://www.pusulaportfoy.com.tr/Content/images/logo/pusula-logo-2026-2.png" },
   { needle: "PUSULA PORTFOY", logoUrl: "https://www.pusulaportfoy.com.tr/Content/images/logo/pusula-logo-2026-2.png" },
+  { needle: "PARDUS PORTFÖY", logoUrl: "https://www.google.com/s2/favicons?domain=pardusportfoy.com.tr&sz=256" },
+  { needle: "PARDUS PORTFOY", logoUrl: "https://www.google.com/s2/favicons?domain=pardusportfoy.com.tr&sz=256" },
+  { needle: "ALLBATROSS PORTFÖY", logoUrl: "https://www.google.com/s2/favicons?domain=allbatrossportfoy.com.tr&sz=256" },
+  { needle: "ALLBATROSS PORTFOY", logoUrl: "https://www.google.com/s2/favicons?domain=allbatrossportfoy.com.tr&sz=256" },
+  { needle: "AZİMUT PORTFÖY", logoUrl: "https://www.google.com/s2/favicons?domain=azimutportfoy.com.tr&sz=256" },
+  { needle: "AZIMUT PORTFOY", logoUrl: "https://www.google.com/s2/favicons?domain=azimutportfoy.com.tr&sz=256" },
 
   { needle: "DENİZBANK PORTFÖY", logoUrl: "https://www.denizportfoy.com/asset/img/denizportfoy-header-logo.png" },
   { needle: "DENIZBANK PORTFOY", logoUrl: "https://www.denizportfoy.com/asset/img/denizportfoy-header-logo.png" },
@@ -28,6 +48,18 @@ const PORTFOLIO_COMPANY_RULES: LogoRule[] = [
   { needle: "STANDARD CHARTERED", logoUrl: "https://www.google.com/s2/favicons?domain=standardchartered.co.uk&sz=256" },
   { needle: "SCHRODERS", logoUrl: "https://www.google.com/s2/favicons?domain=schroders.com&sz=256" },
   { needle: "ALLIANZ", logoUrl: "https://www.google.com/s2/favicons?domain=allianz.com&sz=256" },
+  { needle: "TÜRKİYE HAYAT VE EMEKLİLİK", logoUrl: "https://www.google.com/s2/favicons?domain=turkiyehayatemeklilik.com.tr&sz=256" },
+  { needle: "TURKIYE HAYAT VE EMEKLILIK", logoUrl: "https://www.google.com/s2/favicons?domain=turkiyehayatemeklilik.com.tr&sz=256" },
+  { needle: "AGESA HAYAT VE EMEKLİLİK", logoUrl: "https://www.google.com/s2/favicons?domain=agesa.com.tr&sz=256" },
+  { needle: "AGESA HAYAT VE EMEKLILIK", logoUrl: "https://www.google.com/s2/favicons?domain=agesa.com.tr&sz=256" },
+  { needle: "ANADOLU HAYAT EMEKLİLİK", logoUrl: "https://www.google.com/s2/favicons?domain=anadoluhayat.com.tr&sz=256" },
+  { needle: "ANADOLU HAYAT EMEKLILIK", logoUrl: "https://www.google.com/s2/favicons?domain=anadoluhayat.com.tr&sz=256" },
+  { needle: "GARANTİ EMEKLİLİK VE HAYAT", logoUrl: "https://www.garantibbvaemeklilik.com.tr/apple-touch-icon-180x180.png" },
+  { needle: "GARANTI EMEKLILIK VE HAYAT", logoUrl: "https://www.garantibbvaemeklilik.com.tr/apple-touch-icon-180x180.png" },
+  { needle: "KATILIM EMEKLİLİK VE HAYAT", logoUrl: "https://www.google.com/s2/favicons?domain=katilimemeklilik.com.tr&sz=256" },
+  { needle: "KATILIM EMEKLILIK VE HAYAT", logoUrl: "https://www.google.com/s2/favicons?domain=katilimemeklilik.com.tr&sz=256" },
+  { needle: "ZURICH YAŞAM VE EMEKLİLİK", logoUrl: "https://www.google.com/s2/favicons?domain=zurich.com.tr&sz=256" },
+  { needle: "ZURICH YAŞAM VE EMEKLILIK", logoUrl: "https://www.google.com/s2/favicons?domain=zurich.com.tr&sz=256" },
   { needle: "UNİCREDİT", logoUrl: "https://www.google.com/s2/favicons?domain=unicreditgroup.eu&sz=256" },
   { needle: "UNICREDIT", logoUrl: "https://www.google.com/s2/favicons?domain=unicreditgroup.eu&sz=256" },
   { needle: "HSBC", logoUrl: "https://www.hsbc.com/apple-touch-icon.png" },
@@ -64,6 +96,10 @@ const PORTFOLIO_COMPANY_RULES: LogoRule[] = [
 
   { needle: "TEB PORTFÖY", logoUrl: "https://www.tebportfoy.com.tr/_assets/img/logo.svg" },
   { needle: "TEB PORTFOY", logoUrl: "https://www.tebportfoy.com.tr/_assets/img/logo.svg" },
+  { needle: "TERA PORTFÖY", logoUrl: "https://www.terayatirim.com/dosyalar/site/logo.svg" },
+  { needle: "TERA PORTFOY", logoUrl: "https://www.terayatirim.com/dosyalar/site/logo.svg" },
+  { needle: "HEDEF PORTFÖY", logoUrl: "https://www.google.com/s2/favicons?domain=hedefportfoy.com.tr&sz=256" },
+  { needle: "HEDEF PORTFOY", logoUrl: "https://www.google.com/s2/favicons?domain=hedefportfoy.com.tr&sz=256" },
 
   { needle: "FİBA PORTFÖY", logoUrl: "https://cdn.fibabanka.com.tr/ResourcePackages/Fibabanka/assets/img/fb-logo.png" },
   { needle: "FIBA PORTFOY", logoUrl: "https://cdn.fibabanka.com.tr/ResourcePackages/Fibabanka/assets/img/fb-logo.png" },
@@ -95,6 +131,14 @@ const PORTFOLIO_COMPANY_RULES: LogoRule[] = [
   { needle: "INFO PORTFÖY", logoUrl: "https://www.infoyatirim.com/assets/img/logo-transparent.svg" },
   { needle: "INFO PORTFOY", logoUrl: "https://www.infoyatirim.com/assets/img/logo-transparent.svg" },
 ];
+
+function findPortfolioCompanyRuleLogo(fundName: string): string | null {
+  const haystack = fundName.toLocaleUpperCase("tr-TR");
+  for (const { needle, logoUrl } of PORTFOLIO_COMPANY_RULES) {
+    if (haystack.includes(needle)) return logoUrl;
+  }
+  return null;
+}
 
 /** Kurallardaki ve Google s2 çıkış hostları — proxy yalnızca bunlara (veya güvenli DB URL’sine) gider. */
 const CURATED_LOGO_HOSTS = new Set<string>();
@@ -172,7 +216,14 @@ export function getFundLogoUrlForUi(
 ): string | null {
   const local = publicFundLogoUrlFromManifest(code);
   if (local) return local;
-  return fundLogoProxyUrlForFundId(fundId, storedUrl, fundName);
+  // DB erişimi gerekmesin: UI zaten isim + (varsa) storedUrl biliyor.
+  // Bu sayede Prisma / Fund lookup patlasa bile logolar render edebilir.
+  const proxy = fundLogoProxyPathLegacy(storedUrl, fundName);
+  if (proxy) return proxy;
+  // Legacy resolve edemiyorsa id path'i de resolve edemez (storedUrl yok + rule yok).
+  // Güvenli fallback: null.
+  void fundId; // future: keep signature stable
+  return null;
 }
 
 /** Eski `n`+`s` sorgu parametreli yol (yedek / doğrudan test). */
@@ -182,8 +233,8 @@ export function fundLogoProxyPathLegacy(
 ): string | null {
   if (!resolveFundLogoUrl(storedUrl, fundName)) return null;
   const q = new URLSearchParams();
-  q.set("n", fundName);
-  q.set("s", storedUrl?.trim() ?? "");
+  q.set("n", fundName.trim().slice(0, 180));
+  q.set("s", (storedUrl?.trim() ?? "").slice(0, 1000));
   return `/api/fund-logo?${q.toString()}`;
 }
 
@@ -191,11 +242,5 @@ export function resolveFundLogoUrl(
   storedUrl: string | null | undefined,
   fundName: string
 ): string | null {
-  const t = storedUrl?.trim();
-  if (t) return t;
-  const haystack = fundName.toLocaleUpperCase("tr-TR");
-  for (const { needle, logoUrl } of PORTFOLIO_COMPANY_RULES) {
-    if (haystack.includes(needle)) return logoUrl;
-  }
-  return null;
+  return sanitizeStoredLogoUrl(storedUrl) ?? findPortfolioCompanyRuleLogo(fundName);
 }

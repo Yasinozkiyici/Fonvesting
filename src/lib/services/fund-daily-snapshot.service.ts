@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import {
@@ -7,6 +8,7 @@ import {
   calculateAlpha,
   calculateFinalScore,
   calculateNormalizedScoresExtended,
+  compareRankedFunds,
   determineRiskLevel,
   type FundMetrics,
   type FundScaleFields,
@@ -19,14 +21,15 @@ import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import { getCachedUsdTryEurTry, mergeSnapshotFx } from "@/lib/services/exchange-rates.service";
 import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-types";
+import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Günlük snapshot satırları: ~2 yıl tutulur (eski günler silinir). */
-const SNAPSHOT_RETENTION_DAYS = 730;
+/** Günlük snapshot satırları: 3 yıl tutulur (eski günler silinir). */
+const SNAPSHOT_RETENTION_DAYS = 1095;
 const HISTORY_BATCH = 4000;
 const SPARKLINE_POINTS = 7;
-/** Metrik / skor için yüklenecek fiyat geçmişi: ~2 yıl + tampon. */
-export const FUND_PRICE_HISTORY_LOOKBACK_DAYS = 760;
+/** Metrik / skor için yüklenecek fiyat geçmişi: 3 yıl + küçük tampon. */
+export const FUND_PRICE_HISTORY_LOOKBACK_DAYS = 1125;
 const RETURN_LOOKBACK_DAYS = FUND_PRICE_HISTORY_LOOKBACK_DAYS;
 
 const EMPTY_METRICS: FundMetrics = {
@@ -97,11 +100,63 @@ type SnapshotRecord = {
   finalScoreStable: number;
 };
 
+type SupabaseSnapshotDateRow = {
+  date: string;
+  updatedAt?: string;
+};
+
+type SupabaseCategoryRow = {
+  id: string;
+  code: string;
+  name: string;
+  color: string | null;
+  description: string | null;
+};
+
+type SupabaseFundTypeRow = {
+  id: string;
+  code: number;
+  name: string;
+  description: string | null;
+};
+
+type SupabaseAggregateSnapshotRow = {
+  categoryCode?: string | null;
+  categoryName?: string | null;
+  fundTypeCode?: number | null;
+  fundTypeName?: string | null;
+  dailyReturn: number;
+  portfolioSize: number;
+};
+
+type SupabaseMarketSnapshotRow = {
+  date: string;
+  totalFundCount: number;
+  totalPortfolioSize: number;
+  totalInvestorCount: number;
+  avgDailyReturn: number;
+  advancers: number;
+  decliners: number;
+  unchanged: number;
+  usdTry: number | null;
+  eurTry: number | null;
+};
+
 export type CategorySnapshotSummary = {
   id: string;
   code: string;
   name: string;
   color: string | null;
+  description: string | null;
+  fundCount: number;
+  avgDailyReturn: number;
+  totalPortfolioSize: number;
+};
+
+export type FundTypeSnapshotSummary = {
+  id: string;
+  code: number;
+  name: string;
   description: string | null;
   fundCount: number;
   avgDailyReturn: number;
@@ -142,11 +197,20 @@ export type MarketSnapshotSummaryPayload = {
   };
 };
 
+const SNAPSHOT_SUMMARY_CACHE_SEC = 300;
+
+export type FundHistoryPoint = {
+  date: Date;
+  price: number;
+  portfolioSize: number;
+  investorCount: number;
+};
+
 export async function loadPriceHistoryByFundId(
   fundIds: string[],
   fromDate: Date
-): Promise<Map<string, Array<{ date: Date; price: number }>>> {
-  const map = new Map<string, Array<{ date: Date; price: number }>>();
+): Promise<Map<string, FundHistoryPoint[]>> {
+  const map = new Map<string, FundHistoryPoint[]>();
   if (fundIds.length === 0) return map;
 
   for (let i = 0; i < fundIds.length; i += HISTORY_BATCH) {
@@ -157,12 +221,17 @@ export async function loadPriceHistoryByFundId(
         date: { gte: fromDate },
       },
       orderBy: [{ fundId: "asc" }, { date: "asc" }],
-      select: { fundId: true, date: true, price: true },
+      select: { fundId: true, date: true, price: true, portfolioSize: true, investorCount: true },
     });
 
     for (const row of rows) {
       const arr = map.get(row.fundId) ?? [];
-      arr.push({ date: row.date, price: row.price });
+      arr.push({
+        date: row.date,
+        price: row.price,
+        portfolioSize: row.portfolioSize,
+        investorCount: row.investorCount,
+      });
       map.set(row.fundId, arr);
     }
   }
@@ -285,9 +354,15 @@ function scoreField(mode: RankingMode): keyof Pick<
   return "finalScoreBest";
 }
 
-function buildSnapshotRecords(fundRows: FundRow[], historyByFund: Map<string, Array<{ date: Date; price: number }>>): SnapshotRecord[] {
+function buildSnapshotRecords(fundRows: FundRow[], historyByFund: Map<string, FundHistoryPoint[]>): SnapshotRecord[] {
   const computed = fundRows.map((fund) => {
-    const performance = deriveFundPerformanceFromHistory(historyByFund.get(fund.id) ?? []);
+    const historyRows = historyByFund.get(fund.id) ?? [];
+    const performance = deriveFundPerformanceFromHistory(historyRows);
+    const latestHistory = historyRows[historyRows.length - 1];
+    const portfolioSize =
+      latestHistory && Number.isFinite(latestHistory.portfolioSize) ? latestHistory.portfolioSize : fund.portfolioSize;
+    const investorCount =
+      latestHistory && Number.isFinite(latestHistory.investorCount) ? latestHistory.investorCount : fund.investorCount;
     const pricePoints = performance.pricePoints.length
       ? performance.pricePoints
       : fund.lastPrice > 0
@@ -300,12 +375,12 @@ function buildSnapshotRecords(fundRows: FundRow[], historyByFund: Map<string, Ar
       metrics.totalReturn = performance.dailyReturn;
     }
 
-    return { fund, metrics, pricePoints, performance };
+    return { fund, metrics, pricePoints, performance, portfolioSize, investorCount };
   });
 
   const scales: FundScaleFields[] = computed.map((item) => ({
-    portfolioSize: item.fund.portfolioSize,
-    investorCount: item.fund.investorCount,
+    portfolioSize: item.portfolioSize,
+    investorCount: item.investorCount,
     yearlyReturn: item.performance.yearlyReturn,
   }));
   const extCtx = buildExtendedNormalizationContext(
@@ -333,8 +408,8 @@ function buildSnapshotRecords(fundRows: FundRow[], historyByFund: Map<string, Ar
       dailyReturn: performance.dailyReturn,
       monthlyReturn: performance.monthlyReturn,
       yearlyReturn: performance.yearlyReturn,
-      portfolioSize: fund.portfolioSize,
-      investorCount: fund.investorCount,
+      portfolioSize: computed[i]!.portfolioSize,
+      investorCount: computed[i]!.investorCount,
       alpha,
       sparkline: performance.sparkline,
       scores,
@@ -383,8 +458,6 @@ function snapshotRowToScoredFund(row: {
     logoUrl: row.logoUrl,
     lastPrice: row.lastPrice,
     dailyReturn: row.dailyReturn,
-    monthlyReturn: row.monthlyReturn,
-    yearlyReturn: row.yearlyReturn,
     portfolioSize: row.portfolioSize,
     investorCount: row.investorCount,
     category: row.categoryCode && row.categoryName ? { code: row.categoryCode, name: row.categoryName } : null,
@@ -396,11 +469,6 @@ function snapshotRowToScoredFund(row: {
           }
         : null,
     finalScore: row[finalField],
-    riskLevel: row.riskLevel as RiskLevel,
-    scores: row.scores as unknown as NormalizedScores,
-    metrics: row.metrics as unknown as FundMetrics,
-    alpha: row.alpha,
-    sparkline: row.sparkline as unknown as number[],
   };
 }
 
@@ -434,46 +502,52 @@ export async function rebuildFundDailySnapshots(snapshotDate: Date): Promise<{ w
   const records = buildSnapshotRecords(fundRows, historyByFund);
   const retentionCutoff = new Date(snapshotDate.getTime() - SNAPSHOT_RETENTION_DAYS * DAY_MS);
 
-  await prisma.$transaction(async (tx) => {
-    await tx.fundDailySnapshot.deleteMany({ where: { date: snapshotDate } });
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.fundDailySnapshot.deleteMany({ where: { date: snapshotDate } });
 
-    for (let i = 0; i < records.length; i += 250) {
-      const slice = records.slice(i, i + 250);
-      await tx.fundDailySnapshot.createMany({
-        data: slice.map((row) => ({
-          date: snapshotDate,
-          fundId: row.fundId,
-          code: row.code,
-          name: row.name,
-          shortName: row.shortName,
-          logoUrl: row.logoUrl,
-          categoryCode: row.categoryCode,
-          categoryName: row.categoryName,
-          fundTypeCode: row.fundTypeCode,
-          fundTypeName: row.fundTypeName,
-          riskLevel: row.riskLevel,
-          lastPrice: row.lastPrice,
-          dailyReturn: row.dailyReturn,
-          monthlyReturn: row.monthlyReturn,
-          yearlyReturn: row.yearlyReturn,
-          portfolioSize: row.portfolioSize,
-          investorCount: row.investorCount,
-          alpha: row.alpha,
-          sparkline: toJson(row.sparkline),
-          scores: toJson(row.scores),
-          metrics: toJson(row.metrics),
-          finalScoreBest: row.finalScoreBest,
-          finalScoreLowRisk: row.finalScoreLowRisk,
-          finalScoreHighReturn: row.finalScoreHighReturn,
-          finalScoreStable: row.finalScoreStable,
-        })),
+      for (let i = 0; i < records.length; i += 250) {
+        const slice = records.slice(i, i + 250);
+        await tx.fundDailySnapshot.createMany({
+          data: slice.map((row) => ({
+            date: snapshotDate,
+            fundId: row.fundId,
+            code: row.code,
+            name: row.name,
+            shortName: row.shortName,
+            logoUrl: row.logoUrl,
+            categoryCode: row.categoryCode,
+            categoryName: row.categoryName,
+            fundTypeCode: row.fundTypeCode,
+            fundTypeName: row.fundTypeName,
+            riskLevel: row.riskLevel,
+            lastPrice: row.lastPrice,
+            dailyReturn: row.dailyReturn,
+            monthlyReturn: row.monthlyReturn,
+            yearlyReturn: row.yearlyReturn,
+            portfolioSize: row.portfolioSize,
+            investorCount: row.investorCount,
+            alpha: row.alpha,
+            sparkline: toJson(row.sparkline),
+            scores: toJson(row.scores),
+            metrics: toJson(row.metrics),
+            finalScoreBest: row.finalScoreBest,
+            finalScoreLowRisk: row.finalScoreLowRisk,
+            finalScoreHighReturn: row.finalScoreHighReturn,
+            finalScoreStable: row.finalScoreStable,
+          })),
+        });
+      }
+
+      await tx.fundDailySnapshot.deleteMany({
+        where: { date: { lt: retentionCutoff } },
       });
+    },
+    {
+      maxWait: 15_000,
+      timeout: 120_000,
     }
-
-    await tx.fundDailySnapshot.deleteMany({
-      where: { date: { lt: retentionCutoff } },
-    });
-  });
+  );
 
   return { written: records.length };
 }
@@ -548,28 +622,51 @@ export async function getScoresPayloadFromDailySnapshot(
   const funds = rows
     .map((row, i) => {
       const scores = calculateNormalizedScoresExtended(metricsList[i]!, extCtx, scales[i]!);
-      return snapshotRowToScoredFund(
-        {
-          ...row,
-          scores: scores as unknown as (typeof rows)[number]["scores"],
-          finalScoreBest: calculateFinalScore(scores, "BEST"),
-          finalScoreLowRisk: calculateFinalScore(scores, "LOW_RISK"),
-          finalScoreHighReturn: calculateFinalScore(scores, "HIGH_RETURN"),
-          finalScoreStable: calculateFinalScore(scores, "STABLE"),
-        },
-        mode
-      );
+      return {
+        item: snapshotRowToScoredFund(
+          {
+            ...row,
+            scores: scores as unknown as (typeof rows)[number]["scores"],
+            finalScoreBest: calculateFinalScore(scores, "BEST"),
+            finalScoreLowRisk: calculateFinalScore(scores, "LOW_RISK"),
+            finalScoreHighReturn: calculateFinalScore(scores, "HIGH_RETURN"),
+            finalScoreStable: calculateFinalScore(scores, "STABLE"),
+          },
+          mode
+        ),
+        code: row.code,
+        scores,
+        yearlyReturn: row.yearlyReturn,
+        monthlyReturn: row.monthlyReturn,
+        metrics: metricsList[i]!,
+      };
     })
-    .sort((a, b) => b.finalScore - a.finalScore);
+    .sort((a, b) =>
+      compareRankedFunds(mode, {
+        code: a.code,
+        finalScore: a.item.finalScore,
+        scores: a.scores,
+        yearlyReturn: a.yearlyReturn,
+        monthlyReturn: a.monthlyReturn,
+        metrics: a.metrics,
+      }, {
+        code: b.code,
+        finalScore: b.item.finalScore,
+        scores: b.scores,
+        yearlyReturn: b.yearlyReturn,
+        monthlyReturn: b.monthlyReturn,
+        metrics: b.metrics,
+      })
+    );
 
   return {
     mode,
     total: funds.length,
-    funds,
+    funds: funds.map((entry) => entry.item),
   };
 }
 
-export async function getCategorySummariesFromDailySnapshot(): Promise<CategorySnapshotSummary[]> {
+async function computeCategorySummariesFromDailySnapshot(): Promise<CategorySnapshotSummary[]> {
   try {
     const latest = await prisma.fundDailySnapshot.findFirst({
       orderBy: { date: "desc" },
@@ -577,27 +674,29 @@ export async function getCategorySummariesFromDailySnapshot(): Promise<CategoryS
     });
     if (!latest) return [];
 
-    const [categories, rows] = await Promise.all([
+    const [categories, grouped] = await Promise.all([
       prisma.fundCategory.findMany({ orderBy: { name: "asc" } }),
-      prisma.fundDailySnapshot.findMany({
+      prisma.fundDailySnapshot.groupBy({
+        by: ["categoryCode"],
         where: { date: latest.date },
-        select: {
-          categoryCode: true,
-          dailyReturn: true,
-          portfolioSize: true,
-        },
+        _count: { _all: true },
+        _avg: { dailyReturn: true },
+        _sum: { portfolioSize: true },
       }),
     ]);
 
-    const stats = new Map<string, { fundCount: number; sumDailyReturn: number; totalPortfolioSize: number }>();
-    for (const row of rows) {
-      if (!row.categoryCode) continue;
-      const current = stats.get(row.categoryCode) ?? { fundCount: 0, sumDailyReturn: 0, totalPortfolioSize: 0 };
-      current.fundCount += 1;
-      current.sumDailyReturn += row.dailyReturn;
-      current.totalPortfolioSize += row.portfolioSize;
-      stats.set(row.categoryCode, current);
-    }
+    const stats = new Map(
+      grouped
+        .filter((row): row is typeof row & { categoryCode: string } => typeof row.categoryCode === "string" && row.categoryCode.length > 0)
+        .map((row) => [
+          row.categoryCode,
+          {
+            fundCount: row._count._all,
+            avgDailyReturn: Number((row._avg.dailyReturn ?? 0).toFixed(4)),
+            totalPortfolioSize: row._sum.portfolioSize ?? 0,
+          },
+        ])
+    );
 
     return categories.map((category) => {
       const current = stats.get(category.code);
@@ -608,7 +707,7 @@ export async function getCategorySummariesFromDailySnapshot(): Promise<CategoryS
         color: category.color,
         description: category.description,
         fundCount: current?.fundCount ?? 0,
-        avgDailyReturn: current?.fundCount ? Number((current.sumDailyReturn / current.fundCount).toFixed(4)) : 0,
+        avgDailyReturn: current?.avgDailyReturn ?? 0,
         totalPortfolioSize: current?.totalPortfolioSize ?? 0,
       };
     });
@@ -655,7 +754,265 @@ export async function getCategorySummariesFromDailySnapshot(): Promise<CategoryS
   }
 }
 
-export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapshotSummaryPayload | null> {
+async function computeCategorySummariesFromSupabaseRest(): Promise<CategorySnapshotSummary[]> {
+  if (!hasSupabaseRestConfig()) throw new Error("supabase_rest_not_configured");
+
+  const [categories, latestRows] = await Promise.all([
+    fetchSupabaseRestJson<SupabaseCategoryRow[]>(
+      "FundCategory?select=id,code,name,color,description&order=name.asc",
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+    fetchSupabaseRestJson<SupabaseSnapshotDateRow[]>(
+      "FundDailySnapshot?select=date&order=date.desc&limit=1",
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+  ]);
+  const latestDate = latestRows[0]?.date;
+  if (!latestDate) {
+    return categories.map((category) => ({
+      id: category.id,
+      code: category.code,
+      name: category.name,
+      color: category.color,
+      description: category.description,
+      fundCount: 0,
+      avgDailyReturn: 0,
+      totalPortfolioSize: 0,
+    }));
+  }
+
+  const rows = await fetchSupabaseRestJson<SupabaseAggregateSnapshotRow[]>(
+    `FundDailySnapshot?select=categoryCode,categoryName,dailyReturn,portfolioSize&date=eq.${latestDate}&limit=3000`,
+    { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+  );
+
+  const stats = new Map<string, { fundCount: number; dailyReturnTotal: number; totalPortfolioSize: number }>();
+  for (const row of rows) {
+    if (!row.categoryCode) continue;
+    const current = stats.get(row.categoryCode) ?? { fundCount: 0, dailyReturnTotal: 0, totalPortfolioSize: 0 };
+    current.fundCount += 1;
+    current.dailyReturnTotal += row.dailyReturn ?? 0;
+    current.totalPortfolioSize += row.portfolioSize ?? 0;
+    stats.set(row.categoryCode, current);
+  }
+
+  return categories.map((category) => {
+    const current = stats.get(category.code);
+    return {
+      id: category.id,
+      code: category.code,
+      name: category.name,
+      color: category.color,
+      description: category.description,
+      fundCount: current?.fundCount ?? 0,
+      avgDailyReturn: current && current.fundCount > 0 ? Number((current.dailyReturnTotal / current.fundCount).toFixed(4)) : 0,
+      totalPortfolioSize: current?.totalPortfolioSize ?? 0,
+    };
+  });
+}
+
+export async function getCategorySummariesFromDailySnapshot(): Promise<CategorySnapshotSummary[]> {
+  const loadCached = unstable_cache(
+    async () => {
+      if (hasSupabaseRestConfig()) {
+        try {
+          return await computeCategorySummariesFromSupabaseRest();
+        } catch (error) {
+          console.error("[fund-daily-snapshot] supabase-rest category summaries failed", error);
+        }
+      }
+      return computeCategorySummariesFromDailySnapshot();
+    },
+    ["fund-daily-snapshot-category-summaries-v3"],
+    { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+  );
+  return loadCached();
+}
+
+export async function getCategorySummariesFromDailySnapshotSafe(): Promise<CategorySnapshotSummary[]> {
+  try {
+    return await getCategorySummariesFromDailySnapshot();
+  } catch (error) {
+    console.error("[fund-daily-snapshot] category summaries failed", error);
+    return [];
+  }
+}
+
+async function computeFundTypeSummariesFromDailySnapshot(): Promise<FundTypeSnapshotSummary[]> {
+  try {
+    const latest = await prisma.fundDailySnapshot.findFirst({
+      orderBy: { date: "desc" },
+      select: { date: true },
+    });
+    if (!latest) return [];
+
+    const [fundTypes, grouped] = await Promise.all([
+      prisma.fundType.findMany({
+        orderBy: { code: "asc" },
+        select: { id: true, code: true, name: true, description: true },
+      }),
+      prisma.fundDailySnapshot.groupBy({
+        by: ["fundTypeCode"],
+        where: { date: latest.date },
+        _count: { _all: true },
+        _avg: { dailyReturn: true },
+        _sum: { portfolioSize: true },
+      }),
+    ]);
+
+    const stats = new Map(
+      grouped
+        .filter((row): row is typeof row & { fundTypeCode: number } => row.fundTypeCode != null)
+        .map((row) => [
+          row.fundTypeCode,
+          {
+            fundCount: row._count._all,
+            avgDailyReturn: Number((row._avg.dailyReturn ?? 0).toFixed(4)),
+            totalPortfolioSize: row._sum.portfolioSize ?? 0,
+          },
+        ])
+    );
+
+    return fundTypes.map((fundType) => {
+      const current = stats.get(fundType.code);
+      return {
+        id: fundType.id,
+        code: fundType.code,
+        name: fundTypeDisplayLabel(fundType),
+        description: fundType.description,
+        fundCount: current?.fundCount ?? 0,
+        avgDailyReturn: current?.avgDailyReturn ?? 0,
+        totalPortfolioSize: current?.totalPortfolioSize ?? 0,
+      };
+    });
+  } catch (error) {
+    if (!isRelationMissingError(error)) throw error;
+
+    const [fundTypes, byType] = await Promise.all([
+      prisma.fundType.findMany({
+        orderBy: { code: "asc" },
+        select: { id: true, code: true, name: true, description: true },
+      }),
+      prisma.fund.groupBy({
+        by: ["fundTypeId"],
+        where: { isActive: true },
+        _count: { _all: true },
+        _avg: { dailyReturn: true },
+        _sum: { portfolioSize: true },
+      }),
+    ]);
+
+    const stats = new Map(
+      byType
+        .filter((row): row is typeof row & { fundTypeId: string } => row.fundTypeId != null)
+        .map((row) => [
+          row.fundTypeId,
+          {
+            fundCount: row._count._all,
+            avgDailyReturn: Number((row._avg.dailyReturn ?? 0).toFixed(4)),
+            totalPortfolioSize: row._sum.portfolioSize ?? 0,
+          },
+        ])
+    );
+
+    return fundTypes.map((fundType) => {
+      const current = stats.get(fundType.id);
+      return {
+        id: fundType.id,
+        code: fundType.code,
+        name: fundTypeDisplayLabel(fundType),
+        description: fundType.description,
+        fundCount: current?.fundCount ?? 0,
+        avgDailyReturn: current?.avgDailyReturn ?? 0,
+        totalPortfolioSize: current?.totalPortfolioSize ?? 0,
+      };
+    });
+  }
+}
+
+async function computeFundTypeSummariesFromSupabaseRest(): Promise<FundTypeSnapshotSummary[]> {
+  if (!hasSupabaseRestConfig()) throw new Error("supabase_rest_not_configured");
+
+  const [fundTypes, latestRows] = await Promise.all([
+    fetchSupabaseRestJson<SupabaseFundTypeRow[]>(
+      "FundType?select=id,code,name,description&order=code.asc",
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+    fetchSupabaseRestJson<SupabaseSnapshotDateRow[]>(
+      "FundDailySnapshot?select=date&order=date.desc&limit=1",
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+  ]);
+  const latestDate = latestRows[0]?.date;
+  if (!latestDate) {
+    return fundTypes.map((fundType) => ({
+      id: fundType.id,
+      code: fundType.code,
+      name: fundTypeDisplayLabel(fundType),
+      description: fundType.description,
+      fundCount: 0,
+      avgDailyReturn: 0,
+      totalPortfolioSize: 0,
+    }));
+  }
+
+  const rows = await fetchSupabaseRestJson<SupabaseAggregateSnapshotRow[]>(
+    `FundDailySnapshot?select=fundTypeCode,fundTypeName,dailyReturn,portfolioSize&date=eq.${latestDate}&limit=3000`,
+    { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+  );
+
+  const stats = new Map<number, { fundCount: number; dailyReturnTotal: number; totalPortfolioSize: number }>();
+  for (const row of rows) {
+    if (row.fundTypeCode == null) continue;
+    const current = stats.get(row.fundTypeCode) ?? { fundCount: 0, dailyReturnTotal: 0, totalPortfolioSize: 0 };
+    current.fundCount += 1;
+    current.dailyReturnTotal += row.dailyReturn ?? 0;
+    current.totalPortfolioSize += row.portfolioSize ?? 0;
+    stats.set(row.fundTypeCode, current);
+  }
+
+  return fundTypes.map((fundType) => {
+    const current = stats.get(fundType.code);
+    return {
+      id: fundType.id,
+      code: fundType.code,
+      name: fundTypeDisplayLabel(fundType),
+      description: fundType.description,
+      fundCount: current?.fundCount ?? 0,
+      avgDailyReturn: current && current.fundCount > 0 ? Number((current.dailyReturnTotal / current.fundCount).toFixed(4)) : 0,
+      totalPortfolioSize: current?.totalPortfolioSize ?? 0,
+    };
+  });
+}
+
+export async function getFundTypeSummariesFromDailySnapshot(): Promise<FundTypeSnapshotSummary[]> {
+  const loadCached = unstable_cache(
+    async () => {
+      if (hasSupabaseRestConfig()) {
+        try {
+          return await computeFundTypeSummariesFromSupabaseRest();
+        } catch (error) {
+          console.error("[fund-daily-snapshot] supabase-rest fund type summaries failed", error);
+        }
+      }
+      return computeFundTypeSummariesFromDailySnapshot();
+    },
+    ["fund-daily-snapshot-fund-type-summaries-v3"],
+    { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+  );
+  return loadCached();
+}
+
+export async function getFundTypeSummariesFromDailySnapshotSafe(): Promise<FundTypeSnapshotSummary[]> {
+  try {
+    return await getFundTypeSummariesFromDailySnapshot();
+  } catch (error) {
+    console.error("[fund-daily-snapshot] fund type summaries failed", error);
+    return [];
+  }
+}
+
+async function computeMarketSummaryFromDailySnapshot(): Promise<MarketSnapshotSummaryPayload | null> {
   try {
     const latest = await prisma.fundDailySnapshot.findFirst({
       orderBy: { date: "desc" },
@@ -663,9 +1020,14 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
     });
     if (!latest) return null;
 
-    const [rows, marketSnapshot] = await Promise.all([
-      prisma.fundDailySnapshot.findMany({
+    const [marketSnapshot, topGainers, topLosers] = await Promise.all([
+      prisma.marketSnapshot.findUnique({
         where: { date: latest.date },
+      }),
+      prisma.fundDailySnapshot.findMany({
+        where: { date: latest.date, dailyReturn: { gt: 0 } },
+        orderBy: [{ dailyReturn: "desc" }, { portfolioSize: "desc" }],
+        take: 5,
         select: {
           code: true,
           name: true,
@@ -673,46 +1035,48 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
           lastPrice: true,
           dailyReturn: true,
           portfolioSize: true,
-          investorCount: true,
         },
       }),
-      prisma.marketSnapshot.findUnique({
-        where: { date: latest.date },
+      prisma.fundDailySnapshot.findMany({
+        where: { date: latest.date, dailyReturn: { lt: 0 } },
+        orderBy: [{ dailyReturn: "asc" }, { portfolioSize: "desc" }],
+        take: 5,
+        select: {
+          code: true,
+          name: true,
+          shortName: true,
+          lastPrice: true,
+          dailyReturn: true,
+          portfolioSize: true,
+        },
       }),
     ]);
 
-    const fundCount = rows.length;
-    const totalPortfolioSize = rows.reduce((sum, row) => sum + row.portfolioSize, 0);
-    const totalInvestorCount = rows.reduce((sum, row) => sum + row.investorCount, 0);
-    const advancers = rows.filter((row) => row.dailyReturn > 0).length;
-    const decliners = rows.filter((row) => row.dailyReturn < 0).length;
-    const unchanged = Math.max(0, fundCount - advancers - decliners);
-    const nonZeroReturns = rows.map((row) => row.dailyReturn).filter((value) => value !== 0);
-    const avgDailyReturn = nonZeroReturns.length
-      ? nonZeroReturns.reduce((sum, value) => sum + value, 0) / nonZeroReturns.length
-      : 0;
-
-    const topGainers = [...rows]
-      .filter((row) => row.dailyReturn > 0)
-      .sort((a, b) => b.dailyReturn - a.dailyReturn)
-      .slice(0, 5);
-
-    const topLosers = [...rows]
-      .filter((row) => row.dailyReturn < 0)
-      .sort((a, b) => a.dailyReturn - b.dailyReturn)
-      .slice(0, 5);
-
+    const summary = marketSnapshot ?? {
+      totalFundCount: 0,
+      totalPortfolioSize: 0,
+      totalInvestorCount: 0,
+      avgDailyReturn: 0,
+      advancers: 0,
+      decliners: 0,
+      unchanged: 0,
+      usdTry: null,
+      eurTry: null,
+    };
     const liveFx = await getCachedUsdTryEurTry();
     const fx = mergeSnapshotFx(marketSnapshot?.usdTry, marketSnapshot?.eurTry, liveFx);
 
     return {
-      summary: { avgDailyReturn, totalFundCount: fundCount },
-      fundCount,
-      totalPortfolioSize,
-      totalInvestorCount,
-      advancers,
-      decliners,
-      unchanged,
+      summary: {
+        avgDailyReturn: summary.avgDailyReturn,
+        totalFundCount: summary.totalFundCount,
+      },
+      fundCount: summary.totalFundCount,
+      totalPortfolioSize: summary.totalPortfolioSize,
+      totalInvestorCount: summary.totalInvestorCount,
+      advancers: summary.advancers,
+      decliners: summary.decliners,
+      unchanged: summary.unchanged,
       lastSyncedAt: latest.updatedAt.toISOString(),
       snapshotDate: latest.date.toISOString(),
       usdTry: fx.usdTry,
@@ -720,8 +1084,8 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
       topGainers,
       topLosers,
       formatted: {
-        totalPortfolioSize: formatTL(totalPortfolioSize),
-        totalInvestorCount: totalInvestorCount.toLocaleString("tr-TR"),
+        totalPortfolioSize: formatTL(summary.totalPortfolioSize),
+        totalInvestorCount: summary.totalInvestorCount.toLocaleString("tr-TR"),
       },
     };
   } catch (error) {
@@ -809,5 +1173,96 @@ export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapsho
         totalInvestorCount: totalInvestorCount.toLocaleString("tr-TR"),
       },
     };
+  }
+}
+
+async function computeMarketSummaryFromSupabaseRest(): Promise<MarketSnapshotSummaryPayload | null> {
+  if (!hasSupabaseRestConfig()) throw new Error("supabase_rest_not_configured");
+
+  const latestRows = await fetchSupabaseRestJson<SupabaseSnapshotDateRow[]>(
+    "FundDailySnapshot?select=date,updatedAt&order=date.desc,updatedAt.desc&limit=1",
+    { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+  );
+  const latest = latestRows[0];
+  if (!latest?.date) return null;
+
+  const [marketSnapshots, topGainers, topLosers] = await Promise.all([
+    fetchSupabaseRestJson<SupabaseMarketSnapshotRow[]>(
+      `MarketSnapshot?select=date,totalFundCount,totalPortfolioSize,totalInvestorCount,avgDailyReturn,advancers,decliners,unchanged,usdTry,eurTry&date=eq.${latest.date}&limit=1`,
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+    fetchSupabaseRestJson<MarketSnapshotSummaryPayload["topGainers"]>(
+      `FundDailySnapshot?select=code,name,shortName,lastPrice,dailyReturn,portfolioSize&date=eq.${latest.date}&dailyReturn=gt.0&order=dailyReturn.desc,portfolioSize.desc&limit=5`,
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+    fetchSupabaseRestJson<MarketSnapshotSummaryPayload["topLosers"]>(
+      `FundDailySnapshot?select=code,name,shortName,lastPrice,dailyReturn,portfolioSize&date=eq.${latest.date}&dailyReturn=lt.0&order=dailyReturn.asc,portfolioSize.desc&limit=5`,
+      { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+    ),
+  ]);
+
+  const summary = marketSnapshots[0] ?? {
+    date: latest.date,
+    totalFundCount: 0,
+    totalPortfolioSize: 0,
+    totalInvestorCount: 0,
+    avgDailyReturn: 0,
+    advancers: 0,
+    decliners: 0,
+    unchanged: 0,
+    usdTry: null,
+    eurTry: null,
+  };
+  const liveFx = await getCachedUsdTryEurTry();
+  const fx = mergeSnapshotFx(summary.usdTry, summary.eurTry, liveFx);
+
+  return {
+    summary: {
+      avgDailyReturn: summary.avgDailyReturn,
+      totalFundCount: summary.totalFundCount,
+    },
+    fundCount: summary.totalFundCount,
+    totalPortfolioSize: summary.totalPortfolioSize,
+    totalInvestorCount: summary.totalInvestorCount,
+    advancers: summary.advancers,
+    decliners: summary.decliners,
+    unchanged: summary.unchanged,
+    lastSyncedAt: latest.updatedAt ?? latest.date,
+    snapshotDate: latest.date,
+    usdTry: fx.usdTry,
+    eurTry: fx.eurTry,
+    topGainers,
+    topLosers,
+    formatted: {
+      totalPortfolioSize: formatTL(summary.totalPortfolioSize),
+      totalInvestorCount: summary.totalInvestorCount.toLocaleString("tr-TR"),
+    },
+  };
+}
+
+export async function getMarketSummaryFromDailySnapshot(): Promise<MarketSnapshotSummaryPayload | null> {
+  const loadCached = unstable_cache(
+    async () => {
+      if (hasSupabaseRestConfig()) {
+        try {
+          return await computeMarketSummaryFromSupabaseRest();
+        } catch (error) {
+          console.error("[fund-daily-snapshot] supabase-rest market summary failed", error);
+        }
+      }
+      return computeMarketSummaryFromDailySnapshot();
+    },
+    ["fund-daily-snapshot-market-summary-v3"],
+    { revalidate: SNAPSHOT_SUMMARY_CACHE_SEC }
+  );
+  return loadCached();
+}
+
+export async function getMarketSummaryFromDailySnapshotSafe(): Promise<MarketSnapshotSummaryPayload | null> {
+  try {
+    return await getMarketSummaryFromDailySnapshot();
+  } catch (error) {
+    console.error("[fund-daily-snapshot] market summary failed", error);
+    return null;
   }
 }

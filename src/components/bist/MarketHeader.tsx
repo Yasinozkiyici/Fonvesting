@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, BarChart3, Activity, DollarSign, Layers } from "lucide-react";
 
+const SHOW_CLIENT_ERRORS = process.env.NODE_ENV !== "production";
+
 interface MarketData {
   bist100: {
     value: number;
@@ -49,6 +51,8 @@ export default function MarketHeader() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchJson = async (url: string) => {
       const r = await fetch(url);
       const text = await r.text();
@@ -64,15 +68,25 @@ export default function MarketHeader() {
 
     Promise.all([fetchJson("/api/market"), fetchJson("/api/sectors")])
       .then(([marketData, sectorsData]) => {
+        if (cancelled) return;
         setData(marketData);
         setSectors(sectorsData);
         setError(null);
       })
       .catch((e) => {
-        console.error(e);
+        if (cancelled) return;
+        if (SHOW_CLIENT_ERRORS) {
+          console.error(e);
+        }
         setError(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {

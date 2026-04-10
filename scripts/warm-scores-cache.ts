@@ -9,16 +9,11 @@
  *   pnpm warm:scores
  *   pnpm db:docker:warm   (migrate + Docker URL ile warm)
  */
-import { config } from "dotenv";
-import path from "node:path";
+import "./load-env";
 import { Prisma } from "@prisma/client";
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 
-const cwd = process.cwd();
 const databaseUrlFromShell = process.env.DATABASE_URL;
-
-config({ path: path.join(cwd, ".env"), quiet: true });
-config({ path: path.join(cwd, ".env.local"), override: true, quiet: true });
 
 if (databaseUrlFromShell !== undefined && databaseUrlFromShell !== "") {
   process.env.DATABASE_URL = databaseUrlFromShell;

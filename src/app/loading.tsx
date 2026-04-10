@@ -6,7 +6,12 @@ import HomeMainSkeleton from "@/components/tefas/HomeMainSkeleton";
 export default function AppLoading() {
   return (
     <div className="relative isolate flex min-h-screen flex-col">
-      <div className="gradient-mesh" aria-hidden />
+      <div className="gradient-mesh" aria-hidden>
+        <div className="mesh-layer-1" />
+        <div className="mesh-layer-2" />
+        <div className="mesh-layer-3" />
+        <div className="noise" />
+      </div>
 
       <div className="relative z-10 flex min-h-screen flex-col">
         <Header />

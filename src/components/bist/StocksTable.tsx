@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useDeferredValue, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ChevronUp,
@@ -11,6 +11,16 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
+import {
+  fetchNormalizedJson,
+  normalizeCategoryOptions,
+  normalizeIndexOptions,
+  normalizeSparklineResponse,
+  normalizeStocksResponse,
+  type SparklineApiPayload,
+} from "@/lib/client-data";
+
+const SHOW_CLIENT_ERRORS = process.env.NODE_ENV !== "production";
 
 interface Stock {
   id: string;
@@ -20,7 +30,7 @@ interface Stock {
   logoUrl: string | null;
   marketCap: number;
   lastPrice: number;
-  previousClose: number;
+  previousClose: number | null;
   change: number;
   changePercent: number;
   dayHigh: number;
@@ -60,12 +70,28 @@ type SortDir = "asc" | "desc";
 
 type StocksTableProps = {
   enableSectorFilter?: boolean;
+  initialData?: StocksResponse | null;
+  initialSectors?: SectorOption[];
+  initialIndices?: IndexOption[];
 };
 
-export default function StocksTable({ enableSectorFilter = true }: StocksTableProps = {}) {
+export default function StocksTable(props: StocksTableProps = {}) {
+  return (
+    <Suspense fallback={<StocksTableFallback />}>
+      <StocksTableInner {...props} />
+    </Suspense>
+  );
+}
+
+function StocksTableInner({
+  enableSectorFilter = true,
+  initialData = null,
+  initialSectors = [],
+  initialIndices = [],
+}: StocksTableProps = {}) {
   const searchParams = useSearchParams();
-  const [data, setData] = useState<StocksResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<StocksResponse | null>(initialData);
+  const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState<SortField>("marketCap");
@@ -73,8 +99,9 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
   const [search, setSearch] = useState("");
   const [selectedSector, setSelectedSector] = useState("");
   const [selectedIndex, setSelectedIndex] = useState("");
-  const [sectors, setSectors] = useState<SectorOption[]>([]);
-  const [indices, setIndices] = useState<IndexOption[]>([]);
+  const [sectors, setSectors] = useState<SectorOption[]>(initialSectors);
+  const [indices, setIndices] = useState<IndexOption[]>(initialIndices);
+  const deferredSearch = useDeferredValue(search);
   const pageSize = selectedIndex === "XU100" ? 100 : 50;
   const selectedSectorName = sectors.find((sector) => sector.code === selectedSector)?.name;
   const selectedIndexName = indices.find((index) => index.code === selectedIndex)?.name;
@@ -96,56 +123,69 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
   }, [searchParams, enableSectorFilter]);
 
   useEffect(() => {
-    fetch("/api/sectors")
-      .then((r) => r.json())
-      .then((rows) => {
-        const options = (rows as Array<{ code: string; name: string }>).map((row) => ({
-          code: row.code,
-          name: row.name,
-        }));
-        setSectors(options);
+    let cancelled = false;
+    if (initialSectors.length > 0 && initialIndices.length > 0) return;
+    fetchNormalizedJson("/api/sectors", "Sektör API", normalizeCategoryOptions)
+      .then((result) => {
+        if (!cancelled) setSectors(result);
       })
-      .catch(console.error);
+      .catch((error) => {
+        if (SHOW_CLIENT_ERRORS) {
+          console.error(error);
+        }
+      });
 
-    fetch("/api/indices")
-      .then((r) => r.json())
-      .then((rows) => {
-        const options = (rows as Array<{ code: string; name: string }>).map((row) => ({
-          code: row.code,
-          name: row.name,
-        }));
-        setIndices(options);
+    fetchNormalizedJson("/api/indices", "Endeks API", normalizeIndexOptions)
+      .then((result) => {
+        if (!cancelled) setIndices(result);
       })
-      .catch(console.error);
-  }, []);
+      .catch((error) => {
+        if (SHOW_CLIENT_ERRORS) {
+          console.error(error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialIndices.length, initialSectors.length]);
 
   useEffect(() => {
+    const usingInitialSnapshot =
+      Boolean(initialData) &&
+      page === 1 &&
+      sortField === "marketCap" &&
+      sortDir === "desc" &&
+      !deferredSearch &&
+      !(enableSectorFilter && selectedSector) &&
+      !selectedIndex;
+    if (usingInitialSnapshot) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(pageSize),
       sort: `${sortField}:${sortDir}`,
-      ...(search && { q: search }),
+      ...(deferredSearch && { q: deferredSearch }),
       ...(enableSectorFilter && selectedSector && { sector: selectedSector }),
       ...(selectedIndex && { index: selectedIndex }),
     });
 
-    fetch(`/api/stocks?${params}`)
-      .then(async (r) => {
-        if (!r.ok) {
-          const text = await r.text().catch(() => "");
-          throw new Error(`Stocks API error: HTTP ${r.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
-        }
-        return r.json();
-      })
+    fetchNormalizedJson(`/api/stocks?${params}`, "Tablo API", normalizeStocksResponse)
       .then(setData)
       .catch((e) => {
-        console.error(e);
+        if (SHOW_CLIENT_ERRORS) {
+          console.error(e);
+        }
         setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => setLoading(false));
-  }, [page, pageSize, sortField, sortDir, search, selectedSector, selectedIndex]);
+  }, [deferredSearch, enableSectorFilter, initialData, page, pageSize, selectedIndex, selectedSector, sortDir, sortField]);
 
   // 7 günlük sparkline'ları lazy yükle (serverless/rate-limit için sınırlı sembol).
   useEffect(() => {
@@ -161,9 +201,10 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
     const qs = encodeURIComponent(symbols.join(","));
     fetch(`/api/sparklines?symbols=${qs}`, { signal: controller.signal })
       .then((r) => r.json())
-      .then((payload: any) => {
-        if (!payload || payload.ok !== true || !payload.items) return;
-        const map = payload.items as Record<string, { points: number[]; trend: "up" | "down" | "flat" }>;
+      .then((payload: unknown) => {
+        const normalized = normalizeSparklineResponse(payload);
+        if (!normalized) return;
+        const map: SparklineApiPayload["items"] = normalized.items;
 
         setData((prev) => {
           if (!prev) return prev;
@@ -183,11 +224,13 @@ export default function StocksTable({ enableSectorFilter = true }: StocksTablePr
       })
       .catch((e) => {
         if (e?.name === "AbortError") return;
-        console.error(e);
+        if (SHOW_CLIENT_ERRORS) {
+          console.error(e);
+        }
       });
 
     return () => controller.abort();
-  }, [data?.items]);
+  }, [data?.items, pageSize]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -1029,4 +1072,27 @@ function generatePageNumbers(current: number, total: number): (number | string)[
   }
 
   return [1, '...', current - 1, current, current + 1, '...', total];
+}
+
+function StocksTableFallback() {
+  return (
+    <div
+      className="overflow-hidden rounded-2xl border p-6 shadow-sm"
+      style={{ background: "var(--card-bg)", borderColor: "var(--border-default)" }}
+    >
+      <div className="space-y-3">
+        <div className="h-6 w-40 animate-pulse rounded" style={{ background: "var(--bg-hover)" }} />
+        <div className="h-4 w-64 animate-pulse rounded" style={{ background: "var(--bg-hover)" }} />
+        <div className="grid gap-3 pt-2 md:grid-cols-2">
+          {[0, 1, 2, 3].map((item) => (
+            <div
+              key={item}
+              className="h-20 animate-pulse rounded-xl border"
+              style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)" }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }

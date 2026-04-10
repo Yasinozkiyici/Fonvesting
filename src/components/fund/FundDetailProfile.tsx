@@ -1,4 +1,5 @@
 import { RiskBadge } from "@/components/tefas/ScoringComponents";
+import { MobileDetailAccordion } from "@/components/fund/MobileDetailAccordion";
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
@@ -7,21 +8,43 @@ type RowProps = { label: string; hint?: string; children: React.ReactNode };
 
 function ProfileRow({ label, hint, children }: RowProps) {
   return (
-    <div className="flex flex-col gap-0.5 border-b py-3 last:border-b-0 sm:grid sm:grid-cols-[minmax(0,12rem)_1fr] sm:items-start sm:gap-8 sm:py-3.5">
-      <div>
-        <div className="text-[11px] font-medium sm:text-xs" style={{ color: "var(--text-muted)" }}>
+    <div
+      className="fund-detail-profile-row-sep flex flex-col gap-1.5 border-b py-3 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,9.1rem)_minmax(0,1fr)] lg:items-start lg:gap-5 lg:py-3.5"
+      style={{ borderColor: "color-mix(in srgb, var(--border-subtle) 68%, transparent)" }}
+    >
+      <div className="min-w-0">
+        <div className="text-[10px] font-medium uppercase sm:text-[10.5px]" style={{ color: "var(--text-muted)", letterSpacing: "0.05em" }}>
           {label}
         </div>
         {hint ? (
-          <p className="mt-0.5 text-[10px] leading-snug sm:text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+          <p className="mt-0.5 max-w-[26ch] text-[10px] leading-snug" style={{ color: "var(--text-tertiary)" }}>
             {hint}
           </p>
         ) : null}
       </div>
-      <div className="text-sm font-medium leading-snug sm:text-[14px]" style={{ color: "var(--text-primary)" }}>
+      <div className="min-w-0 text-[13px] font-medium leading-relaxed sm:text-[13.5px]" style={{ color: "var(--text-primary)" }}>
         {children}
       </div>
     </div>
+  );
+}
+
+function ReturnCapsule({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <span
+      className="inline-flex min-h-[1.65rem] items-center gap-1 rounded-[0.72rem] border px-1.75 py-[0.28rem]"
+      style={{
+        borderColor: "color-mix(in srgb, var(--border-subtle) 78%, transparent)",
+        background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+      }}
+    >
+      <span className="text-[9px] font-medium uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.05em" }}>
+        {label}
+      </span>
+      <span className="text-[10.5px] font-semibold tabular-nums tracking-[-0.015em]" style={{ color: "var(--text-primary)" }}>
+        {value}
+      </span>
+    </span>
   );
 }
 
@@ -51,94 +74,107 @@ function formatDateTr(iso: string): string {
 type Props = { data: FundDetailPageData };
 
 export function FundDetailProfile({ data }: Props) {
-  const { fund, riskLevel, snapshotDate, snapshotAlpha, modelBenchmark, tradingCurrency } = data;
+  const { fund, riskLevel, snapshotDate, tradingCurrency } = data;
   const typeLabel = fundTypeDisplayLabel(fund.fundType);
 
   const lastSyncLabel = fund.lastUpdatedAt ?? fund.updatedAt;
-
-  return (
-    <section aria-labelledby="fund-detail-profile-heading">
-      <FundDetailSectionTitle id="fund-detail-profile-heading">Fon profili</FundDetailSectionTitle>
-      <div
-        className="mt-3.5 rounded-xl border px-4 py-1 sm:mt-4 sm:px-6"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--card-bg)" }}
-      >
-        <div>
-          {typeLabel !== "—" ? <ProfileRow label="Fon türü">{typeLabel}</ProfileRow> : null}
-          {fund.category ? <ProfileRow label="Kategori">{fund.category.name}</ProfileRow> : null}
-          {fund.portfolioManagerInferred ? (
-            <ProfileRow
-              label="Portföy yöneticisi"
-              hint="Fon unvanından türetilmiştir; resmi tescil metni değildir."
-            >
-              {fund.portfolioManagerInferred}
-            </ProfileRow>
-          ) : null}
-          <ProfileRow label="İşlem para birimi" hint="TEFAS yurt içi işlem birimi.">
-            {tradingCurrency}
+  const content = (
+    <div
+      className="rounded-[1.05rem] border px-3.5 py-2.5 sm:px-4 sm:py-3"
+      style={{
+        borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+        background: "var(--card-bg)",
+        boxShadow: "var(--shadow-xs)",
+      }}
+    >
+      <div>
+        {typeLabel !== "—" ? <ProfileRow label="Fon türü">{typeLabel}</ProfileRow> : null}
+        {fund.category ? <ProfileRow label="Kategori">{fund.category.name}</ProfileRow> : null}
+        {fund.portfolioManagerInferred ? (
+          <ProfileRow label="Portföy yöneticisi" hint="Fon unvanından türetilmiş özet.">
+            {fund.portfolioManagerInferred}
           </ProfileRow>
-          <ProfileRow label="Son güncelleme" hint="Sunucudaki fon kaydı (TEFAS senkronu).">
+        ) : null}
+        <ProfileRow label="İşlem para birimi">
+          {tradingCurrency}
+        </ProfileRow>
+        {!snapshotDate ? (
+          <ProfileRow label="Son güncelleme">
             <span className="tabular-nums text-[13px]" style={{ color: "var(--text-secondary)" }}>
               {formatDateTr(lastSyncLabel)}
             </span>
           </ProfileRow>
-          <ProfileRow label="Getiri (TEFAS alanları)" hint="Son senkronize edilen tablo değerleri.">
-            <span className="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
-              <span style={{ color: "var(--text-tertiary)" }}>
-                1H: {fmtTefasReturn(fund.weeklyReturn)}
-              </span>
-              <span style={{ color: "var(--text-tertiary)" }}>
-                1A: {fmtTefasReturn(fund.monthlyReturn)}
-              </span>
-              <span style={{ color: "var(--text-tertiary)" }}>
-                1Y: {fmtTefasReturn(fund.yearlyReturn)}
-              </span>
+        ) : null}
+        <ProfileRow label="Getiri özeti" hint="Yakın ve orta vadeli görünüm.">
+          <span className="flex flex-wrap gap-1.25">
+            <ReturnCapsule label="1H" value={fmtTefasReturn(fund.weeklyReturn)} />
+            <ReturnCapsule label="1A" value={fmtTefasReturn(fund.monthlyReturn)} />
+            <ReturnCapsule label="1Y" value={fmtTefasReturn(fund.yearlyReturn)} />
+            <ReturnCapsule label="3Y" value={fmtTefasReturn(data.derivedSummary.returnApprox3YearPct ?? Number.NaN)} />
+          </span>
+        </ProfileRow>
+        {riskLevel ? (
+          <ProfileRow label="Risk seviyesi">
+            <span
+              className="inline-flex items-center rounded-[0.72rem] border px-1.75 py-[0.28rem]"
+              style={{
+                borderColor: "color-mix(in srgb, var(--border-subtle) 80%, transparent)",
+                background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+              }}
+            >
+              <RiskBadge level={riskLevel} />
             </span>
           </ProfileRow>
-          {riskLevel ? (
-            <ProfileRow label="Risk profili (özet)">
-              <RiskBadge level={riskLevel} />
-            </ProfileRow>
-          ) : null}
-          {modelBenchmark ? (
-            <ProfileRow
-              label="Model referansı"
-              hint="Skorlama için kullanılan kategori kodu; fonun resmi kıyas göstergesi olmayabilir."
-            >
-              <span className="tabular-nums">
-                {modelBenchmark.label}{" "}
-                <span style={{ color: "var(--text-tertiary)" }}>({modelBenchmark.code})</span>
-              </span>
-            </ProfileRow>
-          ) : null}
-          {snapshotDate ? (
-            <ProfileRow label="Skor / özet tarihi" hint="Günlük anlık görüntü tablosu.">
-              <span className="tabular-nums text-[13px]" style={{ color: "var(--text-secondary)" }}>
-                {new Date(snapshotDate).toLocaleDateString("tr-TR", {
-                  day: "numeric",
-                  month: "long",
-                  year: "numeric",
-                })}
-              </span>
-            </ProfileRow>
-          ) : null}
-          {snapshotAlpha != null && Number.isFinite(snapshotAlpha) && snapshotDate ? (
-            <ProfileRow label="Alpha (model)" hint="Yıllıklandırılmış fon getirisi ile model referansı arasındaki fark; tahmini.">
-              <span className="tabular-nums font-semibold">{fmtTefasReturn(snapshotAlpha)}</span>
-            </ProfileRow>
-          ) : null}
-        </div>
-        {fund.description && fund.description.trim().length > 0 ? (
-          <div className="border-t py-4 sm:py-5" style={{ borderColor: "var(--border-subtle)" }}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-              Açıklama
-            </p>
-            <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-              {fund.description.trim()}
-            </p>
-          </div>
+        ) : null}
+        {snapshotDate ? (
+          <ProfileRow label="Veri tarihi">
+            <span className="tabular-nums text-[13px]" style={{ color: "var(--text-secondary)" }}>
+              {new Date(snapshotDate).toLocaleDateString("tr-TR", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
+            </span>
+          </ProfileRow>
         ) : null}
       </div>
-    </section>
+      {fund.description && fund.description.trim().length > 0 ? (
+        <div
+          className="fund-detail-profile-desc-sep border-t pt-3.5 sm:pt-4"
+          style={{ borderColor: "color-mix(in srgb, var(--border-subtle) 68%, transparent)" }}
+        >
+          <p className="text-[10px] font-medium uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.05em" }}>
+            Açıklama
+          </p>
+          <p className="mt-2 max-w-[78ch] text-[13px] leading-relaxed sm:text-sm" style={{ color: "var(--text-secondary)" }}>
+            {fund.description.trim()}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <>
+      <div className="md:hidden">
+        <MobileDetailAccordion
+          title="Fon Profili"
+          hint="Kimlik, risk sınıfı ve veri kapsamı."
+          defaultOpen
+        >
+          {content}
+        </MobileDetailAccordion>
+      </div>
+
+      <section aria-labelledby="fund-detail-profile-heading" className="hidden md:block">
+        <div>
+          <FundDetailSectionTitle id="fund-detail-profile-heading">Fon Profili</FundDetailSectionTitle>
+          <p className="mt-1 text-[12px] leading-snug sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
+            Fonun temel kimliği, risk sınıfı ve güncel veri kapsamı tek panelde özetlenir.
+          </p>
+        </div>
+        <div className="mt-2">{content}</div>
+      </section>
+    </>
   );
 }

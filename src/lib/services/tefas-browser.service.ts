@@ -1,14 +1,19 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseTefasSessionDate } from "@/lib/trading-calendar-tr";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 
 const TEFAS_PAGE_URL = "https://www.tefas.gov.tr/TarihselVeriler.aspx";
 const TEFAS_HISTORY_URL = "https://www.tefas.gov.tr/api/DB/BindHistoryInfo";
 const PAGE_TIMEOUT_MS = 120_000;
+const DIRECT_HTTP_TIMEOUT_MS = 30_000;
 const MAX_REQUESTS_PER_SESSION = 24;
 const DEFAULT_RETRY_COUNT = 3;
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+
+function shouldUseBundledChromium(): boolean {
+  return process.env.VERCEL === "1" || process.env.VERCEL_ENV != null || process.env.AWS_REGION != null;
+}
 
 export type TefasExportRow = {
   date?: string | null;
@@ -45,6 +50,11 @@ type RawTefasResponse = {
   recordsTotal?: number;
   recordsFiltered?: number;
   data?: RawTefasRow[];
+};
+
+type RawFetchEnvelope = {
+  status: number;
+  text: string;
 };
 
 function toNumber(value: unknown): number {
@@ -86,6 +96,20 @@ function normalizePayloadDate(input: string | Date): { iso: string; tefas: strin
   return { iso: formatIsoDate(parsed), tefas: formatTefasDate(parsed) };
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function mapFundTypeCode(fundTypeCode: number): "YAT" | "EMK" {
   if (fundTypeCode === 0) return "YAT";
   if (fundTypeCode === 1) return "EMK";
@@ -117,6 +141,110 @@ function normalizeRawRow(row: RawTefasRow): TefasExportRow | null {
   };
 }
 
+function extractCookieHeader(headers: Headers): string {
+  const candidates =
+    typeof (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie === "function"
+      ? (headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
+      : [];
+  const fallback = headers.get("set-cookie");
+  const parts = [
+    ...candidates,
+    ...(fallback ? fallback.split(/,(?=[^;]+=[^;]+)/) : []),
+  ]
+    .map((entry) => entry.split(";")[0]?.trim() ?? "")
+    .filter(Boolean);
+  return [...new Set(parts)].join("; ");
+}
+
+async function fetchTefasPayloadDirect(input: {
+  fundTypeCode: TefasFundTypeCode;
+  fundCode: string;
+  fromDate: { iso: string; tefas: string };
+  toDate: { iso: string; tefas: string };
+}): Promise<RawFetchEnvelope> {
+  const landing = await withTimeout(
+    fetch(TEFAS_PAGE_URL, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+    }),
+    DIRECT_HTTP_TIMEOUT_MS,
+    "tefas_landing"
+  );
+
+  const cookie = extractCookieHeader(landing.headers);
+  const body = new URLSearchParams({
+    fontip: mapFundTypeCode(input.fundTypeCode),
+    fonkod: input.fundCode,
+    bastarih: input.fromDate.iso,
+    bittarih: input.toDate.iso,
+  });
+
+  const response = await withTimeout(
+    fetch(TEFAS_HISTORY_URL, {
+      method: "POST",
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+        Origin: "https://www.tefas.gov.tr",
+        Referer: TEFAS_PAGE_URL,
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      body,
+    }),
+    DIRECT_HTTP_TIMEOUT_MS,
+    "tefas_history"
+  );
+
+  return {
+    status: response.status,
+    text: await response.text(),
+  };
+}
+
+function parseTefasPayload(raw: RawFetchEnvelope, input: {
+  fundTypeCode: TefasFundTypeCode;
+  fromDate: { iso: string; tefas: string };
+  toDate: { iso: string; tefas: string };
+}): TefasExportPayload {
+  if (raw.status !== 200) {
+    throw new Error(`TEFAS ${raw.status}: ${raw.text.slice(0, 300)}`);
+  }
+  if (raw.text.includes("Request Rejected")) {
+    throw new Error("TEFAS WAF isteği reddetti.");
+  }
+
+  const parsed = JSON.parse(raw.text) as RawTefasResponse;
+  const rows = (parsed.data ?? [])
+    .map((row) => normalizeRawRow(row))
+    .filter((row): row is TefasExportRow => row != null);
+
+  if (rows.length === 0) {
+    return {
+      ok: true,
+      empty: true,
+      date: input.toDate.tefas,
+      fromDate: input.fromDate.tefas,
+      toDate: input.toDate.tefas,
+      fundTypeCode: input.fundTypeCode,
+    };
+  }
+
+  return {
+    ok: true,
+    date: input.toDate.tefas,
+    fromDate: input.fromDate.tefas,
+    toDate: input.toDate.tefas,
+    fundTypeCode: input.fundTypeCode,
+    rows,
+  };
+}
+
 export class TefasBrowserClient {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -124,11 +252,28 @@ export class TefasBrowserClient {
   private requestCount = 0;
 
   private async launchSession(): Promise<void> {
-    const { chromium } = await import("playwright");
-    this.browser = await chromium.launch({
-      headless: process.env.TEFAS_HEADLESS !== "0",
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    const headless = process.env.TEFAS_HEADLESS !== "0";
+
+    if (shouldUseBundledChromium()) {
+      const [{ chromium }, chromiumBundle] = await Promise.all([
+        import("playwright-core"),
+        import("@sparticuz/chromium"),
+      ]);
+      const bundledChromium = chromiumBundle.default;
+      const executablePath = await bundledChromium.executablePath();
+      this.browser = await chromium.launch({
+        headless,
+        executablePath,
+        args: [...bundledChromium.args, "--disable-blink-features=AutomationControlled"],
+      });
+    } else {
+      const { chromium } = await import("playwright");
+      this.browser = await chromium.launch({
+        headless,
+        args: ["--disable-blink-features=AutomationControlled"],
+      });
+    }
+
     this.context = await this.browser.newContext({
       locale: "tr-TR",
       timezoneId: "Europe/Istanbul",
@@ -192,6 +337,22 @@ export class TefasBrowserClient {
     const fontip = mapFundTypeCode(input.fundTypeCode);
     let lastError: Error | null = null;
 
+    try {
+      const raw = await fetchTefasPayloadDirect({
+        fundTypeCode: input.fundTypeCode,
+        fundCode,
+        fromDate,
+        toDate,
+      });
+      return parseTefasPayload(raw, {
+        fundTypeCode: input.fundTypeCode,
+        fromDate,
+        toDate,
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+
     for (let attempt = 1; attempt <= DEFAULT_RETRY_COUNT; attempt += 1) {
       try {
         const page = await this.ensureSession(attempt > 1);
@@ -226,40 +387,12 @@ export class TefasBrowserClient {
             toDate: toDate.iso,
           }
         );
-
-        if (raw.status !== 200) {
-          throw new Error(`TEFAS ${raw.status}: ${raw.text.slice(0, 300)}`);
-        }
-        if (raw.text.includes("Request Rejected")) {
-          throw new Error("TEFAS WAF isteği reddetti.");
-        }
-
-        const parsed = JSON.parse(raw.text) as RawTefasResponse;
-        const rows = (parsed.data ?? [])
-          .map((row) => normalizeRawRow(row))
-          .filter((row): row is TefasExportRow => row != null);
-
         this.requestCount += 1;
-
-        if (rows.length === 0) {
-          return {
-            ok: true,
-            empty: true,
-            date: toDate.tefas,
-            fromDate: fromDate.tefas,
-            toDate: toDate.tefas,
-            fundTypeCode: input.fundTypeCode,
-          };
-        }
-
-        return {
-          ok: true,
-          date: toDate.tefas,
-          fromDate: fromDate.tefas,
-          toDate: toDate.tefas,
+        return parseTefasPayload(raw, {
           fundTypeCode: input.fundTypeCode,
-          rows,
-        };
+          fromDate,
+          toDate,
+        });
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         await this.resetSession();

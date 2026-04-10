@@ -75,6 +75,10 @@
   --accent-blue-muted: #2568c4;
   --accent-blue-soft: rgba(37, 112, 200, 0.1);
 
+  /* Fon detay grafiği — referans çizgisi (sakin, düşük doygunluk turuncu) */
+  --chart-compare-ref: #b8683d;
+  --chart-compare-ref-soft: rgba(184, 104, 61, 0.88);
+
   --brand-logo: #0c1628;
   --brand-bist: #1a3a62;
   --brand-marketcap: #5c52d6;
@@ -212,6 +216,9 @@
   --accent-blue: #6eb0f0;
   --accent-blue-muted: #8ec4f6;
   --accent-blue-soft: rgba(110, 176, 240, 0.14);
+
+  --chart-compare-ref: #c9986e;
+  --chart-compare-ref-soft: rgba(201, 152, 110, 0.9);
 
   --brand-logo: #f4f4f8;
   --brand-bist: #ffffff;
@@ -1261,28 +1268,28 @@ body {
 
 /* Fon listesi — premium screener: tek panel, hizalı kontroller */
 .screener-bar {
-  margin-top: 1.125rem;
+  margin-top: 0.875rem;
   padding: 0;
   background: transparent;
 }
 
 @media (min-width: 640px) {
   .screener-bar {
-    margin-top: 1.1875rem;
+    margin-top: 0.9375rem;
   }
 }
 
 .screener-panel {
   border-radius: var(--radius-md);
-  border: 1px solid rgba(15, 23, 42, 0.058);
+  border: 1px solid rgba(15, 23, 42, 0.065);
   background: var(--screener-panel-bg);
-  padding: 0.5625rem 0.625rem;
+  padding: 0.5rem 0.625rem;
   box-shadow: none;
 }
 
 @media (min-width: 640px) {
   .screener-panel {
-    padding: 0.625rem 0.75rem;
+    padding: 0.5625rem 0.6875rem;
   }
 }
 
@@ -1293,7 +1300,7 @@ body {
   text-transform: uppercase;
   line-height: 1.25;
   color: var(--text-primary);
-  opacity: 0.38;
+  opacity: 0.42;
 }
 
 [data-theme="dark"] .screener-sort-label {
@@ -1303,14 +1310,14 @@ body {
 .research-search {
   display: block;
   width: 100%;
-  height: var(--ds-control-h);
-  min-height: var(--ds-control-h);
-  padding: 0 calc(var(--ds-pad-x-control) + 0.0625rem) 0 2.3125rem;
-  font-size: 0.8125rem;
+  height: calc(var(--ds-control-h) - 0.125rem);
+  min-height: calc(var(--ds-control-h) - 0.125rem);
+  padding: 0 calc(var(--ds-pad-x-control) - 0.0625rem) 0 2.1875rem;
+  font-size: 0.8rem;
   font-weight: 500;
   letter-spacing: -0.016em;
   border-radius: var(--ds-radius-control);
-  border: 1px solid rgba(15, 23, 42, 0.065);
+  border: 1px solid rgba(15, 23, 42, 0.075);
   background: var(--surface-control);
   color: var(--text-primary);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
@@ -1342,14 +1349,14 @@ body {
   appearance: none;
   -webkit-appearance: none;
   width: 100%;
-  height: var(--ds-control-h);
-  min-height: var(--ds-control-h);
-  padding: 0 1.875rem 0 var(--ds-pad-x-control);
-  font-size: 0.8125rem;
+  height: calc(var(--ds-control-h) - 0.125rem);
+  min-height: calc(var(--ds-control-h) - 0.125rem);
+  padding: 0 1.75rem 0 calc(var(--ds-pad-x-control) - 0.0625rem);
+  font-size: 0.8rem;
   font-weight: 500;
   letter-spacing: -0.016em;
   border-radius: var(--ds-radius-control);
-  border: 1px solid rgba(15, 23, 42, 0.065);
+  border: 1px solid rgba(15, 23, 42, 0.075);
   background: var(--surface-control);
   color: var(--text-primary);
   cursor: pointer;
@@ -1370,7 +1377,7 @@ body {
 .research-select-chevron {
   pointer-events: none;
   position: absolute;
-  right: 0.5625rem;
+  right: 0.5rem;
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-tertiary);
@@ -1380,7 +1387,7 @@ body {
 [data-theme="dark"] .research-search,
 [data-theme="dark"] .research-select {
   background: var(--surface-control);
-  border-color: var(--screener-panel-border);
+  border-color: color-mix(in srgb, var(--screener-panel-border) 88%, white 12%);
 }
 
 [data-theme="dark"] .research-search:hover,
@@ -1404,10 +1411,10 @@ body {
     display: block;
     width: 1px;
     align-self: center;
-    height: 1.75rem;
-    margin: 0 0.5rem;
+    height: 1.5rem;
+    margin: 0 0.375rem;
     background: rgba(15, 23, 42, 0.065);
-    opacity: 1;
+    opacity: 0.9;
     flex-shrink: 0;
   }
 }
@@ -1418,12 +1425,12 @@ body {
 
 .screener-clear-btn {
   display: inline-flex;
-  height: var(--ds-control-h);
+  height: calc(var(--ds-control-h) - 0.125rem);
   align-items: center;
   justify-content: center;
   gap: 0.3125rem;
-  padding: 0 0.75rem;
-  font-size: 0.75rem;
+  padding: 0 0.6875rem;
+  font-size: 0.71875rem;
   font-weight: 500;
   letter-spacing: -0.012em;
   border-radius: var(--ds-radius-control);
@@ -1452,6 +1459,12 @@ body {
 .ranking-mode-toggle button[aria-selected="true"] {
   color: var(--accent-blue);
   font-weight: 600;
+}
+
+.compare-list-entry:hover {
+  border-color: var(--border-default) !important;
+  color: var(--text-primary) !important;
+  background: color-mix(in srgb, var(--surface-control) 84%, var(--bg-hover)) !important;
 }
 
 [data-theme="dark"] .ranking-mode-toggle button[aria-selected="true"] {
@@ -1686,7 +1699,7 @@ body {
 
 /* Sağ küme: tek çerçeveli araç şeridi (arama + ayırıcı + tema) */
 .header-tools {
-  display: inline-flex;
+  display: none;
   align-items: stretch;
   align-self: center;
   height: var(--ds-control-h);
@@ -1696,6 +1709,12 @@ body {
   background: var(--header-chrome-bg);
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+@media (min-width: 768px) {
+  .header-tools {
+    display: inline-flex;
+  }
 }
 
 .header-tools:focus-within {
@@ -1885,6 +1904,12 @@ body {
   overflow: hidden;
 }
 
+@media (min-width: 768px) {
+  .header-mobile-cluster {
+    display: none;
+  }
+}
+
 .header-mobile-cluster__btn {
   display: inline-flex;
   width: var(--ds-control-h);
@@ -1940,25 +1965,35 @@ body {
 
 /* Kategori rayı — seçim fayansı; kutu border yok, sol accent + hafif zemin */
 .category-rail-card {
-  transition: background-color 0.16s ease, border-left-color 0.16s ease, color 0.16s ease;
+  transition: background-color 0.16s ease, border-left-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
   text-decoration: none;
-  background-color: transparent;
+  background-color: color-mix(in srgb, var(--card-bg) 82%, transparent);
 }
 
 .category-rail-card[data-active="true"] {
-  background-color: rgba(15, 23, 42, 0.028);
+  background-color: rgba(15, 23, 42, 0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 [data-theme="dark"] .category-rail-card[data-active="true"] {
-  background-color: rgba(255, 255, 255, 0.052);
+  background-color: rgba(255, 255, 255, 0.072);
 }
 
 .category-rail-card:hover:not([data-active="true"]) {
-  background-color: rgba(15, 23, 42, 0.022);
+  background-color: rgba(15, 23, 42, 0.028);
 }
 
 [data-theme="dark"] .category-rail-card:hover:not([data-active="true"]) {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.category-rail-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
+  outline-offset: 1px;
+}
+
+[data-theme="dark"] .category-rail-card:focus-visible {
+  outline-color: color-mix(in srgb, var(--accent-muted) 45%, transparent);
 }
 
 /* DS — kompakt hero, sticky kategori sekmeleri, fon tablosu */
@@ -1986,7 +2021,7 @@ body {
   flex-wrap: nowrap;
   align-items: stretch;
   gap: 0;
-  padding: 0.5625rem 0.25rem;
+  padding: 0.5625rem 0.3125rem;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--ds-glass-border) 85%, transparent);
   background: color-mix(in srgb, var(--card-bg) 94%, var(--bg-elevated));
@@ -2019,7 +2054,7 @@ body {
   justify-content: center;
   gap: 0.1875rem;
   min-width: 0;
-  padding: 0.125rem 0.625rem;
+  padding: 0.125rem 0.6875rem;
   flex: 0 0 auto;
 }
 
@@ -2031,9 +2066,9 @@ body {
 }
 
 .market-snapshot-item--wide {
-  flex: 1 1 6rem;
-  min-width: 5.5rem;
-  max-width: 12rem;
+  flex: 1 1 5.5rem;
+  min-width: 5.25rem;
+  max-width: 10.5rem;
 }
 
 .market-snapshot-k {
@@ -2088,13 +2123,116 @@ body {
   flex: 0 0 1px;
   width: 1px;
   align-self: stretch;
-  margin: 0.375rem 0;
-  background: rgba(15, 23, 42, 0.068);
+  margin: 0.3rem 0;
+  background: rgba(15, 23, 42, 0.075);
   opacity: 1;
 }
 
 [data-theme="dark"] .market-snapshot-sep {
   background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .market-snapshot-k {
+  opacity: 0.68;
+}
+
+[data-theme="dark"] .market-snapshot-v {
+  color: #f2f4f7;
+}
+
+/* Kompakt piyasa özeti şeridi */
+.ds-hero-stats.market-snapshot-bar-compact {
+  margin-top: var(--ds-8);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  padding: 0.375rem 0.25rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--ds-glass-border) 75%, transparent);
+  background: color-mix(in srgb, var(--card-bg) 92%, var(--bg-muted));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.ds-hero-stats.market-snapshot-bar-compact::-webkit-scrollbar {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .ds-hero-stats.market-snapshot-bar-compact {
+    padding: 0.4375rem 0.3125rem;
+  }
+}
+
+[data-theme="dark"] .ds-hero-stats.market-snapshot-bar-compact {
+  background: color-mix(in srgb, var(--card-bg) 85%, var(--bg-elevated));
+}
+
+.market-snapshot-item-sm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 0.0625rem 0.5rem;
+  flex: 0 0 auto;
+}
+
+@media (min-width: 640px) {
+  .market-snapshot-item-sm {
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+  }
+}
+
+.market-snapshot-k-sm {
+  font-size: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+}
+
+@media (min-width: 640px) {
+  .market-snapshot-k-sm {
+    font-size: 0.53125rem;
+    letter-spacing: 0.09em;
+  }
+}
+
+.market-snapshot-v-sm {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 640px) {
+  .market-snapshot-v-sm {
+    font-size: 0.8125rem;
+    letter-spacing: -0.028em;
+  }
+}
+
+.market-snapshot-sep-sm {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 1rem;
+  background: rgba(15, 23, 42, 0.065);
+}
+
+[data-theme="dark"] .market-snapshot-sep-sm {
+  background: rgba(255, 255, 255, 0.065);
+}
+
+[data-theme="dark"] .market-snapshot-k-sm {
+  color: var(--text-muted);
 }
 
 .ds-metric-card__label {
@@ -2136,32 +2274,59 @@ body {
   border-collapse: collapse;
 }
 
+/* Fon sütunu baskın; tür + metrikler sıkı küme; masaüstü tablo (md+) */
 .fund-data-table col.fund-col-name {
-  width: 41%;
+  width: 50%;
 }
-/* Fon ↔ Fon türü: gerçek sütun gutter’ı (layout seviyesi boşluk) */
+@media (min-width: 1024px) {
+  .fund-data-table col.fund-col-name {
+    width: 54%;
+  }
+}
+/* Fon adı sonrası kısa durak; tür → metrik blok */
 .fund-data-table col.fund-col-gutter {
-  width: 1.125rem;
+  width: 0.8125rem;
 }
 @media (min-width: 1024px) {
   .fund-data-table col.fund-col-gutter {
-    width: 1.375rem;
+    width: 1rem;
   }
 }
 .fund-data-table col.fund-col-type {
-  width: 12%;
+  width: 9.5%;
 }
 .fund-data-table col.fund-col-price {
-  width: 8.5%;
+  width: 7.25%;
 }
 .fund-data-table col.fund-col-1d {
-  width: 6.5%;
+  width: 5.75%;
 }
 .fund-data-table col.fund-col-inv {
-  width: 9.75%;
+  width: 8.25%;
 }
 .fund-data-table col.fund-col-aum {
-  width: 12%;
+  width: 8.75%;
+}
+@media (min-width: 1024px) {
+  .fund-data-table col.fund-col-type {
+    width: 8.25%;
+  }
+  .fund-data-table col.fund-col-price {
+    width: 6.75%;
+  }
+  .fund-data-table col.fund-col-1d {
+    width: 5.25%;
+  }
+  .fund-data-table col.fund-col-inv {
+    width: 7.75%;
+  }
+  .fund-data-table col.fund-col-aum {
+    width: 8.25%;
+  }
+}
+
+.fund-data-table col.fund-col-compare {
+  width: 1.625rem;
 }
 
 .fund-data-table th,
@@ -2177,7 +2342,8 @@ body {
 .fund-data-table th.fund-th,
 .fund-data-table td.fund-col-name,
 .fund-data-table td.fund-col-type,
-.fund-data-table td.fund-col-num {
+.fund-data-table td.fund-col-num,
+.fund-data-table td.fund-col-compare {
   padding-top: 0.5625rem;
   padding-bottom: 0.5625rem;
 }
@@ -2207,23 +2373,23 @@ body {
 .fund-data-table th.fund-th-name,
 .fund-data-table td.fund-col-name {
   padding-left: var(--ds-16);
-  padding-right: 1rem;
+  padding-right: 1.375rem;
   text-align: left;
 }
 
 @media (min-width: 1024px) {
   .fund-data-table th.fund-th-name,
   .fund-data-table td.fund-col-name {
-    padding-right: 1.125rem;
+    padding-right: 1.5rem;
   }
 }
 
 .fund-data-table th.fund-th-gutter,
 .fund-data-table td.fund-col-gutter {
   box-sizing: border-box;
-  width: 1.125rem;
-  min-width: 1.125rem;
-  max-width: 1.125rem;
+  width: 0.8125rem;
+  min-width: 0.8125rem;
+  max-width: 0.8125rem;
   padding: 0;
   border: none;
   overflow: hidden;
@@ -2235,9 +2401,9 @@ body {
 @media (min-width: 1024px) {
   .fund-data-table th.fund-th-gutter,
   .fund-data-table td.fund-col-gutter {
-    width: 1.375rem;
-    min-width: 1.375rem;
-    max-width: 1.375rem;
+    width: 1rem;
+    min-width: 1rem;
+    max-width: 1rem;
   }
 }
 
@@ -2248,9 +2414,8 @@ body {
 
 .fund-data-table th.fund-th-type,
 .fund-data-table td.fund-col-type {
-  padding-left: 0.5rem;
-  /* Sağa doğru: Son fiyat’a yakın; sol/gutter tarafına dokunulmaz */
-  padding-right: 0.3125rem;
+  padding-left: 0.3125rem;
+  padding-right: 0.125rem;
   text-align: left;
 }
 
@@ -2265,11 +2430,11 @@ body {
   padding-left: 0;
 }
 
-/* Sağ blok: fiyat / getiri / yatırımcı / portföy — dengeli sıkı cluster */
+/* Sağ blok: fiyat / getiri / yatırımcı / portföy — sıkı ama okunaklı küme */
 .fund-data-table th.fund-th-metric,
 .fund-data-table td.fund-col-metric {
-  padding-left: 0.0625rem;
-  padding-right: 0.0625rem;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .fund-data-table th.fund-th-metric .sortable-th-btn {
@@ -2278,11 +2443,24 @@ body {
 }
 
 .fund-data-table td.fund-col-metric.fund-col-aum {
-  padding-right: var(--ds-16);
+  padding-right: 0;
+}
+
+.fund-data-table th.fund-th-compare,
+.fund-data-table td.fund-col-compare {
+  padding-left: 0;
+  padding-right: 0.625rem;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.fund-data-table thead th.fund-th-compare {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
 }
 
 .fund-data-table thead th.fund-th:last-child {
-  padding-right: var(--ds-16);
+  padding-right: 0.625rem;
 }
 
 .fund-data-table .fund-data-row {
@@ -2476,14 +2654,15 @@ body {
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
-/* Mobil fon listesi — CoinMarketCap tarzı kompakt satır (yalnızca md altı) */
+/* Mobil fon listesi — sakin ve site tipografisiyle uyumlu kompakt kart */
 .mobile-fund-card {
   box-sizing: border-box;
-  max-height: 80px;
-  padding: 12px 14px;
-  border-radius: 12px;
+  min-height: 80px;
+  padding: 8px 10px;
+  border-radius: 13px;
   border: 1px solid var(--mfc-border);
   background: var(--card-bg);
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.022);
   --mfc-border: rgba(15, 23, 42, 0.08);
   --mfc-primary: var(--text-primary);
   --mfc-secondary: var(--text-secondary);
@@ -2491,32 +2670,40 @@ body {
   --mfc-pct-neg: rgba(234, 57, 67, 0.92);
   --mfc-pct-zero: var(--text-secondary);
   --mfc-dot: rgba(15, 23, 42, 0.35);
+  --mfc-pill-bg: rgba(15, 23, 42, 0.035);
 }
 
 [data-theme="dark"] .mobile-fund-card {
-  --mfc-border: rgba(255, 255, 255, 0.06);
+  --mfc-border: rgba(255, 255, 255, 0.08);
   --mfc-primary: #e6e8eb;
-  --mfc-secondary: #9aa4b2;
+  --mfc-secondary: #aab3c0;
   --mfc-pct-pos: rgba(22, 199, 132, 0.88);
   --mfc-pct-neg: rgba(234, 57, 67, 0.88);
   --mfc-pct-zero: #9aa4b2;
   --mfc-dot: rgba(255, 255, 255, 0.28);
+  --mfc-pill-bg: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.13);
 }
 
 .mobile-fund-card__link {
   display: block;
-  margin: -12px -14px;
-  padding: 12px 14px;
-  border-radius: 12px;
+  margin: -8px -10px;
+  padding: 8px 10px;
+  border-radius: 13px;
   outline: none;
   text-decoration: none;
   color: inherit;
   -webkit-tap-highlight-color: transparent;
-  transition: opacity 0.15s ease;
+  transition: transform 0.16s ease, background-color 0.16s ease, opacity 0.16s ease;
+}
+
+.mobile-fund-card__link:hover {
+  transform: scale(1.01);
+  background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
 }
 
 .mobile-fund-card__link:active {
-  opacity: 0.88;
+  opacity: 0.94;
 }
 
 .mobile-fund-card__link:focus-visible {
@@ -2524,37 +2711,42 @@ body {
 }
 
 .mobile-fund-card__code {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
   color: var(--mfc-primary);
 }
 
 .mobile-fund-card__name {
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 400;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
+  line-height: 1.16;
+  letter-spacing: normal;
   color: var(--mfc-secondary);
 }
 
-.mobile-fund-card__metric {
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
-  color: var(--mfc-secondary);
-  font-variant-numeric: tabular-nums;
+.mobile-fund-card__price {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--mfc-primary);
 }
 
 .mobile-fund-card__pct {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.mobile-fund-card__meta {
+  font-size: 10px;
+  line-height: 1.15;
+  color: var(--mfc-secondary);
 }
 
 .mobile-fund-card__pct--pos {
@@ -2568,14 +2760,6 @@ body {
 .mobile-fund-card__pct--zero,
 .mobile-fund-card__pct--muted {
   color: var(--mfc-pct-zero);
-}
-
-.mobile-fund-card__dot {
-  color: var(--mfc-dot);
-  font-size: 12px;
-  line-height: 1;
-  padding: 0 2px;
-  user-select: none;
 }
 
 .mobile-fund-card__risk {
@@ -2687,4 +2871,18 @@ body {
 .tefas-table-touch-scroll {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+}
+
+/* Fund detail separator polish (dark only) */
+[data-theme="dark"] .fund-detail-profile-row-sep,
+[data-theme="dark"] .fund-detail-profile-desc-sep {
+  border-color: color-mix(in srgb, var(--border-subtle) 64%, transparent);
+}
+
+[data-theme="dark"] .fund-detail-similar-dividers {
+  border-color: color-mix(in srgb, var(--border-subtle) 82%, transparent);
+}
+
+[data-theme="dark"] .fund-detail-similar-dividers > :not([hidden]) ~ :not([hidden]) {
+  border-color: color-mix(in srgb, var(--border-subtle) 64%, transparent);
 }

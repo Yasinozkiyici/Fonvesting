@@ -19,6 +19,12 @@ export interface NormalizedScores {
   investorStrengthScore?: number;
   /** ~1Y getiri (satırdaki yearlyReturn) yüzdelik dilimi */
   periodReturnScore?: number;
+  /** Aynı listede, aynı kategoride ~1Y fazla getiri (veri yoksa yüklemede 50). */
+  categoryRelativeScore?: number;
+  /** Profiline uygun referans üzerine ~1Y fazla getiri (veri yoksa 50). */
+  referenceStrengthScore?: number;
+  /** 30g/90g/180g/1y getirilerin birbirine yakınlığı (yüksek = daha tutarlı tempo). */
+  consistencyScore?: number;
 }
 
 export interface FundScore {
@@ -41,42 +47,58 @@ export interface RankingWeights {
   investor?: number;
   /** HIGH_RETURN: referans dönem getirisi (yearlyReturn) ağırlığı */
   periodReturn?: number;
+  /** Düşük drawdown = yüksek drawdownScore */
+  drawdown?: number;
+  categoryRelative?: number;
+  referenceStrength?: number;
+  consistency?: number;
 }
 
 /**
  * Weight configurations for each ranking mode
  */
 export const RANKING_WEIGHTS: Record<RankingMode, RankingWeights> = {
-  /** En İyi: yıllıklandırılmış getiri + istikrar + risk-ayarlı + portföy/yatırımcı gücü */
+  /** En İyi: getiri kalitesi + kategori/referans göreli güç + istikrar + ölçek */
   BEST: {
-    return: 0.26,
-    stability: 0.16,
-    sharpe: 0.16,
-    sortino: 0.1,
-    portfolio: 0.16,
-    investor: 0.16,
-  },
-  /** Düşük risk: düşük oynaklık + düşük drawdown (stability ağırlıklı) */
-  LOW_RISK: {
-    return: 0.06,
-    stability: 0.52,
-    sharpe: 0.24,
-    sortino: 0.18,
-  },
-  /** Yüksek getiri: ~1Y getiri dilimi + yıllıklandırılmış getiri; istikrar düşük ağırlık */
-  HIGH_RETURN: {
     return: 0.18,
-    stability: 0.05,
-    sharpe: 0.12,
-    sortino: 0.1,
-    periodReturn: 0.55,
+    stability: 0.1,
+    sharpe: 0.1,
+    sortino: 0.08,
+    portfolio: 0.11,
+    investor: 0.11,
+    drawdown: 0.06,
+    categoryRelative: 0.13,
+    referenceStrength: 0.13,
   },
-  /** Stabil: LOW_RISK’e yakın; biraz daha getiri payı */
+  /** Düşük risk: oynaklık + drawdown + risk-ayarlı oranlar; getiri çok hafif */
+  LOW_RISK: {
+    return: 0.03,
+    stability: 0.38,
+    sharpe: 0.15,
+    sortino: 0.12,
+    drawdown: 0.22,
+    consistency: 0.1,
+  },
+  /** Yüksek getiri: çok pencereli getiri + kategori/referans göreli güç */
+  HIGH_RETURN: {
+    return: 0.15,
+    stability: 0.03,
+    sharpe: 0.07,
+    sortino: 0.05,
+    periodReturn: 0.45,
+    categoryRelative: 0.08,
+    referenceStrength: 0.12,
+    drawdown: 0.03,
+    consistency: 0.02,
+  },
+  /** Stabil: tutarlı tempo + düşük oynaklık + drawdown; getiri ikincil */
   STABLE: {
-    return: 0.1,
-    stability: 0.58,
-    sharpe: 0.18,
-    sortino: 0.14,
+    return: 0.06,
+    stability: 0.34,
+    sharpe: 0.08,
+    sortino: 0.06,
+    drawdown: 0.2,
+    consistency: 0.26,
   },
 };
 
@@ -106,7 +128,7 @@ function countStrictlyLessThan(sortedAsc: number[], value: number): number {
   return lo;
 }
 
-function percentileFromSortedAsc(value: number, sortedAsc: number[], higherIsBetter: boolean): number {
+export function percentileFromSortedAsc(value: number, sortedAsc: number[], higherIsBetter: boolean): number {
   if (sortedAsc.length === 0) return 50;
   if (sortedAsc.length === 1) return 50;
   const rank = countStrictlyLessThan(sortedAsc, value);
@@ -262,10 +284,70 @@ export function calculateFinalScore(
   const ps = scores.portfolioScaleScore ?? 50;
   const inv = scores.investorStrengthScore ?? 50;
   const pr = scores.periodReturnScore ?? 50;
+  const cr = scores.categoryRelativeScore ?? 50;
+  const ref = scores.referenceStrengthScore ?? 50;
+  const cons = scores.consistencyScore ?? 50;
   if (w.portfolio != null) s += w.portfolio * ps;
   if (w.investor != null) s += w.investor * inv;
   if (w.periodReturn != null) s += w.periodReturn * pr;
+  if (w.drawdown != null) s += w.drawdown * scores.drawdownScore;
+  if (w.categoryRelative != null) s += w.categoryRelative * cr;
+  if (w.referenceStrength != null) s += w.referenceStrength * ref;
+  if (w.consistency != null) s += w.consistency * cons;
   return Math.round(Math.max(0, Math.min(100, s)));
+}
+
+/** Sıralama: düşük risk modu için birincil anahtar (yüksek = daha sakin profil). */
+export function lowRiskSortKey(scores: NormalizedScores): number {
+  return scores.stabilityScore * 0.52 + scores.drawdownScore * 0.48;
+}
+
+/** Sıralama: stabil mod için birincil anahtar. */
+export function stableSortKey(scores: NormalizedScores): number {
+  const c = scores.consistencyScore ?? 50;
+  return c * 0.5 + scores.stabilityScore * 0.28 + scores.drawdownScore * 0.22;
+}
+
+export type RankSortInput = {
+  code: string;
+  finalScore: number;
+  scores: NormalizedScores;
+  yearlyReturn: number;
+  monthlyReturn: number;
+  metrics: FundMetrics;
+  /** FundDerivedMetrics yolunda: ağırlıklı çok pencereli getiri; yoksa yearlyReturn devreye girer. */
+  trailingReturnBlend?: number | null;
+};
+
+export function highReturnRankKey(i: RankSortInput): number {
+  if (i.trailingReturnBlend != null && Number.isFinite(i.trailingReturnBlend) && i.trailingReturnBlend > -1e8) {
+    return i.trailingReturnBlend;
+  }
+  if (Number.isFinite(i.yearlyReturn)) return i.yearlyReturn;
+  const ar = i.metrics.annualizedReturn;
+  if (Number.isFinite(ar)) return ar;
+  return Number.NEGATIVE_INFINITY;
+}
+
+/** Moda göre birincil sıra + skor + kod; liste API’si ve önbellek yolu ortak kullanır. */
+export function compareRankedFunds(mode: RankingMode, a: RankSortInput, b: RankSortInput): number {
+  if (mode === "HIGH_RETURN") {
+    const ka = highReturnRankKey(a);
+    const kb = highReturnRankKey(b);
+    if (kb !== ka) return kb - ka;
+  }
+  if (mode === "LOW_RISK") {
+    const ka = lowRiskSortKey(a.scores);
+    const kb = lowRiskSortKey(b.scores);
+    if (kb !== ka) return kb - ka;
+  }
+  if (mode === "STABLE") {
+    const ka = stableSortKey(a.scores);
+    const kb = stableSortKey(b.scores);
+    if (kb !== ka) return kb - ka;
+  }
+  if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+  return a.code.localeCompare(b.code, "tr");
 }
 
 /**

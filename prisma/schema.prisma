@@ -58,6 +58,8 @@ model Fund {
   dailySnapshots   FundDailySnapshot[]
   derivedMetrics   FundDerivedMetrics?
   watchlistItems   WatchlistItem[]
+  @@index([isActive, portfolioSize(sort: Desc)])
+  @@index([isActive, dailyReturn(sort: Desc)])
   @@index([portfolioSize(sort: Desc)])
   @@index([dailyReturn(sort: Desc)])
   @@index([categoryId])
@@ -128,6 +130,7 @@ model FundPriceHistory {
   investorCount Int      @default(0)
   fund          Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
   @@unique([fundId, date])
+  @@index([date(sort: Desc)])
   @@index([fundId, date(sort: Desc)])
 }
 
@@ -163,9 +166,15 @@ model FundDailySnapshot {
   updatedAt            DateTime @updatedAt
   fund                 Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
   @@unique([fundId, date])
+  @@index([code, date(sort: Desc)])
   @@index([date(sort: Desc)])
   @@index([date(sort: Desc), categoryCode])
+  @@index([date(sort: Desc), categoryCode, portfolioSize(sort: Desc)])
+  @@index([date(sort: Desc), fundTypeCode, portfolioSize(sort: Desc)])
   @@index([date(sort: Desc), finalScoreBest(sort: Desc)])
+  @@index([date(sort: Desc), finalScoreLowRisk(sort: Desc)])
+  @@index([date(sort: Desc), finalScoreHighReturn(sort: Desc)])
+  @@index([date(sort: Desc), finalScoreStable(sort: Desc)])
 }
 
 model MarketSnapshot {
@@ -184,6 +193,58 @@ model MarketSnapshot {
   @@index([date(sort: Desc)])
 }
 
+/**
+ * Makro / benchmark serileri: BIST100, altın, politika faizi, TÜFE gibi
+ * günlük/aylık gözlemler tek serving katmanında tutulur.
+ */
+model MacroSeries {
+  id            String             @id @default(cuid())
+  code          String             @unique
+  name          String
+  source        String
+  sourceSymbol  String?
+  frequency     String
+  unit          String?
+  currency      String?
+  isActive      Boolean            @default(true)
+  lastSyncedAt  DateTime?
+  metadata      Json?
+  observations  MacroObservation[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  @@index([source])
+}
+
+model MacroObservation {
+  id         String      @id @default(cuid())
+  seriesId   String
+  date       DateTime
+  value      Float
+  open       Float?
+  high       Float?
+  low        Float?
+  volume     Float?
+  meta       Json?
+  series     MacroSeries @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  @@unique([seriesId, date])
+  @@index([date(sort: Desc)])
+  @@index([seriesId, date(sort: Desc)])
+}
+
+model MacroSyncState {
+  key                 String   @id
+  status              String   @default("IDLE")
+  earliestHistoryDate DateTime?
+  latestHistoryDate   DateTime?
+  lastStartedAt       DateTime?
+  lastCompletedAt     DateTime?
+  details             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
 model SyncLog {
   id             String    @id @default(cuid())
   syncType       String
@@ -196,6 +257,7 @@ model SyncLog {
   durationMs     Int?
   createdAt      DateTime  @default(now())
   @@index([createdAt(sort: Desc)])
+  @@index([syncType, startedAt(sort: Desc)])
 }
 
 model User {

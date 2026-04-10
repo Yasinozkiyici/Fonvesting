@@ -40,11 +40,11 @@ export function RankingModeToggle({ mode, onChange }: RankingToggleProps) {
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(m.key)}
-            className="relative min-h-[1.6875rem] rounded-[calc(var(--ds-radius-control)-1px)] px-2 py-px text-[10px] font-medium tracking-[-0.02em] transition-[color,background-color] duration-200 ease-out sm:min-h-[1.8125rem] sm:px-2.5 sm:text-[11px] sm:tracking-[-0.019em]"
+            className="relative min-h-[1.625rem] rounded-[calc(var(--ds-radius-control)-1px)] px-2 py-px text-[10px] font-medium tracking-[-0.02em] transition-[color,background-color] duration-200 ease-out sm:min-h-[1.75rem] sm:px-2.25 sm:text-[10.5px] sm:tracking-[-0.019em]"
             style={{
-              background: isActive ? "var(--ranking-toggle-active-bg)" : "transparent",
+              background: isActive ? "var(--ranking-toggle-active-bg)" : "color-mix(in srgb, transparent 86%, var(--surface-control) 14%)",
               color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
-              boxShadow: "none",
+              boxShadow: isActive ? "inset 0 1px 0 rgba(255,255,255,0.18)" : "none",
             }}
           >
             {m.label}

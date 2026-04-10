@@ -1,111 +1,114 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
+import { getFundsPage } from "@/lib/services/fund-list.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SORT_MAP: Record<string, Prisma.FundScalarFieldEnum> = {
-  marketCap: "portfolioSize",
-  changePercent: "dailyReturn",
-  volume: "investorCount",
-  lastPrice: "lastPrice",
-  turnover: "portfolioSize",
+const MAX_PAGE = 200;
+const MAX_PAGE_SIZE = 100;
+const MAX_QUERY_LENGTH = 64;
+const MAX_FILTER_LENGTH = 32;
+
+type LegacyStockRow = {
+  id: string;
+  symbol: string;
+  name: string;
+  shortName: string | null;
+  logoUrl: string | null;
+  marketCap: number;
+  lastPrice: number;
+  previousClose: number | null;
+  change: number;
+  changePercent: number;
+  dayHigh: number;
+  dayLow: number;
+  volume: number;
+  turnover: number;
+  peRatio: number | null;
+  sparkline: number[];
+  sparklineTrend: "up" | "down" | "flat";
+  sector: { code: string; name: string; color: string | null } | null;
 };
 
-/**
- * Geriye dönük uyumluluk: `/api/stocks` istekleri fon listesine yönlendirilir.
- * `sector` → kategori kodu, `index` → fon türü kodu (0, 1).
- */
+function mapSortField(field: string): "portfolioSize" | "dailyReturn" | "investorCount" | "lastPrice" {
+  if (field === "changePercent") return "dailyReturn";
+  if (field === "volume") return "investorCount";
+  if (field === "lastPrice") return "lastPrice";
+  return "portfolioSize";
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
-    const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
-    const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "50")));
-    const q = (searchParams.get("q") ?? "").trim();
-    const sector = searchParams.get("sector") ?? undefined;
-    const indexCode = searchParams.get("index") ?? undefined;
+    const page = Math.min(MAX_PAGE, Math.max(1, Number(searchParams.get("page") ?? "1")));
+    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(searchParams.get("pageSize") ?? "50")));
+    const q = (searchParams.get("q") ?? "").trim().slice(0, MAX_QUERY_LENGTH).toLocaleLowerCase("tr-TR");
+    const sector = (searchParams.get("sector") ?? "").trim().slice(0, MAX_FILTER_LENGTH);
+    const indexCode = (searchParams.get("index") ?? "").trim().slice(0, 8);
     const sort = searchParams.get("sort") ?? "marketCap:desc";
-    const [rawField, sortDir] = sort.split(":") as [string, "asc" | "desc"];
-    const sortField = SORT_MAP[rawField] ?? "portfolioSize";
+    const rawField = sort.split(":")[0] ?? "marketCap";
+    const sortDirRaw = sort.split(":")[1];
+    const sortField = mapSortField(rawField);
+    const sortDir = sortDirRaw === "asc" ? "asc" : "desc";
 
-    const where: Prisma.FundWhereInput = { isActive: true };
-    if (q) {
-      where.OR = [
-        { code: { contains: q.toUpperCase() } },
-        { name: { contains: q } },
-        { shortName: { contains: q } },
-      ];
-    }
-    if (sector) where.category = { code: sector };
-    if (indexCode !== undefined && indexCode !== "") {
-      const c = parseInt(indexCode, 10);
-      if (!Number.isNaN(c)) where.fundType = { code: c };
-    }
-
-    const [items, total] = await Promise.all([
-      prisma.fund.findMany({
-        where,
-        orderBy: { [sortField]: sortDir === "asc" ? "asc" : "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          shortName: true,
-          logoUrl: true,
-          portfolioSize: true,
-          lastPrice: true,
-          dailyReturn: true,
-          investorCount: true,
-          category: { select: { code: true, name: true, color: true } },
-        },
-      }),
-      prisma.fund.count({ where }),
-    ]);
-
-    const legacy = items.map((f) => {
-      const r = f.dailyReturn / 100;
-      const derivedPrev =
-        f.dailyReturn !== 0 &&
-        Number.isFinite(f.dailyReturn) &&
-        Math.abs(f.dailyReturn) < 99.9 &&
-        f.lastPrice > 0
-          ? f.lastPrice / (1 + r)
-          : null;
-      return {
-        id: f.id,
-        symbol: f.code,
-        name: f.name,
-        shortName: f.shortName,
-        logoUrl: f.logoUrl,
-        marketCap: f.portfolioSize,
-        lastPrice: f.lastPrice,
-        previousClose: null as number | null,
-        change: derivedPrev != null ? f.lastPrice - derivedPrev : 0,
-        changePercent: f.dailyReturn,
-        dayHigh: f.lastPrice,
-        dayLow: f.lastPrice,
-        volume: f.investorCount,
-        turnover: f.portfolioSize,
-        peRatio: null as number | null,
-        sparkline: [] as number[],
-        sparklineTrend:
-          f.dailyReturn > 0 ? ("up" as const) : f.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
-        sector: f.category
-          ? { code: f.category.code, name: f.category.name, color: f.category.color }
-          : null,
-      };
-    });
-
-    return NextResponse.json({
-      items: legacy,
+    const result = await getFundsPage({
       page,
       pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
+      q,
+      category: sector,
+      fundType: indexCode,
+      sortField,
+      sortDir,
     });
+
+    const items = result.items.map<LegacyStockRow>((fund) => {
+        const dailyRatio = fund.dailyReturn / 100;
+        const derivedPrev =
+          fund.dailyReturn !== 0 &&
+          Number.isFinite(fund.dailyReturn) &&
+          Math.abs(fund.dailyReturn) < 99.9 &&
+          fund.lastPrice > 0
+            ? fund.lastPrice / (1 + dailyRatio)
+            : null;
+
+        return {
+          id: fund.id,
+          symbol: fund.code,
+          name: fund.name,
+          shortName: fund.shortName,
+          logoUrl: fund.logoUrl,
+          marketCap: fund.portfolioSize,
+          lastPrice: fund.lastPrice,
+          previousClose: null,
+          change: derivedPrev != null ? fund.lastPrice - derivedPrev : 0,
+          changePercent: fund.dailyReturn,
+          dayHigh: fund.lastPrice,
+          dayLow: fund.lastPrice,
+          volume: fund.investorCount,
+          turnover: fund.portfolioSize,
+          peRatio: null,
+          sparkline: [],
+          sparklineTrend:
+            fund.dailyReturn > 0 ? "up" : fund.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+          sector: fund.category,
+        };
+      });
+
+    return NextResponse.json(
+      {
+        items,
+        page: result.page,
+        pageSize: result.pageSize,
+        total: result.total,
+        totalPages: result.totalPages,
+      },
+      {
+        headers: {
+          "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+        },
+      }
+    );
   } catch (e) {
     console.error(e);
     return NextResponse.json({ error: "stocks_legacy_failed" }, { status: 500 });

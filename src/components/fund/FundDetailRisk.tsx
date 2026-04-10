@@ -1,4 +1,5 @@
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
+import { MobileDetailAccordion } from "@/components/fund/MobileDetailAccordion";
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
 
 function fmtPct(n: number, digits = 1): string {
@@ -6,22 +7,23 @@ function fmtPct(n: number, digits = 1): string {
   return `${n.toFixed(digits).replace(".", ",")}%`;
 }
 
-type StatProps = { label: string; value: string; hint?: string };
+type StatProps = { label: string; value: string };
 
-function Stat({ label, value, hint }: StatProps) {
+function Stat({ label, value }: StatProps) {
   return (
-    <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: "var(--text-muted)" }}>
+    <div
+      className="flex min-h-[5.8rem] min-w-0 flex-col justify-between rounded-[0.95rem] border px-3 py-2.5"
+      style={{
+        borderColor: "color-mix(in srgb, var(--border-subtle) 86%, transparent)",
+        background: "color-mix(in srgb, var(--card-bg) 94%, var(--bg-muted))",
+      }}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-[0.09em]" style={{ color: "var(--text-muted)" }}>
         {label}
       </p>
-      <p className="mt-1.5 tabular-nums text-sm font-semibold tracking-[-0.02em] sm:text-[15px]" style={{ color: "var(--text-primary)" }}>
+      <p className="mt-2.5 tabular-nums text-[16px] font-semibold tracking-[-0.03em] sm:text-[1.05rem]" style={{ color: "var(--text-primary)" }}>
         {value}
       </p>
-      {hint ? (
-        <p className="mt-1 text-[11px] leading-snug" style={{ color: "var(--text-tertiary)" }}>
-          {hint}
-        </p>
-      ) : null}
     </div>
   );
 }
@@ -30,74 +32,62 @@ type Props = { data: FundDetailPageData };
 
 export function FundDetailRisk({ data }: Props) {
   const m = data.historyMetrics ?? data.snapshotMetrics;
-  const bw = data.bestWorstDay;
   const d = data.derivedSummary;
 
   const hasVol = m && Number.isFinite(m.volatility) && m.volatility > 0;
   const hasDd = m && Number.isFinite(m.maxDrawdown) && m.maxDrawdown > 0;
-  const hasDay = bw && (Number.isFinite(bw.bestPct) || Number.isFinite(bw.worstPct));
   const has1y = d.returnApprox1YearPct != null && Number.isFinite(d.returnApprox1YearPct);
-  const has2y = d.returnApprox2YearPct != null && Number.isFinite(d.returnApprox2YearPct);
-  const hasRoll =
-    d.bestRollingMonthPct != null &&
-    d.worstRollingMonthPct != null &&
-    Number.isFinite(d.bestRollingMonthPct) &&
-    Number.isFinite(d.worstRollingMonthPct);
-  const hasWin = m && Number.isFinite(m.winRate) && m.dataPoints >= 20 && m.winRate > 0;
+  const has3y = d.returnApprox3YearPct != null && Number.isFinite(d.returnApprox3YearPct);
 
-  if (!hasVol && !hasDd && !hasDay && !has1y && !has2y && !hasRoll && !hasWin) return null;
+  if (!hasVol && !hasDd && !has1y && !has3y) return null;
+
+  const content = (
+    <div
+      className="grid gap-2.5 rounded-[1.05rem] border px-3 py-3 sm:grid-cols-2 sm:px-3.5 sm:py-3.5 lg:grid-cols-4"
+      style={{
+        borderColor: "var(--border-subtle)",
+        background: "var(--card-bg)",
+        boxShadow: "var(--shadow-xs)",
+      }}
+    >
+      {has1y ? (
+        <Stat label="Yaklaşık 1Y getiri" value={fmtPct(d.returnApprox1YearPct!, 2)} />
+      ) : null}
+      {has3y ? (
+        <Stat label="Yaklaşık 3Y getiri" value={fmtPct(d.returnApprox3YearPct!, 2)} />
+      ) : null}
+      {hasVol ? (
+        <Stat label="Oynaklık (yıllık)" value={fmtPct(m!.volatility, 1)} />
+      ) : null}
+      {hasDd ? (
+        <Stat label="En derin düşüş" value={fmtPct(m!.maxDrawdown, 1)} />
+      ) : null}
+    </div>
+  );
 
   return (
-    <section aria-labelledby="fund-detail-risk-heading">
-      <FundDetailSectionTitle id="fund-detail-risk-heading">Risk ve dönem özeti</FundDetailSectionTitle>
-      <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed sm:text-sm" style={{ color: "var(--text-secondary)" }}>
-        Fiyat geçmişinden türetilen özetler; yatırım tavsiyesi değildir.
-      </p>
-      <div
-        className="mt-4 grid gap-x-6 gap-y-7 rounded-xl border px-4 py-5 sm:grid-cols-2 sm:px-6 sm:py-6 lg:grid-cols-3"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--card-bg)" }}
-      >
-        {has1y ? (
-          <Stat
-            label="Yaklaşık 1Y getiri"
-            value={fmtPct(d.returnApprox1YearPct!, 2)}
-            hint="~365 gün veya mevcut serinin başı; takvim bazlı."
-          />
-        ) : null}
-        {has2y ? (
-          <Stat
-            label="Yaklaşık 2Y getiri"
-            value={fmtPct(d.returnApprox2YearPct!, 2)}
-            hint="~730 gün veya mevcut serinin başı; takvim bazlı."
-          />
-        ) : null}
-        {hasRoll ? (
-          <Stat
-            label="~21 gün penceresi"
-            value={`${fmtPct(d.bestRollingMonthPct!, 1)} / ${fmtPct(d.worstRollingMonthPct!, 1)}`}
-            hint="Ardışık işlem günleri içinde en iyi ve en zayıf dilim."
-          />
-        ) : null}
-        {hasVol ? (
-          <Stat label="Yıllıklandırılmış volatilite" value={fmtPct(m!.volatility, 1)} hint="Geçmiş getiri dalgalanması." />
-        ) : null}
-        {hasDd ? (
-          <Stat label="Maks. düşüş (drawdown)" value={fmtPct(m!.maxDrawdown, 1)} hint="Zirveden en derin geri çekilme." />
-        ) : null}
-        {hasWin ? (
-          <Stat
-            label="Pozitif gün payı"
-            value={fmtPct(m!.winRate, 0)}
-            hint="Kayıtlı günlük getirilerde pozitif kapanış oranı."
-          />
-        ) : null}
-        {hasDay && bw ? (
-          <Stat label="En güçlü 1G" value={fmtPct(bw.bestPct, 2)} hint="Tek günlük hareketler içinde." />
-        ) : null}
-        {hasDay && bw ? (
-          <Stat label="En zayıf 1G" value={fmtPct(bw.worstPct, 2)} hint="Tek günlük hareketler içinde." />
-        ) : null}
+    <>
+      <div className="md:hidden">
+        <MobileDetailAccordion
+          title="Risk Özeti"
+          hint="Getiri, oynaklık ve geri çekilme görünümünü tek bakışta özetler."
+          defaultOpen
+        >
+          {content}
+        </MobileDetailAccordion>
       </div>
-    </section>
+
+      <section aria-labelledby="fund-detail-risk-heading" className="hidden md:block">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <FundDetailSectionTitle id="fund-detail-risk-heading">Risk Özeti</FundDetailSectionTitle>
+            <p className="mt-1 text-[12px] leading-snug sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
+              Getiri, oynaklık ve geri çekilme görünümünü tek bakışta özetler.
+            </p>
+          </div>
+        </div>
+        <div className="mt-2">{content}</div>
+      </section>
+    </>
   );
 }

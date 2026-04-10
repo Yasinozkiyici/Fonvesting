@@ -1,10 +1,11 @@
-"use client";
-
-import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
+import { SitePageShell } from "@/components/SitePageShell";
 import Footer from "@/components/tefas/Footer";
 import FundsTable from "@/components/tefas/FundsTable";
+import { LIVE_DATA_PAGE_REVALIDATE_SEC } from "@/lib/data-freshness";
+import { readSearchParam, type RouteSearchParams } from "@/lib/route-search-params";
+import { getCategorySummariesFromDailySnapshotSafe } from "@/lib/services/fund-daily-snapshot.service";
 
 type CatRow = {
   code: string;
@@ -12,71 +13,79 @@ type CatRow = {
   stockCount: number;
 };
 
-export default function SectorsPage() {
-  const [categories, setCategories] = useState<CatRow[]>([]);
+export const revalidate = LIVE_DATA_PAGE_REVALIDATE_SEC;
 
-  useEffect(() => {
-    fetch("/api/sectors")
-      .then((r) => r.json())
-      .then((rows: CatRow[]) => setCategories(rows))
-      .catch(console.error);
-  }, []);
+export default async function SectorsPage({
+  searchParams,
+}: {
+  searchParams?: RouteSearchParams;
+}) {
+  const initialCategory = readSearchParam(searchParams, "sector", "category");
+  const initialQuery = readSearchParam(searchParams, "q", "query");
+  const categories: CatRow[] = (await getCategorySummariesFromDailySnapshotSafe()).map((category) => ({
+    code: category.code,
+    name: category.name,
+    stockCount: category.fundCount,
+  }));
 
   return (
-    <div className="relative isolate flex min-h-screen flex-col">
-      <div className="gradient-mesh">
-        <div className="mesh-layer-1" />
-        <div className="mesh-layer-2" />
-        <div className="mesh-layer-3" />
-        <div className="noise" />
-      </div>
-
-      <div className="relative z-10 flex min-h-screen flex-col">
+    <SitePageShell>
         <Header />
 
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6 lg:px-8">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold" style={{ color: "var(--text-primary)" }}>
+          <header className="mb-6 max-w-2xl">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
+              Fon kategorileri
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
               Kategoriler
             </h1>
-            <p className="mt-1 text-sm" style={{ color: "var(--text-muted)" }}>
-              Bir kategori seçin; tablo otomatik filtrelenecek. Kategoriler TEFAS tiplerine göre eşlenir.
+            <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+              Gruplara göre dağılımı inceleyin; seçtiğiniz kategori aşağıdaki listeyi o grupla sınırlar.
+            </p>
+          </header>
+
+          <div className="mb-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
+              Gruplar
             </p>
           </div>
-
-          <div className="mb-6 flex flex-wrap gap-2">
+          <nav className="mb-8 flex flex-wrap gap-1.5 sm:gap-2" aria-label="Kategori seçimi">
             <Link
               href="/sectors"
-              className="rounded-full border px-3 py-1.5 text-sm"
-              style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              prefetch={false}
+              className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-[0.88] sm:px-3 sm:py-1.5"
+              style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)", background: "var(--card-bg)" }}
             >
-              Tüm kategoriler
+              Tümü
             </Link>
             {categories.map((c) => (
               <Link
                 key={c.code}
                 href={`/sectors?sector=${encodeURIComponent(c.code)}`}
-                className="rounded-full border px-3 py-1.5 text-sm"
-                style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+                prefetch={false}
+                className="rounded-lg border px-2.5 py-1 text-xs font-medium transition-opacity hover:opacity-[0.88] sm:px-3 sm:py-1.5"
+                style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)", background: "var(--card-bg)" }}
               >
-                {c.name} ({c.stockCount})
+                <span>{c.name}</span>
+                <span className="ml-1 tabular-nums opacity-70">{c.stockCount}</span>
               </Link>
             ))}
-          </div>
+          </nav>
 
-          <Suspense
-            fallback={
-              <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--border-default)", color: "var(--text-muted)" }}>
-                Tablo yükleniyor...
-              </div>
-            }
-          >
-            <FundsTable />
-          </Suspense>
+          <div>
+            <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
+              Fon listesi
+            </p>
+            <FundsTable
+              initialCategories={categories.map((item) => ({ code: item.code, name: item.name }))}
+              initialCategory={initialCategory}
+              initialQuery={initialQuery}
+            />
+          </div>
         </main>
 
         <Footer />
-      </div>
-    </div>
+    </SitePageShell>
   );
 }

@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import Link from "next/link";
 
+const SHOW_DETAILS = process.env.NODE_ENV !== "production";
+
 export default function Error({
   error,
   reset,
@@ -11,7 +13,9 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[route-error]", error);
+    if (SHOW_DETAILS) {
+      console.error("[route-error]", error);
+    }
   }, [error]);
 
   return (
@@ -25,21 +29,20 @@ export default function Error({
     >
       <h1 className="text-xl font-semibold tracking-tight">Sayfa yüklenirken hata oluştu</h1>
       <p className="text-sm leading-relaxed" style={{ color: "var(--text-secondary, #334b66)" }}>
-        Tarayıcı konsolunda (F12 → Console) ayrıntıya bakın. Veritabanı için ortamda{" "}
-        <code className="rounded px-1" style={{ background: "var(--bg-muted, #f4f4f1)" }}>
-          DATABASE_URL
-        </code>{" "}
-        tanımlı olmalı.
+        Sayfa beklenmeyen bir durumda kaldı. Yeniden deneyin veya ana sayfaya dönün. Sorun sürerse sistem durumu ve veri
+        akışını daha sonra tekrar kontrol edin.
       </p>
-      <pre
-        className="max-h-40 overflow-auto rounded-lg border p-3 text-xs"
-        style={{
-          borderColor: "var(--border-default, rgba(15,23,42,0.1))",
-          background: "var(--card-bg, #fff)",
-        }}
-      >
-        {error.message}
-      </pre>
+      {SHOW_DETAILS ? (
+        <pre
+          className="max-h-40 overflow-auto rounded-lg border p-3 text-xs"
+          style={{
+            borderColor: "var(--border-default, rgba(15,23,42,0.1))",
+            background: "var(--card-bg, #fff)",
+          }}
+        >
+          {error.message}
+        </pre>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"

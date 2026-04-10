@@ -39,9 +39,21 @@ export function fundTypeSortKey(fundType: { code: number; name: string } | null 
 /** Önbellekteki eski uzun isimleri okurken düzeltir. */
 export function normalizeScoresPayloadFundTypes(payload: ScoresApiPayload): ScoresApiPayload {
   return {
-    ...payload,
+    mode: payload.mode,
+    total: payload.total,
+    ...(payload.appliedQuery ? { appliedQuery: payload.appliedQuery } : {}),
     funds: payload.funds.map((f) => ({
-      ...f,
+      fundId: f.fundId,
+      code: f.code,
+      name: f.name,
+      shortName: f.shortName,
+      logoUrl: f.logoUrl,
+      lastPrice: f.lastPrice,
+      dailyReturn: f.dailyReturn,
+      portfolioSize: f.portfolioSize,
+      investorCount: f.investorCount,
+      finalScore: f.finalScore,
+      category: f.category,
       fundType: f.fundType ? { code: f.fundType.code, name: fundTypeDisplayLabel(f.fundType) } : null,
     })),
   };

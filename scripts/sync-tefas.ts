@@ -1,9 +1,5 @@
-import { config } from "dotenv";
-import path from "node:path";
+import "./load-env";
 import { runFullTefasSync, runTefasSync } from "../src/lib/services/tefas-sync.service";
-
-config({ path: path.join(process.cwd(), ".env"), quiet: true });
-config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
 
 const all = process.argv.includes("--all");
 

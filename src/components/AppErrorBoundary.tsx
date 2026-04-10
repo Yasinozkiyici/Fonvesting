@@ -7,6 +7,7 @@ import Link from "next/link";
 type Props = { children: ReactNode };
 
 type State = { error: Error | null };
+const SHOW_DETAILS = process.env.NODE_ENV !== "production";
 
 /**
  * İstemci tarafı render sırasında yakalanmayan hatalar bazen boş/beyaz ekran bırakır.
@@ -20,7 +21,9 @@ class ErrorBoundaryInner extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[AppErrorBoundary]", error, info.componentStack);
+    if (SHOW_DETAILS) {
+      console.error("[AppErrorBoundary]", error, info.componentStack);
+    }
   }
 
   render() {
@@ -36,18 +39,20 @@ class ErrorBoundaryInner extends Component<Props, State> {
         >
           <h1 className="text-lg font-semibold tracking-tight">Arayüz yüklenirken hata oluştu</h1>
           <p className="text-sm leading-relaxed" style={{ color: "var(--text-secondary, #334b66)" }}>
-            Bu genelde geçici bir durumdur. Sayfayı yenileyin veya ana sayfaya dönün. Sorun sürerse konsoldaki (F12) hata
-            mesajını kontrol edin.
+            Bu genelde geçici bir durumdur. Sayfayı yeniden deneyin veya ana sayfaya dönün. Sorun sürerse biraz sonra
+            tekrar deneyin.
           </p>
-          <pre
-            className="max-h-32 overflow-auto rounded-lg border p-3 text-xs"
-            style={{
-              borderColor: "var(--border-default, rgba(15,23,42,0.1))",
-              background: "var(--card-bg, #fff)",
-            }}
-          >
-            {error.message}
-          </pre>
+          {SHOW_DETAILS ? (
+            <pre
+              className="max-h-32 overflow-auto rounded-lg border p-3 text-xs"
+              style={{
+                borderColor: "var(--border-default, rgba(15,23,42,0.1))",
+                background: "var(--card-bg, #fff)",
+              }}
+            >
+              {error.message}
+            </pre>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"

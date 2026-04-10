@@ -4,5 +4,5 @@ export const dynamic = "force-dynamic";
 
 /** /diagnostics bazı ortamlarda engellenirse /status deneyin */
 export default function StatusPage() {
-  return <DiagnosticsView title="Yatirim.io — durum (/status)" />;
+  return <DiagnosticsView title="Fonvesting — durum (/status)" />;
 }

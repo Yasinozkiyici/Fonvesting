@@ -1,36 +1,23 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
+import { getCategorySummariesFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Geriye dönük uyumluluk: sektör listesi artık TEFAS kategorileridir. */
 export async function GET() {
   try {
-    const categories = await prisma.fundCategory.findMany({
-      orderBy: { name: "asc" },
-      include: { _count: { select: { funds: true } } },
-    });
-
-    const rows = await Promise.all(
-      categories.map(async (c) => {
-        const agg = await prisma.fund.aggregate({
-          where: { categoryId: c.id, isActive: true },
-          _avg: { dailyReturn: true },
-        });
-        return {
-          id: c.id,
-          code: c.code,
-          name: c.name,
-          color: c.color,
-          stockCount: c._count.funds,
-          avgChange: Number((agg._avg.dailyReturn ?? 0).toFixed(4)),
-        };
-      })
-    );
+    const rows = (await getCategorySummariesFromDailySnapshot()).map((category) => ({
+      id: category.id,
+      code: category.code,
+      name: category.name,
+      color: category.color,
+      stockCount: category.fundCount,
+      avgChange: category.avgDailyReturn,
+    }));
 
     return NextResponse.json(rows, {
-      headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" },
+      headers: { "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC) },
     });
   } catch (e) {
     console.error(e);

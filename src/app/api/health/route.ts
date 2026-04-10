@@ -1,60 +1,69 @@
 import { NextResponse } from "next/server";
-import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
+import { getSystemHealthSnapshot } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const preferredRegion = ["fra1"];
 
-/** Tanılama çıktısında kullanıcı adı / şifre sızdırmaz. */
-function redactDatabaseUrl(urlStr: string): string {
-  if (!urlStr) return "";
-  try {
-    return urlStr.replace(/\/\/([^/]*@)/, "//***:***@").split("?")[0] ?? urlStr;
-  } catch {
-    return "postgresql://(redacted)";
+function hasDetailedHealthAccess(headers: Headers): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  const configuredSecret = process.env.HEALTH_SECRET?.trim();
+  const providedHealthSecret = headers.get("x-health-secret")?.trim();
+  if (configuredSecret && providedHealthSecret && providedHealthSecret === configuredSecret) {
+    return true;
   }
+
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) return false;
+  const authHeader = headers.get("authorization")?.trim() ?? "";
+  return authHeader === `Bearer ${cronSecret}`;
 }
 
-export async function GET() {
-  const dbUrl = process.env.DATABASE_URL ?? "";
-  let effective = "";
-  try {
-    effective = getEffectiveDatabaseUrl();
-  } catch {
-    effective = "";
-  }
-  const isPostgres = effective.startsWith("postgresql:") || effective.startsWith("postgres:");
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    const fundCount = await prisma.fund.count();
-    return NextResponse.json({
-      ok: true,
-      service: "fonvesting",
-      timestamp: new Date().toISOString(),
-      database: {
-        configured: Boolean(dbUrl || process.env.NODE_ENV === "development"),
-        engine: isPostgres ? "postgresql" : "unknown",
-        effectiveUrlPrefix: redactDatabaseUrl(effective).slice(0, 96),
-        hint: "Yerel: docker compose up -d ve .env içinde DATABASE_URL. Vercel: proje ortam değişkenlerinde DATABASE_URL.",
-      },
-      funds: { count: fundCount },
-    });
-  } catch (error) {
-    console.error("[health] failed:", error);
-    const message = error instanceof Error ? error.message : String(error);
+export async function GET(request: Request) {
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowDetails = hasDetailedHealthAccess(request.headers);
+  const snapshot = await getSystemHealthSnapshot({ includeExternalProbes: allowDetails });
+  const statusCode = snapshot.ok ? 200 : 503;
+
+  if (isProduction && !allowDetails) {
     return NextResponse.json(
       {
-        ok: false,
+        ok: snapshot.ok,
+        status: snapshot.status,
         service: "fonvesting",
-        timestamp: new Date().toISOString(),
+        timestamp: snapshot.checkedAt,
         database: {
-          configured: Boolean(dbUrl),
-          engine: isPostgres ? "postgresql" : "unknown",
-          effectiveUrlPrefix: redactDatabaseUrl(effective).slice(0, 96),
-          hint: "PostgreSQL bağlantısını kontrol edin; migrate: pnpm exec prisma migrate deploy. Yerel varsayılan: localhost:5433 (docker-compose).",
+          configured: snapshot.database.configured,
+          engine: snapshot.database.engine,
+          canConnect: snapshot.database.canConnect,
         },
-        error: message.slice(0, 500),
+        counts: {
+          funds: snapshot.counts.funds,
+          activeFunds: snapshot.counts.activeFunds,
+        },
+        freshness: {
+          latestFundSnapshotDate: snapshot.freshness.latestFundSnapshotDate,
+          latestMarketSnapshotDate: snapshot.freshness.latestMarketSnapshotDate,
+          latestMacroObservationDate: snapshot.freshness.latestMacroObservationDate,
+        },
+        integrity: {
+          macroSyncStatus: snapshot.integrity.macroSyncStatus,
+          latestSnapshotCoverageGap: snapshot.integrity.latestSnapshotCoverageGap,
+        },
+        jobs: snapshot.jobs,
+        issueCount: snapshot.issues.length,
       },
-      { status: 503 }
+      { status: statusCode }
     );
   }
+
+  return NextResponse.json(
+    {
+      ...snapshot,
+      service: "fonvesting",
+      timestamp: snapshot.checkedAt,
+      hint: "Yerel: docker compose up -d ve .env/.env.local içinde PostgreSQL DATABASE_URL. Üretim: pnpm exec prisma migrate deploy.",
+    },
+    { status: statusCode }
+  );
 }

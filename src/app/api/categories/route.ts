@@ -1,24 +1,18 @@
 import { NextResponse } from "next/server";
-import { unstable_cache } from "next/cache";
+import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
 import { getCategorySummariesFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const CACHE_SEC = 86_400;
-
-async function computeCategoriesPayload() {
-  return getCategorySummariesFromDailySnapshot();
-}
-
-const getCachedCategories = unstable_cache(computeCategoriesPayload, ["api-categories-v1"], {
-  revalidate: CACHE_SEC,
-});
-
 export async function GET() {
   try {
-    const out = await getCachedCategories();
-    return NextResponse.json(out);
+    const out = await getCategorySummariesFromDailySnapshot();
+    return NextResponse.json(out, {
+      headers: {
+        "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+      },
+    });
   } catch (e) {
     console.error(e);
     return NextResponse.json({ error: "categories_failed" }, { status: 500 });

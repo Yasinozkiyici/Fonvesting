@@ -33,6 +33,7 @@ export function FundLogoMark({
           className={imgClassName}
           loading="lazy"
           decoding="async"
+          fetchPriority="low"
           referrerPolicy="no-referrer"
           onError={() => setFailed(true)}
         />

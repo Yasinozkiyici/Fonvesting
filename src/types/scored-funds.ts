@@ -1,4 +1,4 @@
-import type { RankingMode, NormalizedScores, FundMetrics, RiskLevel } from "@/lib/scoring";
+import type { RankingMode } from "@/lib/scoring";
 
 export interface ScoredFund {
   fundId: string;
@@ -8,18 +8,11 @@ export interface ScoredFund {
   logoUrl: string | null;
   lastPrice: number;
   dailyReturn: number;
-  monthlyReturn: number;
-  yearlyReturn: number;
   portfolioSize: number;
   investorCount: number;
   category: { code: string; name: string } | null;
   fundType: { code: number; name: string } | null;
   finalScore: number;
-  riskLevel: RiskLevel;
-  scores: NormalizedScores;
-  metrics: FundMetrics;
-  alpha: number;
-  sparkline: number[];
 }
 
 export interface ScoredResponse {

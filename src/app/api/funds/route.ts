@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
-import { fundTypeForApi } from "@/lib/fund-type-display";
+import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
+import { getFundsPage, type FundListSortField } from "@/lib/services/fund-list.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SORT_FIELDS = new Set([
+const MAX_PAGE = 200;
+const MAX_PAGE_SIZE = 100;
+const MAX_QUERY_LENGTH = 64;
+const MAX_FILTER_LENGTH = 32;
+
+const SORT_FIELDS = new Set<FundListSortField>([
   "portfolioSize",
   "dailyReturn",
   "lastPrice",
@@ -20,72 +23,50 @@ const SORT_FIELDS = new Set([
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
-    const page = Math.max(1, Number(searchParams.get("page") ?? "1"));
-    const pageSize = Math.min(100, Math.max(1, Number(searchParams.get("pageSize") ?? "50")));
-    const q = (searchParams.get("q") ?? "").trim();
-    const category = searchParams.get("category") ?? undefined;
-    const fundType = searchParams.get("fundType") ?? undefined;
+    const page = Math.min(MAX_PAGE, Math.max(1, Number(searchParams.get("page") ?? "1")));
+    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(searchParams.get("pageSize") ?? "50")));
+    const q = (searchParams.get("q") ?? "").trim().slice(0, MAX_QUERY_LENGTH).toLocaleLowerCase("tr-TR");
+    const category = (searchParams.get("category") ?? "").trim().slice(0, MAX_FILTER_LENGTH);
+    const fundType = (searchParams.get("fundType") ?? "").trim().slice(0, 8);
     const sort = searchParams.get("sort") ?? "portfolioSize:desc";
-    const [rawField, sortDir] = sort.split(":") as [string, "asc" | "desc"];
-    const sortField = SORT_FIELDS.has(rawField) ? rawField : "portfolioSize";
+    const rawField = sort.split(":")[0] ?? "portfolioSize";
+    const sortDirRaw = sort.split(":")[1];
+    const sortField: FundListSortField = SORT_FIELDS.has(rawField as FundListSortField)
+      ? (rawField as FundListSortField)
+      : "portfolioSize";
+    const sortDir = sortDirRaw === "asc" ? "asc" : "desc";
 
-    const where: Prisma.FundWhereInput = { isActive: true };
-    if (q) {
-      where.OR = [
-        { code: { contains: q.toUpperCase() } },
-        { name: { contains: q } },
-        { shortName: { contains: q } },
-      ];
-    }
-    if (category) where.category = { code: category };
-    if (fundType) {
-      const c = parseInt(fundType, 10);
-      if (!Number.isNaN(c)) where.fundType = { code: c };
-    }
-
-    const [items, total] = await Promise.all([
-      prisma.fund.findMany({
-        where,
-        orderBy: { [sortField]: sortDir === "asc" ? "asc" : "desc" },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          shortName: true,
-          logoUrl: true,
-          portfolioSize: true,
-          investorCount: true,
-          shareCount: true,
-          lastPrice: true,
-          dailyReturn: true,
-          weeklyReturn: true,
-          monthlyReturn: true,
-          yearlyReturn: true,
-          category: { select: { code: true, name: true, color: true } },
-          fundType: { select: { code: true, name: true } },
-        },
-      }),
-      prisma.fund.count({ where }),
-    ]);
-
-    const itemsOut = items.map((it) => ({
-      ...it,
-      fundType: fundTypeForApi(it.fundType),
-      logoUrl: getFundLogoUrlForUi(it.id, it.code, it.logoUrl, it.name),
-      sparkline: [] as number[],
-      sparklineTrend:
-        it.dailyReturn > 0 ? "up" : it.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
-    }));
-
-    return NextResponse.json({
-      items: itemsOut,
+    const result = await getFundsPage({
       page,
       pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
+      q,
+      category,
+      fundType,
+      sortField,
+      sortDir,
     });
+
+    const pagedItems = result.items.map((item) => ({
+      ...item,
+      sparkline: [] as number[],
+      sparklineTrend:
+        item.dailyReturn > 0 ? "up" : item.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+    }));
+
+    return NextResponse.json(
+      {
+        items: pagedItems,
+        page: result.page,
+        pageSize: result.pageSize,
+        total: result.total,
+        totalPages: result.totalPages,
+      },
+      {
+        headers: {
+          "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+        },
+      }
+    );
   } catch (e) {
     console.error(e);
     return NextResponse.json({ error: "funds_failed" }, { status: 500 });

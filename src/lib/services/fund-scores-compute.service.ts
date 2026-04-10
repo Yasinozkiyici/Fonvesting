@@ -5,8 +5,7 @@ import {
   buildExtendedNormalizationContext,
   calculateNormalizedScoresExtended,
   calculateFinalScore,
-  determineRiskLevel,
-  calculateAlpha,
+  compareRankedFunds,
   type FundMetrics,
   type FundScaleFields,
   type RankingMode,
@@ -150,43 +149,56 @@ async function computeScoresPayloadFromRawData(mode: RankingMode, categoryKey: s
   }));
   const extCtx = buildExtendedNormalizationContext(allMetrics, scales);
 
-  const scoredFunds: ScoredFundRow[] = fundsWithMetrics.map(({ fund, metrics, performance }, i) => {
+  const scoredFunds = fundsWithMetrics.map(({ fund, metrics, performance }, i) => {
     const scores = calculateNormalizedScoresExtended(metrics, extCtx, scales[i]!);
     const finalScore = calculateFinalScore(scores, mode);
 
-    const riskLevel = determineRiskLevel(fund.category?.code || "DGR", fund.name);
-
-    const alpha = calculateAlpha(metrics.annualizedReturn, fund.category?.code || "DGR");
-
     return {
-      fundId: fund.id,
-      code: fund.code,
-      name: fund.name,
-      shortName: fund.shortName,
-      logoUrl: getFundLogoUrlForUi(fund.id, fund.code, fund.logoUrl, fund.name),
-      lastPrice: performance.lastPrice || fund.lastPrice,
-      dailyReturn: performance.dailyReturn,
-      monthlyReturn: performance.monthlyReturn,
-      yearlyReturn: performance.yearlyReturn,
-      portfolioSize: fund.portfolioSize,
-      investorCount: fund.investorCount,
-      category: fund.category,
-      fundType: fundTypeForApi(fund.fundType),
-      finalScore,
-      riskLevel,
+      item: {
+        fundId: fund.id,
+        code: fund.code,
+        name: fund.name,
+        shortName: fund.shortName,
+        logoUrl: getFundLogoUrlForUi(fund.id, fund.code, fund.logoUrl, fund.name),
+        lastPrice: performance.lastPrice || fund.lastPrice,
+        dailyReturn: performance.dailyReturn,
+        portfolioSize: fund.portfolioSize,
+        investorCount: fund.investorCount,
+        category: fund.category,
+        fundType: fundTypeForApi(fund.fundType),
+        finalScore,
+      } satisfies ScoredFundRow,
       scores,
+      yearlyReturn: performance.yearlyReturn,
+      monthlyReturn: performance.monthlyReturn,
       metrics,
-      alpha,
-      sparkline: performance.sparkline,
     };
   });
 
-  scoredFunds.sort((a, b) => b.finalScore - a.finalScore);
+  scoredFunds.sort((a, b) =>
+    compareRankedFunds(mode, {
+      code: a.item.code,
+      finalScore: a.item.finalScore,
+      scores: a.scores,
+      yearlyReturn: a.yearlyReturn,
+      monthlyReturn: a.monthlyReturn,
+      metrics: a.metrics,
+      trailingReturnBlend: null,
+    }, {
+      code: b.item.code,
+      finalScore: b.item.finalScore,
+      scores: b.scores,
+      yearlyReturn: b.yearlyReturn,
+      monthlyReturn: b.monthlyReturn,
+      metrics: b.metrics,
+      trailingReturnBlend: null,
+    })
+  );
 
   return {
     mode,
     total: scoredFunds.length,
-    funds: scoredFunds,
+    funds: scoredFunds.map((entry) => entry.item),
   };
 }
 
@@ -205,7 +217,7 @@ export async function computeScoresPayload(
   return queryTrim ? filterScoresPayloadByQuery(raw, queryTrim) : raw;
 }
 
-function filterScoresPayloadByQuery(payload: ScoresApiPayload, q: string): ScoresApiPayload {
+export function filterScoresPayloadByQuery(payload: ScoresApiPayload, q: string): ScoresApiPayload {
   const needle = q.trim().toLowerCase();
   if (!needle) return { ...payload, appliedQuery: undefined };
   const funds = payload.funds.filter(

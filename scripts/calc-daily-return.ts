@@ -4,16 +4,12 @@
  * 2) History yetersizse TEFAS'tan önceki + güncel iş gününü çekip backfill yapar.
  * 3) Piyasa özetini tekrar üretir.
  */
-import path from "node:path";
-import { config } from "dotenv";
+import "./load-env";
 import { prisma } from "../src/lib/prisma";
 import { TefasBrowserClient, withTefasBrowserClient, type TefasExportRow } from "../src/lib/services/tefas-browser.service";
 import { rebuildMarketSnapshot, recomputeDailyReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
 import { fetchUsdTryEurTryLive } from "../src/lib/services/exchange-rates.service";
 import { parseTefasSessionDate, startOfUtcDay } from "../src/lib/trading-calendar-tr";
-
-config({ path: path.join(process.cwd(), ".env"), quiet: true });
-config({ path: path.join(process.cwd(), ".env.local"), override: true, quiet: true });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;

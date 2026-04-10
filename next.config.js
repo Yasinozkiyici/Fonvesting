@@ -2,13 +2,32 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // Next 14.2: Prisma'yı App Router sunucu paketinden dışarı tut (delegate / bağlantı sorunlarını önler).
-  experimental: {
-    serverComponentsExternalPackages: ["@prisma/client", ".prisma/client"],
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
+        ],
+      },
+    ];
   },
-  // macOS / APFS: dev sırasında webpack pack önbellek rename (ENOENT) ve ardından 500 / bozuk _next istekleri görülebiliyor.
+  experimental: {
+    serverComponentsExternalPackages: [
+      "@prisma/client",
+      ".prisma/client",
+      "@sparticuz/chromium",
+      "playwright",
+      "playwright-core",
+    ],
+  },
+  // Dev’de varsayılan webpack önbelleği: HMR / CSS daha stabil. APFS’te cache rename hatası görürseniz:
+  // NEXT_DISABLE_WEBPACK_CACHE=1 pnpm dev
   webpack: (config, { dev }) => {
-    if (dev) {
+    if (dev && process.env.NEXT_DISABLE_WEBPACK_CACHE === "1") {
       config.cache = false;
     }
     return config;

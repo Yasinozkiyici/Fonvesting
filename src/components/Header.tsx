@@ -1,23 +1,62 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Search, Menu, X, Sun, Moon } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { SiteLogoLink } from "@/components/SiteLogo";
 
+type NavItem = {
+  href: string;
+  label: string;
+  activePaths?: string[];
+  activePathPrefixes?: string[];
+};
+
+const navLinks: NavItem[] = [
+  {
+    href: "/",
+    label: "Fonlar",
+    activePaths: ["/", "/stocks"],
+    activePathPrefixes: ["/fund/"],
+  },
+  { href: "/compare", label: "Karşılaştır", activePaths: ["/compare"] },
+  { href: "/sectors", label: "Kategoriler" },
+  { href: "/indices", label: "Fon türleri" },
+];
+
+function linkIsActive(pathname: string, link: NavItem): boolean {
+  const paths = link.activePaths ?? [link.href];
+  if (paths.some((p) => pathname === p)) return true;
+  const prefixes = link.activePathPrefixes;
+  if (prefixes?.length) {
+    return prefixes.some((prefix) => pathname.startsWith(prefix));
+  }
+  return false;
+}
+
+function ThemeToggleIcon({ theme, mounted }: { theme: "light" | "dark"; mounted: boolean }) {
+  if (!mounted) {
+    return <Moon className="h-[14px] w-[14px]" strokeWidth={2} aria-hidden />;
+  }
+  return theme === "light" ? (
+    <Moon key="theme-moon" className="h-[14px] w-[14px]" strokeWidth={2} aria-hidden />
+  ) : (
+    <Sun key="theme-sun" className="h-[14px] w-[14px]" strokeWidth={2} aria-hidden />
+  );
+}
+
 export default function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const pathname = usePathname();
+  const currentPath = pathname ?? "/";
 
-  const navLinks = [
-    { href: "/", label: "Piyasalar" },
-    { href: "/stocks", label: "Fonlar" },
-    { href: "/sectors", label: "Kategoriler" },
-    { href: "/indices", label: "Fon türleri" },
-  ];
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   return (
     <header
@@ -37,13 +76,14 @@ export default function Header() {
             className="header-primary-nav hidden min-w-0 flex-1 items-center justify-center md:flex"
             aria-label="Ana menü"
           >
-            <div className="header-nav-inner">
+              <div className="header-nav-inner">
               {navLinks.map((link) => {
-                const isActive = pathname === link.href;
+                const isActive = linkIsActive(currentPath, link);
                 return (
                   <Link
                     key={link.href}
                     href={link.href}
+                    prefetch={false}
                     className={`nav-link nav-link--bar ${isActive ? "active" : ""}`}
                     aria-current={isActive ? "page" : undefined}
                   >
@@ -78,11 +118,7 @@ export default function Header() {
                 className="header-tools__btn"
                 aria-label={theme === "light" ? "Karanlık temaya geç" : "Aydınlık temaya geç"}
               >
-                {theme === "light" ? (
-                  <Moon className="h-[14px] w-[14px]" strokeWidth={2} />
-                ) : (
-                  <Sun className="h-[14px] w-[14px]" strokeWidth={2} />
-                )}
+                <ThemeToggleIcon theme={theme} mounted={mounted} />
               </button>
             </div>
 
@@ -93,11 +129,7 @@ export default function Header() {
                 className="header-mobile-cluster__btn"
                 aria-label={theme === "light" ? "Karanlık temaya geç" : "Aydınlık temaya geç"}
               >
-                {theme === "light" ? (
-                  <Moon className="h-[14px] w-[14px]" strokeWidth={2} />
-                ) : (
-                  <Sun className="h-[14px] w-[14px]" strokeWidth={2} />
-                )}
+                <ThemeToggleIcon theme={theme} mounted={mounted} />
               </button>
               <span className="header-mobile-cluster__rule" aria-hidden />
               <button
@@ -132,11 +164,12 @@ export default function Header() {
             </div>
             <nav className="flex flex-col gap-px" aria-label="Mobil menü">
               {navLinks.map((link) => {
-                const isActive = pathname === link.href;
+                const isActive = linkIsActive(currentPath, link);
                 return (
                   <Link
                     key={link.href}
                     href={link.href}
+                    prefetch={false}
                     onClick={() => setIsMenuOpen(false)}
                     className={`nav-link nav-link--mobile ${isActive ? "active" : ""}`}
                     aria-current={isActive ? "page" : undefined}

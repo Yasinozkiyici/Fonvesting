@@ -1,13 +1,19 @@
 import { unstable_cache } from "next/cache";
 
+const FX_FETCH_TIMEOUT_MS = 1800;
+
 /**
  * USD/TRY ve türev EUR/TRY (USD üzerinden) — open.er-api.com.
  * Üretimde piyasa özetinde kur görünmesi için DB boşsa önbellekli fallback.
  */
 export async function fetchUsdTryEurTryLive(): Promise<{ usdTry: number; eurTry: number } | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FX_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch("https://open.er-api.com/v6/latest/USD", {
       headers: { Accept: "application/json" },
+      signal: controller.signal,
+      cache: "no-store",
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
@@ -22,6 +28,8 @@ export async function fetchUsdTryEurTryLive(): Promise<{ usdTry: number; eurTry:
     return { usdTry, eurTry };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

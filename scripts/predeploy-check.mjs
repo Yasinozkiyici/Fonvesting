@@ -19,10 +19,10 @@ function loadEnvFile(filePath) {
   }
 }
 
-loadEnvFile(path.resolve(".env"));
 loadEnvFile(path.resolve(".env.local"));
+loadEnvFile(path.resolve(".env"));
 
-const required = ["CRON_SECRET"];
+const required = ["DATABASE_URL", "CRON_SECRET"];
 const missing = required.filter((key) => !process.env[key] || String(process.env[key]).trim() === "");
 
 if (missing.length > 0) {

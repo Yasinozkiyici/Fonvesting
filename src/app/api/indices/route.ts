@@ -1,37 +1,22 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
+import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
+import { getFundTypeSummariesFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Geriye dönük uyumluluk: endeks kartları artık fon türleridir (0=YF, 1=BES). */
 export async function GET() {
   try {
-    const types = await prisma.fundType.findMany({
-      orderBy: { code: "asc" },
-      include: { _count: { select: { funds: true } } },
-    });
-
-    const payload = await Promise.all(
-      types.map(async (t) => {
-        const agg = await prisma.fund.aggregate({
-          where: { fundTypeId: t.id, isActive: true },
-          _avg: { dailyReturn: true },
-          _sum: { portfolioSize: true },
-        });
-        return {
-          code: String(t.code),
-          name: fundTypeDisplayLabel(t),
-          changePercent: Number((agg._avg.dailyReturn ?? 0).toFixed(4)),
-          value: agg._sum.portfolioSize ?? 0,
-          stockCount: t._count.funds,
-        };
-      })
-    );
+    const payload = (await getFundTypeSummariesFromDailySnapshot()).map((fundType) => ({
+      code: String(fundType.code),
+      name: fundType.name,
+      changePercent: fundType.avgDailyReturn,
+      value: fundType.totalPortfolioSize,
+      stockCount: fundType.fundCount,
+    }));
 
     return NextResponse.json(payload, {
-      headers: { "Cache-Control": "s-maxage=300, stale-while-revalidate=900" },
+      headers: { "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC) },
     });
   } catch (e) {
     console.error(e);
