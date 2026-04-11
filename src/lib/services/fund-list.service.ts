@@ -163,7 +163,7 @@ async function computeAllFundsFromLatestSnapshotFromSupabaseRest(): Promise<Fund
       "fundId,code,name,shortName,logoUrl,portfolioSize,investorCount,lastPrice,dailyReturn,monthlyReturn,yearlyReturn,categoryCode,categoryName,fundTypeCode,fundTypeName",
     date: `eq.${latestDate}`,
     order: "portfolioSize.desc,code.asc",
-    limit: "3000",
+    limit: "12000",
   });
   const rows = await fetchSupabaseRestJson<SupabaseFundSnapshotRow[]>(
     `FundDailySnapshot?${query.toString()}`,
@@ -250,7 +250,7 @@ async function getCachedAllFunds(): Promise<FundListRow[]> {
       }
       return computeAllFundsFromLatestSnapshot();
     },
-    ["fund-list-all-v8"],
+    ["fund-list-all-v9"],
     { revalidate: LIVE_DATA_CACHE_SEC }
   );
   return loadCached();

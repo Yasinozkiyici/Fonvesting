@@ -68,7 +68,11 @@ export async function GET(req: NextRequest) {
       }
     );
   } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "funds_failed" }, { status: 500 });
+    console.error("[api/funds]", e);
+    const devDetail = process.env.NODE_ENV !== "production" && e instanceof Error ? e.message : undefined;
+    return NextResponse.json(
+      { error: "funds_failed", ...(devDetail ? { detail: devDetail } : {}) },
+      { status: 500 }
+    );
   }
 }

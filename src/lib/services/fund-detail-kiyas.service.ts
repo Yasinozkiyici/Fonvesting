@@ -2,14 +2,25 @@ import { prisma } from "@/lib/prisma";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import type { PricePoint } from "@/lib/scoring";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
+import { macroTotalReturnPctForWindow, sampleOnOrBefore } from "@/lib/kiyas-macro-window";
 
 const DAY_MS = 86_400_000;
 const MIN_CATEGORY_FUNDS = 5;
 const LOOKBACK_DAYS = 1125;
 const KIYAS_CHART_MAX_POINTS = 240;
+const MAX_DAILY_MACRO_STALENESS_DAYS = 10;
+const MAX_POLICY_STALENESS_DAYS = 180;
+const SUPABASE_MACRO_PAGE_SIZE = 1000;
 
-/** DB’deki makro seri kodları (MacroSeries.code) — UI’da kaynak adı gösterilmez. */
-const MACRO_CODES = ["BIST100", "USDTRY", "EURTRY", "GOLD_TRY_GRAM", "TCMB_POLICY_RATE"] as const;
+/** Makro seri kodları zaman içinde farklı adlarla tutulabildiği için alias seti kullanılır. */
+const MACRO_CODE_ALIASES: Record<KiyasRefKey, string[]> = {
+  category: [],
+  policy: ["TCMB_POLICY_RATE", "POLICY_RATE", "TCMB_POLICY", "POLICY"],
+  bist100: ["BIST100", "BIST_100", "XU100", "XU100TRY"],
+  gold: ["GOLD_TRY_GRAM", "GOLDTRY", "XAU_TRY_GRAM", "XAUTRY"],
+  usdtry: ["USDTRY", "USD_TRY", "USDTRY_SPOT"],
+  eurtry: ["EURTRY", "EUR_TRY", "EURTRY_SPOT"],
+};
 
 export type KiyasRefKey = "category" | "policy" | "bist100" | "gold" | "usdtry" | "eurtry";
 
@@ -75,13 +86,49 @@ export const KIYAS_REF_LABELS: Record<KiyasRefKey, string> = {
   eurtry: "EUR/TRY",
 };
 
-const MACRO_KEY_MAP: Record<string, KiyasRefKey> = {
-  BIST100: "bist100",
-  USDTRY: "usdtry",
-  EURTRY: "eurtry",
-  GOLD_TRY_GRAM: "gold",
-  TCMB_POLICY_RATE: "policy",
-};
+function normalizeMacroCode(code: string | null | undefined): string {
+  return (code ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "_");
+}
+
+function inferMacroRefKeyFromPattern(normalized: string): KiyasRefKey | null {
+  if (!normalized) return null;
+  const has = (token: string) => normalized.includes(token);
+
+  // Politika faizi serileri farklı ortamlarda TCMB/FAIZ/INTEREST benzeri adlar taşıyabiliyor.
+  if (has("POLICY") || has("FAIZ") || has("INTEREST") || (has("TCMB") && has("RATE"))) return "policy";
+  if (has("XU100") || (has("BIST") && has("100"))) return "bist100";
+  if (has("XAU") || has("ALTIN") || has("GOLD")) return "gold";
+  if (has("USD") && has("TRY")) return "usdtry";
+  if (has("EUR") && has("TRY")) return "eurtry";
+  return null;
+}
+
+function macroCodeToRefKey(code: string | null | undefined): KiyasRefKey | null {
+  const normalized = normalizeMacroCode(code);
+  if (!normalized) return null;
+  for (const [ref, aliases] of Object.entries(MACRO_CODE_ALIASES) as Array<[KiyasRefKey, string[]]>) {
+    if (ref === "category") continue;
+    if (aliases.some((alias) => normalizeMacroCode(alias) === normalized)) return ref;
+  }
+  return inferMacroRefKeyFromPattern(normalized);
+}
+
+function finalizeMacroBucket(
+  ref: KiyasRefKey,
+  points: Array<{ date: Date; value: number }>
+): Array<{ date: Date; value: number }> {
+  const byDay = new Map<number, number>();
+  for (const point of points) {
+    const day = startOfUtcDay(point.date).getTime();
+    if (!Number.isFinite(day) || !Number.isFinite(point.value)) continue;
+    if (ref !== "policy" && point.value <= 0) continue;
+    // Aynı gün birden fazla seri/obs gelirse son kayıt kazanır.
+    byDay.set(day, point.value);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, value]) => ({ date: new Date(t), value }));
+}
 
 type SupabaseMacroSeriesRow = { id: string; code: string };
 type SupabaseMacroObservationRow = { seriesId: string; date: string; value: number };
@@ -174,12 +221,7 @@ export function kiyasMacroTotalReturnPct(
   anchor: Date,
   days: number
 ): number | null {
-  const end = anchor;
-  const startTarget = addUtcDays(anchor, -days);
-  const endV = valueOnOrBefore(sorted, end);
-  const startV = valueOnOrBefore(sorted, startTarget);
-  if (endV == null || startV == null || startV <= 0) return null;
-  return (endV / startV - 1) * 100;
+  return macroTotalReturnPctForWindow(sorted, anchor, days, MAX_DAILY_MACRO_STALENESS_DAYS);
 }
 
 function macroPolicyDeltaPp(sorted: Array<{ date: Date; value: number }>, anchor: Date, days: number): number | null {
@@ -200,9 +242,12 @@ function policyScaledReturnPct(
   anchor: Date,
   days: number
 ): number | null {
-  const annualRatePct = valueOnOrBefore(sorted, anchor);
-  if (annualRatePct == null || annualRatePct <= -100) return null;
-  const gross = 1 + annualRatePct / 100;
+  const annualRateSample = sampleOnOrBefore(sorted, anchor);
+  if (!annualRateSample) return null;
+  const staleCutoff = addUtcDays(anchor, -MAX_POLICY_STALENESS_DAYS);
+  if (annualRateSample.date.getTime() < staleCutoff.getTime()) return null;
+  if (annualRateSample.value <= -100) return null;
+  const gross = 1 + annualRateSample.value / 100;
   if (!Number.isFinite(gross) || gross <= 0) return null;
   return (gross ** (days / 365) - 1) * 100;
 }
@@ -445,30 +490,42 @@ export async function fetchKiyasMacroBuckets(
   if (hasSupabaseRestConfig()) {
     try {
       const seriesRows = await fetchSupabaseRestJson<SupabaseMacroSeriesRow[]>(
-        `MacroSeries?select=id,code&code=in.(${MACRO_CODES.join(",")})&isActive=eq.true`,
+        `MacroSeries?select=id,code&isActive=eq.true&limit=500`,
         { revalidate: 300 }
       );
-      const idToCode = new Map(seriesRows.map((r) => [r.id, r.code]));
-      const seriesIds = seriesRows.map((r) => r.id);
+      const idToCode = new Map(
+        seriesRows
+          .map((row) => ({ id: row.id, refKey: macroCodeToRefKey(row.code) }))
+          .filter((item): item is { id: string; refKey: KiyasRefKey } => item.refKey != null)
+          .map((item) => [item.id, item.refKey] as const)
+      );
+      const seriesIds = [...idToCode.keys()];
       if (seriesIds.length === 0) return macroByRef;
 
       const from = addUtcDays(a, -LOOKBACK_DAYS).toISOString();
-      const obs = await fetchSupabaseRestJson<SupabaseMacroObservationRow[]>(
-        `MacroObservation?select=seriesId,date,value&seriesId=in.(${seriesIds.join(",")})&date=gte.${from}&date=lte.${a.toISOString()}&order=date.asc&limit=20000`,
-        { revalidate: 300 }
-      );
+      const until = a.toISOString();
+      const obs: SupabaseMacroObservationRow[] = [];
+      let offset = 0;
+      while (true) {
+        const page = await fetchSupabaseRestJson<SupabaseMacroObservationRow[]>(
+          `MacroObservation?select=seriesId,date,value&seriesId=in.(${seriesIds.join(",")})&date=gte.${from}&date=lte.${until}&order=date.asc&limit=${SUPABASE_MACRO_PAGE_SIZE}&offset=${offset}`,
+          { revalidate: 300 }
+        );
+        obs.push(...page);
+        if (page.length < SUPABASE_MACRO_PAGE_SIZE) break;
+        offset += page.length;
+        if (offset > 250_000) break;
+      }
       const buckets = new Map<string, Array<{ date: Date; value: number }>>();
       for (const o of obs) {
-        const code = idToCode.get(o.seriesId);
-        if (!code) continue;
-        const key = MACRO_KEY_MAP[code];
+        const key = idToCode.get(o.seriesId);
         if (!key) continue;
         const arr = buckets.get(key) ?? [];
         arr.push({ date: startOfUtcDay(new Date(o.date)), value: o.value });
         buckets.set(key, arr);
       }
       for (const [k, v] of buckets) {
-        macroByRef[k as KiyasRefKey] = v;
+        macroByRef[k as KiyasRefKey] = finalizeMacroBucket(k as KiyasRefKey, v);
       }
       return macroByRef;
     } catch (error) {
@@ -477,11 +534,16 @@ export async function fetchKiyasMacroBuckets(
   }
 
   const seriesRows = await prisma.macroSeries.findMany({
-    where: { code: { in: [...MACRO_CODES] }, isActive: true },
+    where: { isActive: true },
     select: { id: true, code: true },
   });
-  const idToCode = new Map(seriesRows.map((r) => [r.id, r.code]));
-  const seriesIds = seriesRows.map((r) => r.id);
+  const idToCode = new Map(
+    seriesRows
+      .map((row) => ({ id: row.id, refKey: macroCodeToRefKey(row.code) }))
+      .filter((item): item is { id: string; refKey: KiyasRefKey } => item.refKey != null)
+      .map((item) => [item.id, item.refKey] as const)
+  );
+  const seriesIds = [...idToCode.keys()];
 
   if (seriesIds.length === 0) return macroByRef;
 
@@ -493,16 +555,14 @@ export async function fetchKiyasMacroBuckets(
   });
   const buckets = new Map<string, Array<{ date: Date; value: number }>>();
   for (const o of obs) {
-    const code = idToCode.get(o.seriesId);
-    if (!code) continue;
-    const key = MACRO_KEY_MAP[code];
+    const key = idToCode.get(o.seriesId);
     if (!key) continue;
     const arr = buckets.get(key) ?? [];
     arr.push({ date: startOfUtcDay(o.date), value: o.value });
     buckets.set(key, arr);
   }
   for (const [k, v] of buckets) {
-    macroByRef[k as KiyasRefKey] = v;
+    macroByRef[k as KiyasRefKey] = finalizeMacroBucket(k as KiyasRefKey, v);
   }
   return macroByRef;
 }

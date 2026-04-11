@@ -22,6 +22,21 @@ export interface FundMetrics {
   dataPoints: number;
 }
 
+/** Özet satırı olmayan fonlar için skor sıralaması (nötr karşılaştırma). */
+export const EMPTY_FUND_METRICS: FundMetrics = {
+  totalReturn: 0,
+  annualizedReturn: 0,
+  volatility: 0,
+  maxDrawdown: 0,
+  sharpeRatio: 0,
+  sortinoRatio: 0,
+  calmarRatio: 0,
+  winRate: 0,
+  avgGain: 0,
+  avgLoss: 0,
+  dataPoints: 0,
+};
+
 const TRADING_DAYS_PER_YEAR = 252;
 const RISK_FREE_RATE = 0; // Can be adjusted later
 

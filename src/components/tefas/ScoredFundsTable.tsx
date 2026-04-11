@@ -13,7 +13,6 @@ import {
   ArrowDownWideNarrow,
 } from "lucide-react";
 import type { RankingMode } from "@/lib/scoring";
-import { RankingModeToggle } from "./ScoringComponents";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
 import { FundRowMobile, FundDataTableRow } from "@/components/ds/FundRow";
 import { CompareListEntry } from "@/components/compare/CompareListEntry";
@@ -57,6 +56,13 @@ interface ScoredFundsTableProps {
   initialCategory?: string;
   initialIntent?: FundIntentId | null;
   initialTheme?: FundThemeId | null;
+  /** Ana sayfa hızlı başlangıç ile tablo üstü bağlam çubuğu */
+  quickStartActive?: boolean;
+  quickStartLabel?: string | null;
+  quickStartUniverseHint?: string | null;
+  quickStartOnClear?: () => void;
+  /** Varsayılan tam evren (SSR total) — daraltma açıklaması için */
+  referenceUniverseTotal?: number | null;
 }
 
 export default function ScoredFundsTable({
@@ -70,6 +76,11 @@ export default function ScoredFundsTable({
   initialCategory = "",
   initialIntent = null,
   initialTheme = null,
+  quickStartActive = false,
+  quickStartLabel = null,
+  quickStartUniverseHint = null,
+  quickStartOnClear,
+  referenceUniverseTotal = null,
 }: ScoredFundsTableProps) {
   const seededInitialData = normalizeScoredResponse(initialData);
   const seededCategories = normalizeCategoryOptions(initialCategories);
@@ -105,6 +116,15 @@ export default function ScoredFundsTable({
     setActiveTheme(initialTheme);
     setPage(1);
   }, [enableCategoryFilter, initialCategory, initialIntent, initialMode, initialQuery, initialTheme]);
+
+  const prevInitialSnapshotRef = useRef(initialData);
+  useEffect(() => {
+    if (prevInitialSnapshotRef.current === initialData) return;
+    prevInitialSnapshotRef.current = initialData;
+    const seeded = normalizeScoredResponse(initialData);
+    if (!seeded) return;
+    setModePayloads((prev) => ({ ...prev, [initialMode]: seeded }));
+  }, [initialData, initialMode]);
 
   useEffect(() => {
     if (seededCategories.length > 0) return;
@@ -344,9 +364,21 @@ export default function ScoredFundsTable({
           bVal = b.lastPrice;
           break;
         case "finalScore":
-        default:
-          aVal = a.finalScore;
-          bVal = b.finalScore;
+        default: {
+          const na = a.finalScore;
+          const nb = b.finalScore;
+          const aMissing = na == null || !Number.isFinite(na);
+          const bMissing = nb == null || !Number.isFinite(nb);
+          if (sortField === "finalScore") {
+            if (aMissing && bMissing) return a.code.localeCompare(b.code, "tr");
+            if (aMissing) return 1;
+            if (bMissing) return -1;
+            const cmp = na - nb;
+            return sortDir === "desc" ? -cmp : cmp;
+          }
+          aVal = na ?? 0;
+          bVal = nb ?? 0;
+        }
       }
 
       return sortDir === "desc" ? bVal - aVal : aVal - bVal;
@@ -362,7 +394,26 @@ export default function ScoredFundsTable({
     () => categories.find((item) => item.code === category)?.name ?? "",
     [categories, category]
   );
-  const quickCategories = useMemo(() => availableCategories.slice(0, 4), [availableCategories]);
+  const emptyListMessage = useMemo(() => {
+    if (hasFilters) {
+      const parts: string[] = [];
+      if (search.trim()) parts.push(`arama: "${search.trim()}"`);
+      if (enableCategoryFilter && category) parts.push(`kategori: ${activeCategoryLabel || category}`);
+      if (activeIntentDef) parts.push(`görünüm: ${activeIntentDef.label}`);
+      if (activeThemeDef) parts.push(`tema: ${activeThemeDef.label}`);
+      return `Bu kriterlere uygun fon yok. ${parts.length > 0 ? `(${parts.join(" · ")})` : ""} Filtreleri gevşetmeyi veya temizlemeyi deneyin.`;
+    }
+    return `Bu sıralama modunda (${rankingModeLabel(rankingMode)}) listelenecek fon bulunamadı.`;
+  }, [
+    activeCategoryLabel,
+    activeIntentDef,
+    activeThemeDef,
+    category,
+    enableCategoryFilter,
+    hasFilters,
+    rankingMode,
+    search,
+  ]);
   const mobileFilterChips = useMemo(() => {
     const chips: Array<{ key: string; label: string; onRemove: () => void }> = [];
     if (search.trim()) {
@@ -416,152 +467,246 @@ export default function ScoredFundsTable({
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  const activeViewLabel = quickStartActive && quickStartLabel ? quickStartLabel : null;
+
+  const discoveryTableSummary = useMemo(() => {
+    if (!quickStartActive || !quickStartLabel) return null;
+    const shown = filteredFunds.length;
+    const shownStr = shown.toLocaleString("tr-TR");
+    const payload = payloadForCurrentMode;
+    const registeredTotal = referenceUniverseTotal ?? payload?.total ?? payload?.funds.length ?? shown;
+    const regStr = registeredTotal.toLocaleString("tr-TR");
+    return { shownStr, contextLabel: quickStartLabel, universeStr: regStr };
+  }, [
+    filteredFunds.length,
+    payloadForCurrentMode,
+    quickStartActive,
+    quickStartLabel,
+    referenceUniverseTotal,
+  ]);
+
+  const resultCountCaption = useMemo(() => {
+    const shown = filteredFunds.length;
+    const shownStr = shown.toLocaleString("tr-TR");
+    const payload = payloadForCurrentMode;
+    const loadedCount = payload?.funds.length ?? shown;
+    const registeredTotal = referenceUniverseTotal ?? payload?.total ?? loadedCount;
+    const regStr = registeredTotal.toLocaleString("tr-TR");
+    const fullUniverse = shown === registeredTotal;
+
+    if (quickStartActive && quickStartLabel) {
+      return null;
+    }
+    if (hasFilters) {
+      const parts: string[] = [];
+      if (deferredSearch) parts.push("arama");
+      if (enableCategoryFilter && category) parts.push("kategori");
+      if (activeIntentDef) parts.push("görünüm");
+      if (activeThemeDef) parts.push("tema");
+      const hint = parts.length ? parts.join(", ") : "filtre";
+      if (fullUniverse) return `${shownStr} fon · ${hint}`;
+      return `${shownStr} fon · ${hint} (evren ${regStr})`;
+    }
+    if (fullUniverse) return `${shownStr} fon · tam evren`;
+    if (registeredTotal > shown || loadedCount < registeredTotal) return `${shownStr} / ${regStr} fon`;
+    return `${shownStr} fon listeleniyor`;
+  }, [
+    activeIntentDef,
+    activeThemeDef,
+    category,
+    deferredSearch,
+    enableCategoryFilter,
+    filteredFunds.length,
+    hasFilters,
+    payloadForCurrentMode,
+    quickStartActive,
+    quickStartLabel,
+    referenceUniverseTotal,
+  ]);
+
   return (
-    <section className="table-container ds-surface-glass overflow-hidden rounded-xl border">
+    <section className="table-container ds-surface-glass scored-funds-table-module overflow-hidden rounded-xl border">
       <header
-        className="border-b px-4 py-3 sm:px-5 sm:py-3.5"
+        className="fund-table-chrome border-b px-3 py-2 sm:px-4 sm:py-2.5 md:py-2.5"
         style={{
           borderColor: "var(--border-subtle)",
           background: "color-mix(in srgb, var(--card-bg) 97%, var(--bg-muted))",
         }}
       >
-        <div className="flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold tracking-[-0.03em] sm:text-lg" style={{ color: "var(--text-primary)" }}>
-              Fonlar
-            </h2>
-            <p className="mt-1 text-[12px] leading-snug sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
-              Filtreler ve sıralama URL ile eşlenir; tablo anında güncellenir.
-            </p>
-            {activeIntentDef || activeThemeDef ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                {activeIntentDef ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[10px] font-medium sm:text-[11px]" style={{ borderColor: "var(--segment-active-border)", color: "var(--text-secondary)", background: "color-mix(in srgb, var(--bg-muted) 78%, white)" }}>
-                    <span style={{ color: "var(--text-muted)" }}>Görünüm</span>
-                    <span style={{ color: "var(--text-primary)" }}>{activeIntentDef.label}</span>
-                  </div>
-                ) : null}
-                {activeThemeDef ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1.5 text-[10px] font-medium sm:text-[11px]" style={{ borderColor: "var(--segment-active-border)", color: "var(--text-secondary)", background: "color-mix(in srgb, var(--bg-muted) 78%, white)" }}>
-                    <span style={{ color: "var(--text-muted)" }}>Tema</span>
-                    <span style={{ color: "var(--text-primary)" }}>{activeThemeDef.label}</span>
-                  </div>
-                ) : null}
-                <span className="text-[10px] sm:text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                  {activeIntentDef?.shortHint ?? activeThemeDef?.shortHint} · {rankingModeLabel(rankingMode)}
-                  {activeCategoryLabel ? ` · ${activeCategoryLabel}` : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveIntent(null);
-                    setActiveTheme(null);
-                    syncUrlState({ intent: null, theme: null });
-                  }}
-                  className="inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-medium transition-colors hover:text-[var(--text-primary)] sm:text-[11px]"
-                  style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+        <div className="flex min-w-0 flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-x-5 md:gap-y-2 md:gap-3">
+          <div className="min-w-0 md:min-w-[12rem] md:flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
+              <h2 className="text-[15px] font-semibold leading-tight tracking-[-0.035em] sm:text-base" style={{ color: "var(--text-primary)" }}>
+                Fonlar
+              </h2>
+              {!loading && !error && discoveryTableSummary ? (
+                <p
+                  className="table-quickstart-caption flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1 text-[11px] font-medium leading-snug tabular-nums sm:gap-x-2 sm:text-[11.5px]"
+                  aria-live="polite"
                 >
-                  Varsayılana dön
-                </button>
+                  <span className="shrink-0 tabular-nums">
+                    <strong className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                      {discoveryTableSummary.shownStr}
+                    </strong>
+                    <span className="table-quickstart-meta ml-1">sonuç</span>
+                  </span>
+                  <span className="table-quickstart-meta shrink-0 select-none" aria-hidden>
+                    ·
+                  </span>
+                  <span
+                    className="min-w-0 max-w-[min(100%,15rem)] truncate font-semibold sm:max-w-[22rem]"
+                    style={{ color: "var(--text-primary)" }}
+                    title={discoveryTableSummary.contextLabel}
+                  >
+                    {discoveryTableSummary.contextLabel}
+                  </span>
+                  <span className="table-quickstart-meta shrink-0 select-none" aria-hidden>
+                    ·
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    <strong className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                      {discoveryTableSummary.universeStr}
+                    </strong>
+                    <span className="table-quickstart-meta ml-1">fon evreni</span>
+                  </span>
+                </p>
+              ) : null}
+              {!loading && !error && resultCountCaption ? (
+                <span
+                  className="mt-0.5 block w-full text-[10.5px] font-medium leading-snug tabular-nums sm:mt-0 sm:inline sm:w-auto sm:text-[11px]"
+                  style={{ color: "var(--text-tertiary)" }}
+                  aria-live="polite"
+                >
+                  {resultCountCaption}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex justify-end pt-1 md:hidden">
+              <CompareListEntry />
+            </div>
+            <p className="sr-only">Tabloda arama, kategori, sıralama ve karşılaştırma kullanılabilir.</p>
+            {quickStartActive ? (
+              <div className="mt-1.5 hidden flex-wrap items-center gap-1.5 sm:flex">
+                {activeViewLabel ? (
+                  <span
+                    className="inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[9.5px] font-medium"
+                    style={{ borderColor: "color-mix(in srgb, var(--accent-blue) 22%, var(--border-subtle))", color: "var(--text-secondary)", background: "color-mix(in srgb, var(--accent-blue) 5%, var(--card-bg))" }}
+                  >
+                    <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                      {activeViewLabel}
+                    </span>
+                  </span>
+                ) : null}
+                {quickStartUniverseHint ? (
+                  <span
+                    className="hidden max-w-[11rem] truncate text-[9px] font-medium sm:inline"
+                    style={{ color: "var(--text-tertiary)" }}
+                    title={quickStartUniverseHint}
+                  >
+                    {quickStartUniverseHint}
+                  </span>
+                ) : null}
+                {quickStartOnClear ? (
+                  <button
+                    type="button"
+                    onClick={quickStartOnClear}
+                    className="text-[9.5px] font-medium transition-colors hover:text-[var(--text-primary)]"
+                    style={{ color: "var(--text-tertiary)" }}
+                  >
+                    Sıfırla
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
-        </div>
 
-        <div className="hidden md:block screener-bar pt-2.5">
-          <div
-            className="screener-panel rounded-xl border px-2.5 py-2.5 sm:px-3 sm:py-2.75"
-            style={{
-              borderColor: "color-mix(in srgb, var(--border-subtle) 88%, transparent)",
-              background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
-            }}
-          >
-            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
-              <div className="flex min-w-0 flex-1 flex-col gap-1.75 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-                <div className="relative min-w-0 w-full sm:min-w-[12rem] sm:flex-1 lg:min-w-0 lg:max-w-xl">
-                  <Search
-                    className="pointer-events-none absolute left-2.5 top-1/2 h-[13px] w-[13px] -translate-y-1/2 opacity-[0.78]"
-                    style={{ color: "var(--text-tertiary)" }}
-                    strokeWidth={2}
-                    aria-hidden
-                  />
-                  <input
-                    type="search"
-                    enterKeyHint="search"
-                    placeholder="Kod veya unvan ara…"
-                    value={search}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setSearch(next);
-                      setActiveIntent(null);
-                      setPage(1);
-                      syncUrlState({ query: next, intent: null });
-                    }}
-                    className="research-search w-full"
-                    autoComplete="off"
-                    aria-label="Fon ara"
-                  />
-                </div>
-                {enableCategoryFilter && (
-                  <div className="research-select-wrap w-full min-w-0 sm:w-[11rem] lg:w-[12rem]">
-                    <select
-                      value={category}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setCategory(next);
-                        setActiveIntent(null);
-                        setPage(1);
-                        syncUrlState({ category: next, intent: null });
-                      }}
-                      className="research-select"
-                      aria-label="Kategori filtresi"
-                    >
-                      <option value="">Tüm kategoriler</option>
-                      {availableCategories.map((item) => (
-                        <option key={item.code} value={item.code}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="research-select-chevron h-3 w-3" strokeWidth={2} aria-hidden />
-                  </div>
-                )}
-                {hasFilters && (
-                  <button type="button" onClick={resetFilters} className="screener-clear-btn shrink-0">
-                    <X className="h-3 w-3" strokeWidth={2} aria-hidden />
-                    Temizle
-                  </button>
-                )}
-                <CompareListEntry />
-              </div>
-
-              <div className="screener-divider opacity-70" aria-hidden />
-
-              <div className="flex min-w-0 flex-col justify-center gap-1 lg:rounded-[0.8rem] lg:border lg:px-2.5 lg:py-2 lg:items-end lg:justify-center"
-                style={{
-                  borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
-                  background: "color-mix(in srgb, var(--card-bg) 98%, var(--bg-muted))",
+          <div className="hidden w-full min-w-0 flex-col gap-2 md:flex md:w-auto md:max-w-[min(100%,22rem)] lg:max-w-[min(100%,26rem)] xl:max-w-[min(100%,30rem)] md:flex-shrink-0 md:flex-row md:flex-wrap md:items-center md:justify-end md:gap-2">
+            <div className="relative min-w-0 w-full md:min-w-[10.5rem] md:flex-1 md:max-w-[14rem]">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 h-[13px] w-[13px] -translate-y-1/2 opacity-[0.78]"
+                style={{ color: "var(--text-tertiary)" }}
+                strokeWidth={2}
+                aria-hidden
+              />
+              <input
+                type="search"
+                enterKeyHint="search"
+                placeholder="Kod veya unvan ara…"
+                value={search}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSearch(next);
+                  setActiveIntent(null);
+                  setPage(1);
+                  syncUrlState({ query: next, intent: null });
                 }}
-              >
-                <span className="screener-sort-label lg:text-right">Sıralama modu</span>
-                <RankingModeToggle mode={rankingMode} onChange={handleRankingModeChange} />
+                className="research-search w-full"
+                autoComplete="off"
+                aria-label="Fon ara"
+              />
+            </div>
+            {enableCategoryFilter ? (
+              <div className="research-select-wrap min-w-0 w-full md:w-[min(100%,12rem)] md:max-w-[13rem] md:flex-shrink-0">
+                <select
+                  value={category}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setCategory(next);
+                    setActiveIntent(null);
+                    setPage(1);
+                    syncUrlState({ category: next, intent: null });
+                  }}
+                  className="research-select"
+                  aria-label="Kategori filtresi"
+                >
+                  <option value="">Tüm kategoriler</option>
+                  {availableCategories.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="research-select-chevron h-3 w-3" strokeWidth={2} aria-hidden />
               </div>
+            ) : null}
+            <div className="flex min-w-0 flex-wrap items-center gap-2 md:justify-end">
+              {hasFilters ? (
+                <button type="button" onClick={resetFilters} className="screener-clear-btn shrink-0">
+                  <X className="h-3 w-3" strokeWidth={2} aria-hidden />
+                  Temizle
+                </button>
+              ) : null}
+              <CompareListEntry />
             </div>
           </div>
         </div>
+      </header>
 
-        <div className="space-y-2.5 pt-2 md:hidden">
-          <div className="relative w-full">
+      {/* Mobil: arama + filtre + sırala — header altında sticky; masaüstünde bu blok yok */}
+      <div
+        className="home-funds-mobile-toolbar md:hidden"
+        style={{
+          position: "sticky",
+          top: "calc(3.375rem + env(safe-area-inset-top, 0px))",
+          zIndex: 35,
+          borderBottom: "1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent)",
+          background: "color-mix(in srgb, var(--card-bg) 88%, transparent)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+          <div className="relative min-w-0 flex-1">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
-              style={{ color: "var(--text-muted)" }}
+              className="pointer-events-none absolute left-3 top-1/2 h-[15px] w-[15px] -translate-y-1/2 opacity-[0.78]"
+              style={{ color: "var(--text-tertiary)" }}
               strokeWidth={2}
               aria-hidden
             />
             <input
               type="search"
               enterKeyHint="search"
-              placeholder="Kod veya unvan ara…"
+              placeholder="Fon ara…"
               value={search}
               onChange={(e) => {
                 const next = e.target.value;
@@ -570,150 +715,113 @@ export default function ScoredFundsTable({
                 setPage(1);
                 syncUrlState({ query: next, intent: null });
               }}
-              className="h-10 w-full rounded-[0.9rem] border pl-10 pr-3.5 text-[13px]"
-              style={{
-                borderColor: "var(--border-default)",
-                background: "var(--bg-surface)",
-                color: "var(--text-primary)",
-              }}
+              className="research-search research-search--home-sticky w-full min-w-0"
+              autoComplete="off"
+              aria-label="Fon ara"
             />
           </div>
-
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveIntent(null);
-                  setPage(1);
-                  syncUrlState({ intent: null });
-                }}
-                className="shrink-0 rounded-full border px-2.75 py-1.25 text-[10.5px] font-medium"
-                style={{
-                  borderColor: !activeIntent ? "var(--segment-active-border)" : "color-mix(in srgb, var(--border-subtle) 84%, transparent)",
-                  background: !activeIntent ? "color-mix(in srgb, var(--accent-blue) 7%, var(--card-bg))" : "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))",
-                  color: !activeIntent ? "var(--text-primary)" : "var(--text-secondary)",
-                }}
-              >
-                Tümü
-              </button>
-              {quickCategories.map((item) => {
-                const active = category === item.code;
-                return (
-                  <button
-                    key={item.code}
-                    type="button"
-                    onClick={() => {
-                      const next = active ? "" : item.code;
-                      setCategory(next);
-                      setActiveIntent(null);
-                      setPage(1);
-                      syncUrlState({ category: next, intent: null });
-                    }}
-                    className="shrink-0 rounded-full border px-2.75 py-1.25 text-[10.5px] font-medium"
-                    style={{
-                      borderColor: active ? "var(--segment-active-border)" : "color-mix(in srgb, var(--border-subtle) 84%, transparent)",
-                      background: active ? "color-mix(in srgb, var(--accent-blue) 7%, var(--card-bg))" : "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))",
-                      color: active ? "var(--text-primary)" : "var(--text-secondary)",
-                    }}
-                  >
-                    {item.name}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setMobileSheet("filters")}
-                className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-[0.9rem] border px-3 text-[11.5px] font-semibold"
-                style={{
-                  borderColor: "var(--border-default)",
-                  background: "var(--bg-surface)",
-                  color: "var(--text-primary)",
-                }}
-              >
-                <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
-                Filtreler
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileSheet("sort")}
-                className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-[0.9rem] border px-3 text-[11.5px] font-semibold"
-                style={{
-                  borderColor: "var(--border-default)",
-                  background: "var(--bg-surface)",
-                  color: "var(--text-primary)",
-                }}
-              >
-                <ArrowDownWideNarrow className="h-4 w-4" strokeWidth={2} />
-                Sırala
-              </button>
-            </div>
-          </div>
-
-          {mobileFilterChips.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {mobileFilterChips.map((chip) => (
-                <button
-                  key={chip.key}
-                  type="button"
-                  onClick={chip.onRemove}
-                  className="inline-flex items-center gap-1 rounded-full border px-2.25 py-[0.3rem] text-[9.5px] font-medium"
-                  style={{
-                    borderColor: "color-mix(in srgb, var(--border-subtle) 86%, transparent)",
-                    background: "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  <span className="max-w-[12rem] truncate">{chip.label}</span>
-                  <X className="h-3.5 w-3.5" strokeWidth={2} />
-                </button>
-              ))}
-              {hasFilters ? (
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  className="inline-flex items-center rounded-full border px-2.25 py-[0.3rem] text-[9.5px] font-medium"
-                  style={{
-                    borderColor: "var(--border-subtle)",
-                    background: "transparent",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  Temizle
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="flex items-center justify-between rounded-[0.9rem] border px-2.75 py-2" style={{ borderColor: "var(--border-subtle)", background: "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))" }}>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-muted)" }}>
-                Görünüm
-              </p>
-              <p className="mt-0.5 text-[11.5px] font-medium" style={{ color: "var(--text-primary)" }}>
-                {rankingModeLabel(rankingMode)}
-              </p>
-            </div>
-            <CompareListEntry />
-          </div>
+          <button
+            type="button"
+            onClick={() => setMobileSheet("filters")}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[0.85rem] border transition-[opacity,background-color] active:opacity-90"
+            style={{
+              borderColor: "var(--border-default)",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+            }}
+            aria-label="Filtreler ve sıralama modu"
+          >
+            <SlidersHorizontal className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileSheet("sort")}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[0.85rem] border transition-[opacity,background-color] active:opacity-90"
+            style={{
+              borderColor: "var(--border-default)",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+            }}
+            aria-label="Listeyi sırala"
+          >
+            <ArrowDownWideNarrow className="h-[18px] w-[18px]" strokeWidth={2} aria-hidden />
+          </button>
         </div>
-      </header>
+        {mobileFilterChips.length > 0 || (quickStartActive && activeViewLabel) ? (
+          <div
+            className="flex gap-2 overflow-x-auto px-3 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            style={{ borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 55%, transparent)" }}
+          >
+            {quickStartActive && activeViewLabel ? (
+              <div
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--accent-blue) 22%, var(--border-subtle))",
+                  background: "color-mix(in srgb, var(--accent-blue) 5%, var(--card-bg))",
+                }}
+              >
+                <span className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-tertiary)" }}>
+                  Rota
+                </span>
+                <span className="max-w-[11rem] truncate text-[11px] font-semibold" style={{ color: "var(--text-primary)" }} title={activeViewLabel}>
+                  {activeViewLabel}
+                </span>
+                {quickStartOnClear ? (
+                  <button
+                    type="button"
+                    onClick={quickStartOnClear}
+                    className="shrink-0 rounded-md px-1 py-0.5 text-[10px] font-semibold"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Sıfırla
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {mobileFilterChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={chip.onRemove}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-medium"
+                style={{
+                  borderColor: "color-mix(in srgb, var(--border-subtle) 86%, transparent)",
+                  background: "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <span className="max-w-[10rem] truncate">{chip.label}</span>
+                <X className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
+              </button>
+            ))}
+            {hasFilters && mobileFilterChips.length > 0 ? (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex shrink-0 items-center rounded-full border px-2.5 py-1.5 text-[11px] font-semibold"
+                style={{
+                  borderColor: "var(--border-subtle)",
+                  background: "transparent",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                Tümünü temizle
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       <div className="md:hidden space-y-1.5 px-3 py-1.5">
         {loading ? (
           [...Array(8)].map((_, i) => (
-            <div key={i} className="mobile-fund-card max-h-[80px] animate-pulse">
-              <div className="flex items-start gap-2">
-                <div className="h-8 w-8 shrink-0 rounded-lg" style={{ background: "var(--bg-muted)" }} />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="h-4 min-w-0 flex-1 rounded" style={{ background: "var(--bg-muted)" }} />
-                    <div className="h-4 w-14 shrink-0 rounded" style={{ background: "var(--bg-muted)" }} />
-                  </div>
-                  <div className="h-3 w-[88%] rounded" style={{ background: "var(--bg-muted)" }} />
+            <div key={i} className="mobile-fund-card mobile-fund-card--scan min-h-[4.5rem] animate-pulse">
+              <div className="flex items-start gap-2.5 px-0 py-0">
+                <div className="h-9 w-9 shrink-0 rounded-[0.85rem]" style={{ background: "var(--bg-muted)" }} />
+                <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+                  <div className="h-3 w-16 rounded" style={{ background: "var(--bg-muted)" }} />
+                  <div className="h-4 w-full max-w-[14rem] rounded" style={{ background: "var(--bg-muted)" }} />
+                  <div className="h-3 w-[72%] rounded" style={{ background: "var(--bg-muted)" }} />
                 </div>
               </div>
             </div>
@@ -724,7 +832,7 @@ export default function ScoredFundsTable({
           </p>
         ) : paginatedFunds.length === 0 ? (
           <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-            Sonuç bulunamadı.
+            {emptyListMessage}
           </p>
         ) : (
           paginatedFunds.map((fund) => <FundRowMobile key={fund.fundId} fund={fund} />)
@@ -800,7 +908,7 @@ export default function ScoredFundsTable({
             ) : paginatedFunds.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-                  Sonuç bulunamadı.
+                  {emptyListMessage}
                 </td>
               </tr>
             ) : (
@@ -826,7 +934,7 @@ export default function ScoredFundsTable({
               type="button"
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className="btn btn-secondary flex h-9 w-9 items-center justify-center rounded-lg p-0 disabled:opacity-40"
+              className="btn btn-secondary flex h-11 w-11 items-center justify-center rounded-lg p-0 disabled:opacity-40 md:h-9 md:w-9"
             >
               <ChevronLeft className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
             </button>
@@ -837,7 +945,7 @@ export default function ScoredFundsTable({
               type="button"
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className="btn btn-secondary flex h-9 w-9 items-center justify-center rounded-lg p-0 disabled:opacity-40"
+              className="btn btn-secondary flex h-11 w-11 items-center justify-center rounded-lg p-0 disabled:opacity-40 md:h-9 md:w-9"
             >
               <ChevronRight className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
             </button>

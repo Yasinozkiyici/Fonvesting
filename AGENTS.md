@@ -30,3 +30,13 @@ Güncelleme sonrası düzenin çökmesi (border/flex/kartlar yok, ham metin var)
 - Do not assume permission to publish just because code is complete.
 - Prefer local verification only: `pnpm dev`, tests, lint, and build checks.
 - If deployment is relevant, stop after preparing the code and tell the user what is ready locally.
+
+## System Safety Rules (Regression Guard)
+
+- Mevcut API contract'larını bozma; response shape değişikliği gerekiyorsa backward-compatible yap (yeni alan ekle, mevcut alanı kırma).
+- DB şemasında destructive değişiklik yapma (drop/rename) kullanıcı açıkça istemedikçe yasak.
+- Tüm değişiklikler backward-compatible olmalı; mevcut route/query param davranışı korunmalı.
+- PR öncesi temel smoke doğrulaması zorunlu:
+  - `pnpm run smoke:routes` (`/` ve bir fon detay sayfası açılıyor)
+  - `pnpm run smoke:data` (kritik API endpointleri yanıt veriyor)
+  - `pnpm run audit:system` (latency, fallback ve edge-case kontrolü)

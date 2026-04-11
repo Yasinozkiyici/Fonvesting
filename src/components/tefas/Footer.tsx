@@ -22,32 +22,30 @@ const LEGAL_LINKS = [
   { href: "/kullanim-kosullari", label: "Kullanım Koşulları" },
 ];
 
-export default function Footer() {
+type FooterProps = {
+  /** Fon detay: daha kompakt spacing + `site-footer--detail` (globals). Ana sayfa: `default`. */
+  variant?: "default" | "detail";
+};
+
+export default function Footer({ variant = "default" }: FooterProps) {
   const currentYear = new Date().getFullYear();
+  const detail = variant === "detail";
 
   return (
     <footer
-      className="mt-8 border-t sm:mt-10"
-      style={{
-        borderColor: "color-mix(in srgb, var(--border-subtle) 88%, transparent)",
-        background: "color-mix(in srgb, var(--bg-muted) 72%, var(--text-primary) 5%)",
-      }}
+      className={`site-footer border-t ${detail ? "site-footer--detail mt-8 sm:mt-9" : "mt-9 sm:mt-10"}`}
     >
-      <div className="mx-auto max-w-[1320px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-        <div className="grid gap-6 sm:grid-cols-2 sm:gap-8 lg:grid-cols-[1.5fr_1fr_1fr_1fr] lg:gap-10">
-          <div className="max-w-xs">
+      <div
+        className={`site-footer__inner mx-auto max-w-[1320px] px-4 sm:px-6 lg:px-8 ${detail ? "py-5 sm:py-6" : "py-6 sm:py-7"}`}
+      >
+        <div className={`grid sm:grid-cols-2 lg:grid-cols-[1.45fr_1fr_1fr_1fr] ${detail ? "gap-5 sm:gap-7 lg:gap-9" : "gap-6 sm:gap-8 lg:gap-10"}`}>
+          <div className="max-w-sm">
             <SiteLogo size="footer" />
-            <p
-              className="mt-3 text-[12px] leading-relaxed sm:text-[13px]"
-              style={{ color: "var(--text-secondary)" }}
-            >
+            <p className="site-footer__lede mt-3 text-[12px] leading-relaxed sm:text-[13px]">
               Türkiye&apos;deki yatırım fonlarını daha net keşfetmek, karşılaştırmak
               ve takip etmek için tasarlanmış sade bir deneyim.
             </p>
-            <p
-              className="mt-3 text-[11px] leading-snug"
-              style={{ color: "var(--text-tertiary)" }}
-            >
+            <p className="site-footer__disclaimer mt-3 text-[11px] leading-snug">
               Bilgilendirme amaçlıdır. Yatırım tavsiyesi değildir.
             </p>
           </div>
@@ -55,27 +53,25 @@ export default function Footer() {
           <FooterLinkGroup title="Ürün" links={PRODUCT_LINKS} />
           <div>
             <FooterLinkGroup title="Kurumsal" links={CORPORATE_LINKS} />
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
               <a
                 href="https://x.com/getyatirim"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-[13px] font-medium transition-colors hover:text-[var(--text-primary)]"
-                style={{ color: "var(--text-secondary)" }}
+                className="site-footer__social inline-flex items-center gap-1.5 text-[13px] font-medium"
                 aria-label="X (Twitter)"
               >
-                <Twitter className="h-3.5 w-3.5" strokeWidth={2} />
+                <Twitter className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
                 <span>X</span>
               </a>
               <a
                 href="https://github.com/yatirimio"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-[13px] font-medium transition-colors hover:text-[var(--text-primary)]"
-                style={{ color: "var(--text-secondary)" }}
+                className="site-footer__social inline-flex items-center gap-1.5 text-[13px] font-medium"
                 aria-label="GitHub"
               >
-                <Github className="h-3.5 w-3.5" strokeWidth={2} />
+                <Github className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
                 <span>GitHub</span>
               </a>
             </div>
@@ -84,35 +80,35 @@ export default function Footer() {
         </div>
 
         <div
-          className="mt-6 flex flex-col gap-3 border-t pt-4 text-[11px] sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:text-[12px]"
-          style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}
+          className={`site-footer__rule flex flex-col border-t text-[11px] sm:flex-row sm:items-center sm:justify-between sm:text-[12px] ${
+            detail ? "mt-5 gap-1.5 pt-3.5 sm:mt-6 sm:gap-2.5 sm:pt-4" : "mt-6 gap-2 pt-4 sm:mt-7 sm:gap-3 sm:pt-5"
+          }`}
         >
-          <p>© {currentYear} Yatirim.io. Tüm hakları saklıdır.</p>
-          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-            <a
-              href="mailto:hello@yatirim.io"
-              className="transition-colors hover:text-[var(--text-secondary)]"
-            >
+          <p className="site-footer__copyright tabular-nums">© {currentYear} Yatirim.io. Tüm hakları saklıdır.</p>
+          <div className={`flex flex-wrap items-center sm:justify-end ${detail ? "gap-x-2.5 gap-y-1" : "gap-x-3 gap-y-1.5"}`}>
+            <a href="mailto:hello@yatirim.io" className="site-footer__mail text-[11px] font-medium tabular-nums sm:text-[12px]">
               hello@yatirim.io
             </a>
-            <a
-              href="https://x.com/getyatirim"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 transition-colors hover:text-[var(--text-secondary)]"
-              aria-label="X (Twitter)"
-            >
-              <Twitter className="h-3.5 w-3.5" strokeWidth={2} />
-            </a>
-            <a
-              href="https://github.com/yatirimio"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 transition-colors hover:text-[var(--text-secondary)]"
-              aria-label="GitHub"
-            >
-              <Github className="h-3.5 w-3.5" strokeWidth={2} />
-            </a>
+            <div className="flex items-center gap-2">
+              <a
+                href="https://x.com/getyatirim"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="site-footer__iconbtn inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+                aria-label="X (Twitter)"
+              >
+                <Twitter className="h-3.5 w-3.5" strokeWidth={2} />
+              </a>
+              <a
+                href="https://github.com/yatirimio"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="site-footer__iconbtn inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+                aria-label="GitHub"
+              >
+                <Github className="h-3.5 w-3.5" strokeWidth={2} />
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -129,32 +125,16 @@ function FooterLinkGroup({
 }) {
   return (
     <div>
-      <h3
-        className="text-[10px] font-semibold uppercase tracking-[0.12em]"
-        style={{ color: "var(--text-muted)" }}
-      >
-        {title}
-      </h3>
-      <ul className="mt-2.5 space-y-1.5 sm:mt-3 sm:space-y-2">
+      <h3 className="site-footer__group-title text-[10px] font-semibold uppercase tracking-[0.12em]">{title}</h3>
+      <ul className="mt-2.5 space-y-2 sm:mt-3 sm:space-y-2.5">
         {links.map((link) => (
           <li key={`${title}-${link.href}-${link.label}`}>
             {link.external ? (
-              <a
-                href={link.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[13px] font-medium transition-colors hover:text-[var(--text-primary)]"
-                style={{ color: "var(--text-secondary)" }}
-              >
+              <a href={link.href} target="_blank" rel="noopener noreferrer" className="site-footer__link text-[13px] font-medium">
                 {link.label}
               </a>
             ) : (
-              <Link
-                href={link.href}
-                prefetch={false}
-                className="text-[13px] font-medium transition-colors hover:text-[var(--text-primary)]"
-                style={{ color: "var(--text-secondary)" }}
-              >
+              <Link href={link.href} prefetch={false} className="site-footer__link text-[13px] font-medium">
                 {link.label}
               </Link>
             )}

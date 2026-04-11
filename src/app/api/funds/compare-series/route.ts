@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { unstable_cache } from "next/cache";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl, readCompareDataVersion } from "@/lib/data-freshness";
 import { prisma } from "@/lib/prisma";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
@@ -42,16 +41,14 @@ function dedupePriceRows(rows: Array<{ date: Date; price: number }>): Point[] {
     .map(([t, v]) => ({ t, v }));
 }
 
-function buildCategorySeries(
-  rows: Array<{ date: Date; _avg: { dailyReturn: number | null } }>
-): Point[] {
+function buildCategorySeries(rows: Array<{ date: Date; _avg: { dailyReturn: number | null } }>): Point[] {
   let index = 100;
   const out: Point[] = [];
   for (const row of rows) {
     const d = row._avg.dailyReturn;
     if (d == null || !Number.isFinite(d)) continue;
     index *= 1 + d / 100;
-    out.push({ t: startOfUtcDay(row.date).getTime(), v: index });
+    out.push({ t: normalizeHistoryDate(row.date).getTime(), v: index });
   }
   return out;
 }
@@ -63,6 +60,7 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
       id: true,
       code: true,
       name: true,
+      categoryId: true,
       category: { select: { code: true } },
     },
   });
@@ -137,11 +135,11 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
     fundSeries,
     macroSeries: {
       category: buildCategorySeries(categoryAggRows),
-      bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: x.date.getTime(), v: x.value })),
-      usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: x.date.getTime(), v: x.value })),
-      eurtry: (macroByRef.eurtry ?? []).map((x) => ({ t: x.date.getTime(), v: x.value })),
-      gold: (macroByRef.gold ?? []).map((x) => ({ t: x.date.getTime(), v: x.value })),
-      policy: (macroByRef.policy ?? []).map((x) => ({ t: x.date.getTime(), v: x.value })),
+      bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
+      usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
+      eurtry: (macroByRef.eurtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
+      gold: (macroByRef.gold ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
+      policy: (macroByRef.policy ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
     },
     labels: {
       category: "Kategori Ortalaması",
@@ -163,13 +161,10 @@ export async function GET(req: NextRequest) {
     }
     const compareCodes = parseCodes(req.nextUrl.searchParams.get("codes")).filter((c) => c !== baseCode);
 
-    const version = await readCompareDataVersion();
-    const loadCached = unstable_cache(
-      async () => getCompareSeriesPayload(baseCode, compareCodes),
-      ["compare-series-v1", baseCode, compareCodes.join(","), version],
-      { revalidate: LIVE_DATA_CACHE_SEC }
-    );
-    const payload = await loadCached();
+    // Compare payload'da özellikle geçmiş backfill sonrası stale sonuç istemiyoruz.
+    // Versiyon yine okunur; yanıt HTTP cache başlıklarıyla CDN katmanında korunur.
+    await readCompareDataVersion();
+    const payload = await getCompareSeriesPayload(baseCode, compareCodes);
 
     if ("error" in payload) {
       return NextResponse.json({ error: "base_not_found" }, { status: 404 });

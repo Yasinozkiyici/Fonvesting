@@ -14,7 +14,7 @@ export function SitePageShell({ children }: { children: ReactNode }) {
         <div className="noise" />
       </div>
 
-      <div className="relative z-10 flex min-h-screen flex-col">{children}</div>
+      <div className="relative z-10 flex min-h-screen min-w-0 max-w-full flex-col">{children}</div>
     </div>
   );
 }

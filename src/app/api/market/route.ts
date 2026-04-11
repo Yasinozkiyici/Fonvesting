@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
 import { getMarketSummaryFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +13,15 @@ export async function GET() {
     }
     return NextResponse.json(payload, {
       headers: {
-        "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+        "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate",
       },
     });
   } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "market_failed" }, { status: 500 });
+    console.error("[api/market]", e);
+    const devDetail = process.env.NODE_ENV !== "production" && e instanceof Error ? e.message : undefined;
+    return NextResponse.json(
+      { error: "market_failed", ...(devDetail ? { detail: devDetail } : {}) },
+      { status: 500 }
+    );
   }
 }

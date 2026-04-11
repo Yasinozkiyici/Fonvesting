@@ -5,13 +5,17 @@ import { useEffect, useState } from "react";
 import {
   COMPARE_CODES_CHANGED_EVENT,
   COMPARE_STORAGE_KEY,
+  clearCompareCodes,
   readCompareCodes,
 } from "@/lib/compare-selection";
 
+const focusRing =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent-blue)_52%,var(--border-subtle))] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--card-bg)]";
+
 /**
- * Ana liste üst çubuğunda: seçim varsa hafif “Karşılaştırma · n” girişi.
+ * Liste üst çubuğunda: seçili kod sayısı — durum göstergesi; ana aksiyon gibi görünmez.
  */
-export function CompareListEntry() {
+export function CompareListEntry({ className = "" }: { className?: string }) {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
@@ -32,18 +36,34 @@ export function CompareListEntry() {
   if (count < 1) return null;
 
   return (
-    <Link
-      href="/compare"
-      prefetch={false}
-      className="compare-list-entry shrink-0 rounded-[9px] border px-2 py-[0.32rem] text-[10px] font-semibold tabular-nums tracking-tight transition-[opacity,background-color,border-color,color] hover:opacity-[0.94] sm:text-[10.5px]"
+    <span
+      className={`compare-list-entry inline-flex h-7 max-w-full shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-0 tabular-nums ${className}`}
       style={{
-        borderColor: "color-mix(in srgb, var(--border-subtle) 90%, var(--text-primary) 8%)",
-        color: "var(--text-secondary)",
-        background: "color-mix(in srgb, var(--surface-control) 94%, var(--bg-muted))",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.16)",
+        borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+        background: "color-mix(in srgb, var(--bg-muted) 18%, var(--card-bg))",
       }}
     >
-      Karşılaştırma · {count}
-    </Link>
+      <Link
+        href="/compare"
+        prefetch={false}
+        className="min-w-0 truncate text-[9px] font-medium tracking-tight"
+        style={{ color: "var(--text-tertiary)" }}
+      >
+        Karşılaştırma{" "}
+        <span className="font-semibold tabular-nums" style={{ color: "var(--text-secondary)" }}>
+          · {count}
+        </span>
+      </Link>
+      <span className="h-3 w-px shrink-0 self-center" style={{ background: "color-mix(in srgb, var(--border-subtle) 55%, transparent)" }} aria-hidden />
+      <button
+        type="button"
+        className={`shrink-0 text-[9px] font-medium ${focusRing}`}
+        style={{ color: "var(--text-tertiary)" }}
+        onClick={() => clearCompareCodes()}
+        aria-label="Karşılaştırma seçimini temizle"
+      >
+        Kaldır
+      </button>
+    </span>
   );
 }

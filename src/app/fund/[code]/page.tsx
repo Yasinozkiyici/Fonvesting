@@ -65,17 +65,17 @@ export default async function FundDetailPage({ params }: Props) {
     <SitePageShell>
       <Header />
 
-      <main className="mx-auto w-full max-w-[1320px] flex-1 px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-5.5 sm:pb-7 lg:px-8">
+      <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 px-3 py-4 pb-[max(2rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-5.5 sm:pb-10 lg:px-8 lg:pb-12">
         <FundDetailHero data={data} />
 
-        <div className="mt-4 flex flex-col gap-4.5 sm:mt-5 sm:gap-5">
+        <div className="mt-4 flex flex-col gap-5 sm:mt-5 sm:gap-6">
           <FundDetailChart data={data} />
 
           <div style={{ contentVisibility: "auto", containIntrinsicSize: "232px" }}>
             <FundDetailRisk data={data} />
           </div>
 
-          <div style={{ contentVisibility: "auto", containIntrinsicSize: "400px" }}>
+          <div>
             <FundDetailTrends data={data} />
           </div>
 
@@ -95,7 +95,7 @@ export default async function FundDetailPage({ params }: Props) {
         </div>
       </main>
 
-      <Footer />
+      <Footer variant="detail" />
     </SitePageShell>
   );
 }

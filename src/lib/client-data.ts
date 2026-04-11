@@ -160,8 +160,10 @@ function normalizeScoredFund(value: unknown): ScoredFund | null {
   const fundId = readString(value.fundId);
   const code = readString(value.code);
   const name = readString(value.name);
-  const finalScore = readFiniteNumber(value.finalScore);
-  if (!fundId || !code || !name || finalScore == null) return null;
+  const finalScoreRaw = value.finalScore;
+  const finalScore =
+    finalScoreRaw === null || finalScoreRaw === undefined ? null : readFiniteNumber(finalScoreRaw);
+  if (!fundId || !code || !name) return null;
   return {
     fundId,
     code,

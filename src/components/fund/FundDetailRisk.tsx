@@ -1,27 +1,23 @@
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
 import { MobileDetailAccordion } from "@/components/fund/MobileDetailAccordion";
+import { formatDetailRiskPercent } from "@/lib/fund-detail-format";
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
-
-function fmtPct(n: number, digits = 1): string {
-  if (!Number.isFinite(n)) return "—";
-  return `${n.toFixed(digits).replace(".", ",")}%`;
-}
 
 type StatProps = { label: string; value: string };
 
 function Stat({ label, value }: StatProps) {
   return (
     <div
-      className="flex min-h-[5.8rem] min-w-0 flex-col justify-between rounded-[0.95rem] border px-3 py-2.5"
+      className="flex min-h-[5.1rem] min-w-0 flex-col justify-between rounded-[0.9rem] border px-3 py-2.5 shadow-[var(--shadow-xs)] sm:min-h-[5.25rem] sm:px-3.5 sm:py-2.75"
       style={{
-        borderColor: "color-mix(in srgb, var(--border-subtle) 86%, transparent)",
-        background: "color-mix(in srgb, var(--card-bg) 94%, var(--bg-muted))",
+        borderColor: "color-mix(in srgb, var(--border-subtle) 72%, transparent)",
+        background: "linear-gradient(165deg, color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted)), color-mix(in srgb, var(--card-bg) 90%, var(--bg-muted)))",
       }}
     >
-      <p className="text-[10px] font-semibold uppercase tracking-[0.09em]" style={{ color: "var(--text-muted)" }}>
+      <p className="text-[9px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--text-muted)" }}>
         {label}
       </p>
-      <p className="mt-2.5 tabular-nums text-[16px] font-semibold tracking-[-0.03em] sm:text-[1.05rem]" style={{ color: "var(--text-primary)" }}>
+      <p className="mt-1 tabular-nums text-[1.08rem] font-semibold tracking-[-0.038em] sm:mt-1.5 sm:text-[1.12rem]" style={{ color: "var(--text-primary)" }}>
         {value}
       </p>
     </div>
@@ -43,7 +39,7 @@ export function FundDetailRisk({ data }: Props) {
 
   const content = (
     <div
-      className="grid gap-2.5 rounded-[1.05rem] border px-3 py-3 sm:grid-cols-2 sm:px-3.5 sm:py-3.5 lg:grid-cols-4"
+      className="grid gap-2 rounded-[1.05rem] border px-3 py-2.5 sm:grid-cols-2 sm:gap-2.5 sm:px-3.5 sm:py-3 lg:grid-cols-4"
       style={{
         borderColor: "var(--border-subtle)",
         background: "var(--card-bg)",
@@ -51,16 +47,16 @@ export function FundDetailRisk({ data }: Props) {
       }}
     >
       {has1y ? (
-        <Stat label="Yaklaşık 1Y getiri" value={fmtPct(d.returnApprox1YearPct!, 2)} />
+        <Stat label="Yaklaşık 1Y getiri" value={formatDetailRiskPercent(d.returnApprox1YearPct!, 2)} />
       ) : null}
       {has3y ? (
-        <Stat label="Yaklaşık 3Y getiri" value={fmtPct(d.returnApprox3YearPct!, 2)} />
+        <Stat label="Yaklaşık 3Y getiri" value={formatDetailRiskPercent(d.returnApprox3YearPct!, 2)} />
       ) : null}
       {hasVol ? (
-        <Stat label="Oynaklık (yıllık)" value={fmtPct(m!.volatility, 1)} />
+        <Stat label="Oynaklık (yıllık)" value={formatDetailRiskPercent(m!.volatility, 1)} />
       ) : null}
       {hasDd ? (
-        <Stat label="En derin düşüş" value={fmtPct(m!.maxDrawdown, 1)} />
+        <Stat label="En derin düşüş" value={formatDetailRiskPercent(m!.maxDrawdown, 1)} />
       ) : null}
     </div>
   );
@@ -81,8 +77,8 @@ export function FundDetailRisk({ data }: Props) {
         <div className="flex items-end justify-between gap-4">
           <div>
             <FundDetailSectionTitle id="fund-detail-risk-heading">Risk Özeti</FundDetailSectionTitle>
-            <p className="mt-1 text-[12px] leading-snug sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
-              Getiri, oynaklık ve geri çekilme görünümünü tek bakışta özetler.
+            <p className="mt-1.5 text-[12px] leading-relaxed sm:text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+              Oynaklık ve geri çekilme ile yakın/orta vade getiri özeti.
             </p>
           </div>
         </div>

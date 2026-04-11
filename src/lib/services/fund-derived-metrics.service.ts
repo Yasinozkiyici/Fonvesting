@@ -7,6 +7,7 @@ import {
   calculateFinalScore,
   calculateNormalizedScoresExtended,
   compareRankedFunds,
+  NEUTRAL_SORT_SCORES,
   percentileFromSortedAsc,
   type FundMetrics,
   type FundScaleFields,
@@ -31,7 +32,15 @@ function isRelationMissingError(e: unknown): boolean {
 }
 
 /** ~2 yıllık geçmişten türetilmiş satırları yazar / günceller (senkron / job). */
-export async function rebuildFundDerivedMetrics(): Promise<{ written: number }> {
+export async function rebuildFundDerivedMetrics(options?: {
+  preloadedHistoryByFund?: Map<string, FundHistoryPoint[]>;
+}): Promise<{
+  written: number;
+  scannedFunds: number;
+  historyRowsRead: number;
+  usedPreloadedHistory: boolean;
+  upsertBatches: number;
+}> {
   const dayMs = 24 * 60 * 60 * 1000;
   const fromDate = new Date(Date.now() - FUND_PRICE_HISTORY_LOOKBACK_DAYS * dayMs);
 
@@ -46,16 +55,22 @@ export async function rebuildFundDerivedMetrics(): Promise<{ written: number }> 
     },
   });
 
-  const historyByFund = await loadPriceHistoryByFundId(
-    funds.map((f) => f.id),
-    fromDate
-  );
+  const usedPreloadedHistory = Boolean(options?.preloadedHistoryByFund);
+  const historyByFund =
+    options?.preloadedHistoryByFund ??
+    (await loadPriceHistoryByFundId(
+      funds.map((f) => f.id),
+      fromDate
+    ));
+  const historyRowsRead = [...historyByFund.values()].reduce((sum, rows) => sum + rows.length, 0);
 
   const now = new Date();
   let written = 0;
 
+  let upsertBatches = 0;
   for (let i = 0; i < funds.length; i += UPSERT_BATCH) {
     const slice = funds.slice(i, i + UPSERT_BATCH);
+    upsertBatches += 1;
     await prisma.$transaction(
       slice.map((fund) => {
         const rows = historyByFund.get(fund.id) ?? [];
@@ -131,7 +146,13 @@ export async function rebuildFundDerivedMetrics(): Promise<{ written: number }> 
     written += slice.length;
   }
 
-  return { written };
+  return {
+    written,
+    scannedFunds: funds.length,
+    historyRowsRead,
+    usedPreloadedHistory,
+    upsertBatches,
+  };
 }
 
 type DerivedRow = {
@@ -189,6 +210,60 @@ function toScale(r: DerivedRow): FundScaleFields {
     portfolioSize: r.aum,
     investorCount: r.investorCount,
     yearlyReturn: r.return1y ?? 0,
+  };
+}
+
+type FundMasterForDerivedMerge = {
+  id: string;
+  categoryId: string | null;
+  code: string;
+  name: string;
+  shortName: string | null;
+  logoUrl: string | null;
+  lastPrice: number;
+  dailyReturn: number;
+  monthlyReturn: number;
+  yearlyReturn: number;
+  portfolioSize: number;
+  investorCount: number;
+  category: { code: string; name: string } | null;
+  fundType: { code: number; name: string } | null;
+};
+
+/** Türev metrik satırı olmayan aktif fon — ana tabloda göster, skor null. */
+function syntheticDerivedFromFundMaster(fund: FundMasterForDerivedMerge): DerivedRow {
+  return {
+    fundId: fund.id,
+    latestPrice: fund.lastPrice,
+    return1d: fund.dailyReturn,
+    return7d: null,
+    return30d: fund.monthlyReturn,
+    return90d: null,
+    return180d: null,
+    return1y: fund.yearlyReturn,
+    return2y: null,
+    volatility1y: null,
+    volatility2y: null,
+    maxDrawdown1y: null,
+    maxDrawdown2y: null,
+    annualizedReturn1y: 0,
+    sharpe1y: 0,
+    sortino1y: 0,
+    totalReturn2y: null,
+    investorCount: fund.investorCount,
+    aum: fund.portfolioSize,
+    historySessions: 0,
+    categoryCode: fund.category?.code ?? null,
+    fund: {
+      id: fund.id,
+      categoryId: fund.categoryId,
+      code: fund.code,
+      name: fund.name,
+      shortName: fund.shortName,
+      logoUrl: fund.logoUrl,
+      category: fund.category,
+      fundType: fund.fundType,
+    },
   };
 }
 
@@ -363,10 +438,8 @@ export async function getScoresPayloadFromDerivedMetrics(
     throw e;
   }
 
-  if (mode === "HIGH_RETURN" && rows.length === 0) {
-    console.warn(
-      `[scores-derived] HIGH_RETURN boş: category=${categoryKey || "all"} query=${q || "(yok)"}`
-    );
+  if (rows.length === 0) {
+    return null;
   }
 
   const metricsList = rows.map(toFundMetrics);
@@ -385,7 +458,7 @@ export async function getScoresPayloadFromDerivedMetrics(
   const sortedRE = sortAsc(refExcRaw.filter((x): x is number => x != null && Number.isFinite(x)));
   const sortedSD = sortAsc(consSdRaw.filter((x): x is number => x != null && Number.isFinite(x)));
 
-  const scored: Array<{ row: DerivedRow; finalScore: number; scores: NormalizedScores; metrics: FundMetrics }> =
+  const scored: Array<{ row: DerivedRow; finalScore: number | null; scores: NormalizedScores; metrics: FundMetrics }> =
     rows.map((row, i) => {
       const metrics = metricsList[i]!;
       const base = calculateNormalizedScoresExtended(metrics, extCtx, scales[i]!);
@@ -415,7 +488,54 @@ export async function getScoresPayloadFromDerivedMetrics(
       return { row, finalScore, scores, metrics };
     });
 
-  scored.sort((a, b) =>
+  const derivedFundIds = new Set(rows.map((r) => r.fundId));
+  const masterMergeSelect = {
+    id: true,
+    categoryId: true,
+    code: true,
+    name: true,
+    shortName: true,
+    logoUrl: true,
+    lastPrice: true,
+    dailyReturn: true,
+    monthlyReturn: true,
+    yearlyReturn: true,
+    portfolioSize: true,
+    investorCount: true,
+    category: { select: { code: true, name: true } },
+    fundType: { select: { code: true, name: true } },
+  } as const;
+
+  const missingForDerived = await prisma.fund.findMany({
+    where: {
+      isActive: true,
+      ...(categoryKey ? { category: { code: categoryKey } } : {}),
+      ...(q
+        ? {
+            OR: [
+              { code: { contains: q, mode: "insensitive" } },
+              { name: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+      id: { notIn: [...derivedFundIds] },
+    },
+    select: masterMergeSelect,
+  });
+
+  const missingScored = missingForDerived.map((fund) => {
+    const syn = syntheticDerivedFromFundMaster(fund);
+    return {
+      row: syn,
+      finalScore: null as number | null,
+      scores: NEUTRAL_SORT_SCORES,
+      metrics: toFundMetrics(syn),
+    };
+  });
+
+  const combinedScored = [...scored, ...missingScored];
+
+  combinedScored.sort((a, b) =>
     compareRankedFunds(mode, {
       code: a.row.fund.code,
       finalScore: a.finalScore,
@@ -435,7 +555,7 @@ export async function getScoresPayloadFromDerivedMetrics(
     })
   );
 
-  const funds: ScoredFundRow[] = scored.map(({ row, finalScore }) => {
+  const funds: ScoredFundRow[] = combinedScored.map(({ row, finalScore }) => {
     const f = row.fund;
 
     return {

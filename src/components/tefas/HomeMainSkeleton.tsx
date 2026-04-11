@@ -4,13 +4,13 @@ import { Fragment } from "react";
 export default function HomeMainSkeleton() {
   return (
     <section className="space-y-3 sm:space-y-4">
-      <div className="ds-hero-compact">
+      <div className="space-y-2 sm:space-y-2.5">
         <div className="ds-hero-compact__intro space-y-2">
           <div className="skeleton h-2.5 w-32 rounded-full" />
           <div className="skeleton h-7 w-[min(100%,16rem)] rounded-md" />
-          <div className="skeleton h-10 w-full max-w-2xl rounded-lg" />
+          <div className="skeleton h-8 w-full max-w-xl rounded-lg" />
         </div>
-        <div className="ds-hero-stats market-snapshot-bar mt-3 flex animate-pulse items-stretch">
+        <div className="ds-hero-stats market-snapshot-bar-compact !mt-0 flex animate-pulse items-center">
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <Fragment key={i}>
               <div className="flex min-w-[4.25rem] flex-col justify-center gap-1.5 px-2 sm:px-3">

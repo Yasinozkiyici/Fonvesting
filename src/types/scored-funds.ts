@@ -12,7 +12,7 @@ export interface ScoredFund {
   investorCount: number;
   category: { code: string; name: string } | null;
   fundType: { code: number; name: string } | null;
-  finalScore: number;
+  finalScore: number | null;
 }
 
 export interface ScoredResponse {

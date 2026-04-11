@@ -14,6 +14,7 @@
     "test:unit": "tsx --test $(find src -name '*.test.ts' -print)",
     "smoke:routes": "node scripts/smoke-routes.mjs",
     "smoke:data": "node scripts/smoke-data.mjs",
+    "audit:system": "node scripts/system-audit.mjs",
     "verify:stability": "pnpm run prod:check && pnpm exec tsc --noEmit && pnpm run test:unit",
     "predeploy:check": "node scripts/predeploy-check.mjs",
     "db:generate": "prisma generate",

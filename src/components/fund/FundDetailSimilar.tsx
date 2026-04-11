@@ -3,23 +3,25 @@ import { MobileDetailAccordion } from "@/components/fund/MobileDetailAccordion";
 import { FundLogoMark } from "@/components/tefas/FundLogoMark";
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
 import { fundDetailHref } from "@/lib/fund-routes";
-import { fundDisplaySubtitle, formatFundLastPrice } from "@/lib/fund-list-format";
+import { fundDisplaySubtitle } from "@/lib/fund-list-format";
+import { formatDetailNavPrice, formatDetailSignedPercent } from "@/lib/fund-detail-format";
 import type { FundDetailSimilarFund } from "@/lib/services/fund-detail.service";
 
-/** Bu bölümde 1Y getiri; sakin ikincil ton. */
+/** 1Y getiri — ikincil ton, detay formatı ile. */
 function MiniPctCalm({ value }: { value: number }) {
+  const text = formatDetailSignedPercent(value, { maxAbs: 1000 });
+  if (text === "—") {
+    return <span className="tabular-nums text-[11px] font-semibold" style={{ color: "var(--text-muted)" }}>—</span>;
+  }
   const v = Number(value);
-  if (!Number.isFinite(v) || Math.abs(v) > 1000) {
-    return <span className="tabular-nums text-xs font-medium" style={{ color: "var(--text-muted)" }}>—</span>;
-  }
-  if (v === 0) {
-    return <span className="tabular-nums text-xs font-medium" style={{ color: "var(--text-tertiary)" }}>0,00%</span>;
-  }
   const pos = v > 0;
+  const zero = v === 0;
   return (
-    <span className="tabular-nums text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
-      {pos ? "+" : ""}
-      {v.toFixed(2).replace(".", ",")}%
+    <span
+      className="tabular-nums text-[11px] font-semibold tracking-[-0.015em] sm:text-xs"
+      style={{ color: zero ? "var(--text-tertiary)" : pos ? "var(--success-muted)" : "var(--danger-muted, #b91c1c)" }}
+    >
+      {text}
     </span>
   );
 }
@@ -50,13 +52,13 @@ export function FundDetailSimilar({ funds, categoryName, sectionId }: Props) {
             key={f.code}
             href={fundDetailHref(f.code)}
             prefetch={false}
-            className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-[var(--surface-table-header)] sm:px-3.5 sm:py-3"
+            className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 transition-colors hover:bg-[var(--surface-table-header)] focus-within:bg-[var(--surface-table-header)] focus-visible:outline-none sm:gap-2 sm:px-3.5 sm:py-2"
             style={{ color: "inherit" }}
           >
             <FundLogoMark
               code={f.code}
               logoUrl={f.logoUrl}
-              wrapperClassName="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg sm:h-[2.25rem] sm:w-[2.25rem]"
+              wrapperClassName="flex h-[1.95rem] w-[1.95rem] shrink-0 items-center justify-center overflow-hidden rounded-lg sm:h-8 sm:w-8"
               wrapperStyle={{
                 border: "1px solid var(--border-subtle)",
                 background: "var(--logo-plate-gradient)",
@@ -66,12 +68,12 @@ export function FundDetailSimilar({ funds, categoryName, sectionId }: Props) {
               initialsClassName="text-[10px] font-semibold tracking-tight tabular-nums"
             />
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1">
-                <p className="text-xs font-semibold tabular-nums tracking-tight sm:text-[13px]" style={{ color: "var(--text-primary)" }}>
+              <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <p className="text-[11.5px] font-semibold tabular-nums tracking-tight sm:text-[12.5px]" style={{ color: "var(--text-primary)" }}>
                   {f.code}
                 </p>
                 <p
-                  className="inline-flex w-fit rounded-full border px-1.5 py-[2px] text-[8px] font-semibold uppercase tracking-[0.08em] sm:px-2 sm:text-[9px]"
+                  className="inline-flex w-fit shrink-0 rounded-full border px-1.5 py-[1px] text-[8px] font-semibold uppercase tracking-[0.08em] sm:px-2 sm:py-[2px] sm:text-[8.5px]"
                   style={{
                     color: "var(--text-secondary)",
                     borderColor: "color-mix(in srgb, var(--border-subtle) 90%, transparent)",
@@ -81,24 +83,26 @@ export function FundDetailSimilar({ funds, categoryName, sectionId }: Props) {
                   {f.reasonLabel}
                 </p>
               </div>
-              <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug sm:text-[11.5px]" style={{ color: "var(--text-secondary)" }} title={f.name}>
+              <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug sm:text-[11px]" style={{ color: "var(--text-secondary)" }} title={f.name}>
                 {title}
               </p>
             </div>
             <div
-              className="flex min-w-[5.15rem] shrink-0 flex-col items-end gap-0.5 rounded-[0.85rem] border px-2 py-1.5 text-right"
+              className="flex min-w-[4.85rem] shrink-0 flex-col items-end justify-center gap-0.5 self-stretch rounded-[0.65rem] border px-1.5 py-1 text-right sm:min-w-[5rem] sm:px-1.75 sm:py-1.25"
               style={{
-                    borderColor: "color-mix(in srgb, var(--border-subtle) 88%, transparent)",
-                    background: "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))",
+                    borderColor: "color-mix(in srgb, var(--border-subtle) 74%, transparent)",
+                    background: "color-mix(in srgb, var(--card-bg) 90%, var(--bg-muted))",
               }}
             >
-              <span className="tabular-nums text-xs font-semibold sm:text-[13px]" style={{ color: "var(--text-primary)" }}>
-                {formatFundLastPrice(f.lastPrice)}
+              <span className="tabular-nums text-[12.5px] font-semibold leading-none tracking-[-0.02em] sm:text-[13px]" style={{ color: "var(--text-primary)" }}>
+                {formatDetailNavPrice(f.lastPrice)}
               </span>
-              <span className="text-[9px] font-medium uppercase tracking-[0.06em]" style={{ color: "var(--text-tertiary)" }}>
-                1Y
-              </span>
-              <MiniPctCalm value={f.yearlyReturn} />
+              <div className="flex w-full flex-col items-end gap-0.5 border-t pt-1" style={{ borderColor: "color-mix(in srgb, var(--border-subtle) 65%, transparent)" }}>
+                <span className="text-[8.5px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-muted)" }}>
+                  1Y getiri
+                </span>
+                <MiniPctCalm value={f.yearlyReturn} />
+              </div>
             </div>
           </Link>
         );
@@ -120,10 +124,10 @@ export function FundDetailSimilar({ funds, categoryName, sectionId }: Props) {
 
       <div className="hidden md:block">
         <FundDetailSectionTitle id="fund-detail-alternatives-heading">Alternatifler</FundDetailSectionTitle>
-        <p className="mt-1 text-[12px] leading-snug sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
+        <p className="mt-1.5 text-[12px] leading-relaxed sm:text-[13px]" style={{ color: "var(--text-tertiary)" }}>
           {subtitle}
         </p>
-        <div className="mt-2">{content}</div>
+        <div className="mt-2.5">{content}</div>
       </div>
     </section>
   );

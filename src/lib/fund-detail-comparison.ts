@@ -1,15 +1,30 @@
-import type { KiyasPeriodId, KiyasPeriodRow, KiyasRefKey, FundKiyasViewPayload } from "@/lib/services/fund-detail-kiyas.service";
+import { kiyasPolicyReturnPctForWindow } from "@/lib/kiyas-policy-return-window";
+import type { FundKiyasViewPayload, KiyasPeriodId, KiyasPeriodRow, KiyasRefKey } from "@/lib/services/fund-detail-kiyas.service";
 
-export type BenchmarkComparisonOutcome = "outperform" | "underperform" | "neutral";
+const DAY_MS = 86_400_000;
 
+/**
+ * Yüzde puanı cinsinden “başa baş” eşiği: |fon − referans| ≤ bu değer ise durum nötr.
+ * UI ve `buildBenchmarkComparisonView` aynı sabiti kullanır.
+ */
+export const BENCHMARK_COMPARISON_TIE_EPS_PP = 0.15;
+
+export type BenchmarkComparisonOutcome = "outperform" | "underperform" | "neutral" | "insufficient_data";
+
+/** Kıyas satırı — tek kaynak; grafik penceresiyle aynı startT/endT üzerinden hesaplanır. */
 export type BenchmarkComparisonRow = {
   key: KiyasRefKey;
   label: string;
   typeLabel: string;
   periodId: KiyasPeriodId;
-  fundReturn: number;
-  benchmarkReturn: number;
-  difference: number;
+  /** Seri uçları bu pencerede okunabildi mi */
+  hasEnoughData: boolean;
+  /** Pencere ankoru (ms); seri yolu için summary/liste/grafik aynı aralığı paylaşır */
+  periodStartMs?: number;
+  periodEndMs?: number;
+  fundReturnPct: number | null;
+  referenceReturnPct: number | null;
+  comparisonDeltaPct: number | null;
   outcome: BenchmarkComparisonOutcome;
 };
 
@@ -17,8 +32,25 @@ export type BenchmarkComparisonView = {
   rows: BenchmarkComparisonRow[];
   unavailableRefs: Array<{ key: KiyasRefKey; label: string; typeLabel: string }>;
   passedCount: number;
+  behindCount: number;
+  tiedCount: number;
+  /** Veri eksik satırlar (yalnızca seri penceresi dışı / boş; rows içinde gösterilir) */
+  insufficientDataCount: number;
   strongestRow: BenchmarkComparisonRow | null;
+  strongestOutperformRow: BenchmarkComparisonRow | null;
+  strongestUnderperformRow: BenchmarkComparisonRow | null;
   primaryRow: BenchmarkComparisonRow | null;
+};
+
+type ComparisonPoint = { t: number; v: number };
+
+type RangeSlice = {
+  sorted: ComparisonPoint[];
+  sliced: ComparisonPoint[];
+  startValue: number;
+  endValue: number;
+  returnPct: number;
+  normalized: ComparisonPoint[];
 };
 
 function finite(n: unknown): n is number {
@@ -34,95 +66,414 @@ function comparisonRefType(key: KiyasRefKey): string {
   return "Referans";
 }
 
-function outcomeFromDifference(difference: number, nearEps: number): BenchmarkComparisonOutcome {
-  if (Math.abs(difference) <= nearEps) return "neutral";
-  return difference > 0 ? "outperform" : "underperform";
+export function benchmarkComparisonOutcomeFromDelta(delta: number): BenchmarkComparisonOutcome {
+  if (delta > BENCHMARK_COMPARISON_TIE_EPS_PP) return "outperform";
+  if (delta < -BENCHMARK_COMPARISON_TIE_EPS_PP) return "underperform";
+  return "neutral";
 }
 
-function normalizeRow(
-  key: KiyasRefKey,
-  row: KiyasPeriodRow,
-  label: string,
-  nearEps: number
-): BenchmarkComparisonRow | null {
+function normalizeRow(key: KiyasRefKey, row: KiyasPeriodRow, label: string): BenchmarkComparisonRow | null {
   if (!finite(row.fundPct) || !finite(row.refPct)) return null;
-  const difference = row.fundPct - row.refPct;
+  const comparisonDeltaPct = row.fundPct - row.refPct;
   return {
     key,
     label,
     typeLabel: comparisonRefType(key),
     periodId: row.periodId,
-    fundReturn: row.fundPct,
-    benchmarkReturn: row.refPct,
-    difference,
-    outcome: outcomeFromDifference(difference, nearEps),
+    hasEnoughData: true,
+    fundReturnPct: row.fundPct,
+    referenceReturnPct: row.refPct,
+    comparisonDeltaPct,
+    outcome: benchmarkComparisonOutcomeFromDelta(comparisonDeltaPct),
+  };
+}
+
+function valueOnOrBeforeIndex(series: ComparisonPoint[], t: number): number {
+  if (series.length === 0) return -1;
+  let lo = 0;
+  let hi = series.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const mt = series[mid]!.t;
+    if (mt <= t) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans;
+}
+
+/** valueOnOrBefore ikili arama için t artan; aynı t tekrarlarında son örnek kalır. */
+function sortPointsAsc(points: ComparisonPoint[]): ComparisonPoint[] {
+  const sorted = [...points].sort((a, b) => a.t - b.t);
+  const out: ComparisonPoint[] = [];
+  for (const p of sorted) {
+    if (!finite(p.v)) continue;
+    if (out.length > 0 && out[out.length - 1]!.t === p.t) {
+      out[out.length - 1] = p;
+    } else {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+function normalizeSeriesForRange(
+  series: ComparisonPoint[],
+  startT: number,
+  endT: number,
+  requireWindowProgress: boolean
+): RangeSlice | null {
+  if (!Number.isFinite(startT) || !Number.isFinite(endT) || endT <= startT) return null;
+  const sorted = sortPointsAsc(series);
+  if (sorted.length < 2) return null;
+
+  const startIndex = valueOnOrBeforeIndex(sorted, startT);
+  const endIndex = valueOnOrBeforeIndex(sorted, endT);
+  if (startIndex < 0 || endIndex < 0) return null;
+  if (requireWindowProgress && startIndex === endIndex) return null;
+
+  const startValue = sorted[startIndex]!.v;
+  const endValue = sorted[endIndex]!.v;
+  if (!finite(startValue) || !finite(endValue) || startValue <= 0) return null;
+
+  const sliced = sorted.slice(startIndex, endIndex + 1);
+  if (sliced.length < 2) return null;
+
+  const returnPct = ((endValue / startValue) - 1) * 100;
+  const normalized = sliced.map((point) => ({
+    t: point.t,
+    v: ((point.v / startValue) - 1) * 100,
+  }));
+
+  return {
+    sorted,
+    sliced,
+    startValue,
+    endValue,
+    returnPct,
+    normalized,
+  };
+}
+
+function rowsSummary(rows: BenchmarkComparisonRow[]): {
+  passedCount: number;
+  behindCount: number;
+  tiedCount: number;
+  insufficientDataCount: number;
+  strongestRow: BenchmarkComparisonRow | null;
+  strongestOutperformRow: BenchmarkComparisonRow | null;
+  strongestUnderperformRow: BenchmarkComparisonRow | null;
+} {
+  const eps = BENCHMARK_COMPARISON_TIE_EPS_PP;
+  const ok = (row: BenchmarkComparisonRow) => row.hasEnoughData && row.comparisonDeltaPct != null && finite(row.comparisonDeltaPct);
+  const passedCount = rows.filter((row) => ok(row) && (row.comparisonDeltaPct as number) > eps).length;
+  const behindCount = rows.filter((row) => ok(row) && (row.comparisonDeltaPct as number) < -eps).length;
+  const tiedCount = rows.filter((row) => ok(row) && Math.abs(row.comparisonDeltaPct as number) <= eps).length;
+  const insufficientDataCount = rows.filter((row) => !row.hasEnoughData).length;
+  const comparable = rows.filter(ok);
+  const strongestRow =
+    comparable.length > 0
+      ? [...comparable].sort((a, b) => (b.comparisonDeltaPct as number) - (a.comparisonDeltaPct as number))[0] ?? null
+      : null;
+  const outperformRows = comparable.filter((row) => (row.comparisonDeltaPct as number) > eps);
+  const underperformRows = comparable.filter((row) => (row.comparisonDeltaPct as number) < -eps);
+  const strongestOutperformRow =
+    outperformRows.length > 0
+      ? [...outperformRows].sort((a, b) => (b.comparisonDeltaPct as number) - (a.comparisonDeltaPct as number))[0] ?? null
+      : null;
+  const strongestUnderperformRow =
+    underperformRows.length > 0
+      ? [...underperformRows].sort((a, b) => (a.comparisonDeltaPct as number) - (b.comparisonDeltaPct as number))[0] ?? null
+      : null;
+
+  return {
+    passedCount,
+    behindCount,
+    tiedCount,
+    insufficientDataCount,
+    strongestRow,
+    strongestOutperformRow,
+    strongestUnderperformRow,
+  };
+}
+
+function buildRowsFromSeriesWindow(input: {
+  block: FundKiyasViewPayload | null;
+  periodId: KiyasPeriodId;
+  labels?: Record<string, string>;
+  preferredOrder: KiyasRefKey[];
+  selectedRef: KiyasRefKey | null;
+  seriesWindow: {
+    fundSeries: ComparisonPoint[];
+    refSeriesByKey: Partial<Record<KiyasRefKey, ComparisonPoint[]>>;
+    startT: number;
+    endT: number;
+  };
+}): BenchmarkComparisonView {
+  const rows: BenchmarkComparisonRow[] = [];
+  const unavailableRefs: Array<{ key: KiyasRefKey; label: string; typeLabel: string }> = [];
+
+  const { fundSeries, refSeriesByKey, startT, endT } = input.seriesWindow;
+  const fundRange = normalizeSeriesForRange(fundSeries, startT, endT, true);
+  const fundR = fundRange?.returnPct ?? null;
+  const fundOk = fundR != null && finite(fundR);
+
+  for (const key of input.preferredOrder) {
+    const label =
+      input.block?.refs.find((item) => item.key === key)?.label ??
+      input.labels?.[key] ??
+      key.toUpperCase();
+    const refSeries = refSeriesByKey[key] ?? [];
+
+    if (!fundOk) {
+      unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
+      continue;
+    }
+
+    let referenceReturnPct: number | null = null;
+    if (key === "policy") {
+      const sorted = sortPointsAsc(refSeries);
+      if (sorted.length >= 2) {
+        referenceReturnPct = kiyasPolicyReturnPctForWindow(sorted, startT, endT);
+      }
+    } else {
+      const refRange = normalizeSeriesForRange(refSeries, startT, endT, true);
+      referenceReturnPct = refRange?.returnPct ?? null;
+    }
+
+    const hasEnoughData = finite(referenceReturnPct);
+    if (!hasEnoughData) {
+      if (key === "category") {
+        const blockRow = input.block?.rowsByRef.category?.find((row) => row.periodId === input.periodId);
+        if (blockRow && finite(blockRow.fundPct) && finite(blockRow.refPct)) {
+          const comparisonDeltaPct = (blockRow.fundPct as number) - (blockRow.refPct as number);
+          rows.push({
+            key,
+            label,
+            typeLabel: comparisonRefType(key),
+            periodId: input.periodId,
+            hasEnoughData: true,
+            periodStartMs: startT,
+            periodEndMs: endT,
+            fundReturnPct: blockRow.fundPct,
+            referenceReturnPct: blockRow.refPct,
+            comparisonDeltaPct,
+            outcome: benchmarkComparisonOutcomeFromDelta(comparisonDeltaPct),
+          });
+          continue;
+        }
+      }
+      rows.push({
+        key,
+        label,
+        typeLabel: comparisonRefType(key),
+        periodId: input.periodId,
+        hasEnoughData: false,
+        periodStartMs: startT,
+        periodEndMs: endT,
+        fundReturnPct: fundR,
+        referenceReturnPct: null,
+        comparisonDeltaPct: null,
+        outcome: "insufficient_data",
+      });
+      continue;
+    }
+
+    const comparisonDeltaPct = fundR - (referenceReturnPct as number);
+    rows.push({
+      key,
+      label,
+      typeLabel: comparisonRefType(key),
+      periodId: input.periodId,
+      hasEnoughData: true,
+      periodStartMs: startT,
+      periodEndMs: endT,
+      fundReturnPct: fundR,
+      referenceReturnPct: referenceReturnPct as number,
+      comparisonDeltaPct,
+      outcome: benchmarkComparisonOutcomeFromDelta(comparisonDeltaPct),
+    });
+  }
+
+  const summary = rowsSummary(rows);
+  const pickPrimary = (candidates: BenchmarkComparisonRow[]) => {
+    for (const row of candidates) {
+      if (!row.hasEnoughData) continue;
+      return row;
+    }
+    return null;
+  };
+  const primaryRow =
+    (input.selectedRef ? pickPrimary(rows.filter((row) => row.key === input.selectedRef)) : null) ??
+    pickPrimary(rows) ??
+    null;
+
+  return {
+    rows,
+    unavailableRefs,
+    passedCount: summary.passedCount,
+    behindCount: summary.behindCount,
+    tiedCount: summary.tiedCount,
+    insufficientDataCount: summary.insufficientDataCount,
+    strongestRow: summary.strongestRow,
+    strongestOutperformRow: summary.strongestOutperformRow,
+    strongestUnderperformRow: summary.strongestUnderperformRow,
+    primaryRow,
   };
 }
 
 export function buildBenchmarkComparisonView(input: {
   block: FundKiyasViewPayload | null;
   periodId: KiyasPeriodId;
+  selectedRef?: KiyasRefKey | null;
   labels?: Record<string, string>;
   preferredOrder?: KiyasRefKey[];
-  nearEps?: number;
+  seriesWindow?: {
+    fundSeries: ComparisonPoint[];
+    refSeriesByKey: Partial<Record<KiyasRefKey, ComparisonPoint[]>>;
+    startT: number;
+    endT: number;
+  } | null;
 }): BenchmarkComparisonView {
   const {
     block,
     periodId,
+    selectedRef = null,
     labels,
     preferredOrder = ["category", "bist100", "usdtry", "eurtry", "gold", "policy"],
-    nearEps = 0.15,
+    seriesWindow = null,
   } = input;
 
-  if (!block) {
+  if (!block && !seriesWindow) {
     return {
       rows: [],
       unavailableRefs: [],
       passedCount: 0,
+      behindCount: 0,
+      tiedCount: 0,
+      insufficientDataCount: 0,
       strongestRow: null,
+      strongestOutperformRow: null,
+      strongestUnderperformRow: null,
       primaryRow: null,
     };
+  }
+
+  if (seriesWindow) {
+    return buildRowsFromSeriesWindow({
+      block,
+      periodId,
+      labels,
+      preferredOrder,
+      selectedRef,
+      seriesWindow,
+    });
   }
 
   const rows: BenchmarkComparisonRow[] = [];
   const unavailableRefs: Array<{ key: KiyasRefKey; label: string; typeLabel: string }> = [];
 
-  for (const key of preferredOrder) {
-    const periodRows = block.rowsByRef[key];
-    if (!periodRows?.length) continue;
+  if (block) {
+    for (const key of preferredOrder) {
+      const periodRows = block.rowsByRef[key];
+      if (!periodRows?.length) continue;
 
-    // Non-negotiable contract: always use selected period only.
-    const row = periodRows.find((item) => item.periodId === periodId);
-    const label =
-      block.refs.find((item) => item.key === key)?.label ??
-      labels?.[key] ??
-      key.toUpperCase();
+      const row = periodRows.find((item) => item.periodId === periodId);
+      const label =
+        block.refs.find((item) => item.key === key)?.label ??
+        labels?.[key] ??
+        key.toUpperCase();
 
-    if (!row) {
-      unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
-      continue;
+      if (!row) {
+        unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
+        continue;
+      }
+
+      const normalized = normalizeRow(key, row, label);
+      if (!normalized) {
+        unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
+        continue;
+      }
+
+      rows.push(normalized);
     }
-
-    const normalized = normalizeRow(key, row, label, nearEps);
-    if (!normalized) {
-      unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
-      continue;
-    }
-
-    rows.push(normalized);
   }
 
-  const passedCount = rows.filter((row) => row.outcome === "outperform").length;
-  const strongestRow =
-    rows.length > 0
-      ? [...rows].sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference))[0] ?? null
-      : null;
+  const summary = rowsSummary(rows);
+  const pickPrimary = (candidates: BenchmarkComparisonRow[]) => {
+    for (const row of candidates) {
+      if (!row.hasEnoughData) continue;
+      return row;
+    }
+    return null;
+  };
+  const primaryRow =
+    (selectedRef ? pickPrimary(rows.filter((row) => row.key === selectedRef)) : null) ??
+    pickPrimary(rows) ??
+    null;
 
   return {
     rows,
     unavailableRefs,
-    passedCount,
-    strongestRow,
-    primaryRow: rows[0] ?? null,
+    passedCount: summary.passedCount,
+    behindCount: summary.behindCount,
+    tiedCount: summary.tiedCount,
+    insufficientDataCount: summary.insufficientDataCount,
+    strongestRow: summary.strongestRow,
+    strongestOutperformRow: summary.strongestOutperformRow,
+    strongestUnderperformRow: summary.strongestUnderperformRow,
+    primaryRow,
+  };
+}
+
+/** Yalnızca geliştirme / konsol incelemesi için — üretim UI’da kullanılmaz. */
+export function summarizeBenchmarkComparisonViewForDev(view: BenchmarkComparisonView): {
+  rows: Array<{
+    key: KiyasRefKey;
+    label: string;
+    hasEnoughData: boolean;
+    periodStartMs?: number;
+    periodEndMs?: number;
+    fundReturnPct: number | null;
+    referenceReturnPct: number | null;
+    comparisonDeltaPct: number | null;
+    outcome: BenchmarkComparisonOutcome;
+  }>;
+  unavailableRefs: BenchmarkComparisonView["unavailableRefs"];
+  passedCount: number;
+  behindCount: number;
+  tiedCount: number;
+  insufficientDataCount: number;
+  comparableCount: number;
+  strongestOutperformKey: KiyasRefKey | null;
+  strongestUnderperformKey: KiyasRefKey | null;
+  primaryKey: KiyasRefKey | null;
+} {
+  const comparableCount = view.passedCount + view.behindCount + view.tiedCount;
+  return {
+    rows: view.rows.map((r) => ({
+      key: r.key,
+      label: r.label,
+      hasEnoughData: r.hasEnoughData,
+      periodStartMs: r.periodStartMs,
+      periodEndMs: r.periodEndMs,
+      fundReturnPct: r.fundReturnPct,
+      referenceReturnPct: r.referenceReturnPct,
+      comparisonDeltaPct: r.comparisonDeltaPct,
+      outcome: r.outcome,
+    })),
+    unavailableRefs: view.unavailableRefs,
+    passedCount: view.passedCount,
+    behindCount: view.behindCount,
+    tiedCount: view.tiedCount,
+    insufficientDataCount: view.insufficientDataCount,
+    comparableCount,
+    strongestOutperformKey: view.strongestOutperformRow?.key ?? null,
+    strongestUnderperformKey: view.strongestUnderperformRow?.key ?? null,
+    primaryKey: view.primaryRow?.key ?? null,
   };
 }

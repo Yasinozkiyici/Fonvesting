@@ -36,6 +36,10 @@ export function writeCompareCodes(codes: string[]): void {
   }
 }
 
+export function clearCompareCodes(): void {
+  writeCompareCodes([]);
+}
+
 /** En yenisi başta; en fazla 4 kod. */
 export function addCompareCode(code: string): string[] {
   const u = code.trim().toUpperCase();

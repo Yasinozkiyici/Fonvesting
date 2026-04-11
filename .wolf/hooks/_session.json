@@ -1,153 +1,538 @@
 {
-  "session_id": "session-2026-04-10-1357",
-  "started": "2026-04-10T10:57:32.844Z",
+  "session_id": "session-2026-04-11-1248",
+  "started": "2026-04-11T09:48:43.320Z",
   "files_read": {
-    "/Users/vandv/Desktop/Fonvesting/scripts/serving-rebuild-worker-server.ts": {
+    "/Users/vandv/Desktop/Fonvesting/docs/ui-guardrails.md": {
+      "count": 1,
+      "tokens": 255,
+      "first_read": "2026-04-11T09:48:54.932Z"
+    },
+    "/Users/vandv/Desktop/Fonvesting/src/components/compare/FundCompareControl.tsx": {
+      "count": 1,
+      "tokens": 0,
+      "first_read": "2026-04-11T09:49:04.649Z"
+    },
+    "/Users/vandv/Desktop/Fonvesting/src/components/SitePageShell.tsx": {
       "count": 2,
       "tokens": 0,
-      "first_read": "2026-04-10T10:57:48.153Z"
+      "first_read": "2026-04-11T09:49:06.685Z"
     },
-    "/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/rebuild-serving/route.ts": {
-      "count": 4,
-      "tokens": 561,
-      "first_read": "2026-04-10T10:57:48.306Z"
-    },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/240964.txt": {
+    "/Users/vandv/Desktop/Fonvesting/src/components/compare/ComparePageClient.tsx": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-04-10T11:07:34.692Z"
+      "first_read": "2026-04-11T09:49:25.143Z"
     },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/910246.txt": {
+    "/Users/vandv/Desktop/Fonvesting/src/lib/chart-monotone-path.ts": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-04-10T11:07:34.778Z"
+      "first_read": "2026-04-11T09:49:25.887Z"
     },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/929658.txt": {
+    "/Users/vandv/Desktop/Fonvesting/src/lib/fund-list-format.ts": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-04-10T11:07:34.824Z"
+      "first_read": "2026-04-11T09:51:05.326Z"
     },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/3.txt": {
+    "/Users/vandv/Desktop/Fonvesting/src/lib/chart-monotone-path.test.ts": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-04-10T11:07:34.856Z"
+      "first_read": "2026-04-11T09:51:21.816Z"
     },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/663111.txt": {
+    "/Users/vandv/Desktop/Fonvesting/.gitignore": {
+      "count": 1,
+      "tokens": 102,
+      "first_read": "2026-04-11T09:54:14.684Z"
+    },
+    "/Users/vandv/Desktop/Fonvesting/src/lib/fund-detail-layout.ts": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-04-10T11:07:34.867Z"
+      "first_read": "2026-04-11T09:54:22.376Z"
     },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/86929.txt": {
+    "/Users/vandv/Desktop/Fonvesting/src/components/fund/MobileDetailAccordion.tsx": {
       "count": 1,
       "tokens": 0,
-      "first_read": "2026-04-10T11:07:34.873Z"
-    },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/324797.txt": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T11:07:35.030Z"
-    },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/terminals/910292.txt": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T11:07:35.034Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/vercel.json": {
-      "count": 1,
-      "tokens": 200,
-      "first_read": "2026-04-10T11:10:24.376Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/sync/route.ts": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T11:10:24.453Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/scripts/source-refresh-worker.ts": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T11:10:28.034Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/src/lib/services/serving-rebuild.service.ts": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T11:10:28.183Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/docs/serving-rebuild-worker.md": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T11:10:42.629Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/railway.json": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T13:45:09.322Z"
-    },
-    "/Users/vandv/.cursor/projects/Users-vandv-Desktop-Fonvesting/agent-tools/c1a2c83d-875a-43bb-9b20-adcbad15b4ef.txt": {
-      "count": 1,
-      "tokens": 0,
-      "first_read": "2026-04-10T14:33:42.683Z"
-    },
-    "/Users/vandv/Desktop/Fonvesting/package.json": {
-      "count": 1,
-      "tokens": 980,
-      "first_read": "2026-04-10T14:40:29.988Z"
+      "first_read": "2026-04-11T09:54:46.521Z"
     }
   },
   "files_written": [
     {
-      "file": "/Users/vandv/Desktop/Fonvesting/scripts/serving-rebuild-worker-server.ts",
+      "file": "/Users/vandv/Desktop/Fonvesting/src/lib/chart-monotone-path.ts",
       "action": "create",
-      "tokens": 476,
-      "at": "2026-04-10T10:58:03.638Z"
+      "tokens": 990,
+      "at": "2026-04-11T09:49:26.272Z"
     },
     {
-      "file": "/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/rebuild-serving/route.ts",
+      "file": "/Users/vandv/Desktop/Fonvesting/src/lib/chart-monotone-path.ts",
       "action": "create",
-      "tokens": 561,
-      "at": "2026-04-10T10:58:14.232Z"
+      "tokens": 991,
+      "at": "2026-04-11T09:49:30.019Z"
     },
     {
-      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
       "action": "create",
-      "tokens": 8028,
-      "at": "2026-04-10T11:00:31.817Z"
+      "tokens": 23140,
+      "at": "2026-04-11T09:49:45.554Z"
     },
     {
-      "file": "/Users/vandv/Desktop/Fonvesting/railway.json",
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
       "action": "create",
-      "tokens": 60,
-      "at": "2026-04-10T13:45:10.061Z"
+      "tokens": 23199,
+      "at": "2026-04-11T09:49:46.831Z"
     },
     {
-      "file": "/Users/vandv/Desktop/Fonvesting/package.json",
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/SitePageShell.tsx",
       "action": "create",
-      "tokens": 1034,
-      "at": "2026-04-10T14:40:30.892Z"
-    },
-    {
-      "file": "/Users/vandv/Desktop/Fonvesting/src/app/api/jobs/rebuild-serving/route.ts",
-      "action": "create",
-      "tokens": 564,
-      "at": "2026-04-10T14:43:04.862Z"
+      "tokens": 206,
+      "at": "2026-04-11T09:49:47.248Z"
     },
     {
       "file": "/Users/vandv/Desktop/Fonvesting/src/app/page.tsx",
       "action": "create",
-      "tokens": 927,
-      "at": "2026-04-10T16:00:20.606Z"
+      "tokens": 945,
+      "at": "2026-04-11T09:49:48.139Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/fund/[code]/page.tsx",
+      "action": "create",
+      "tokens": 1138,
+      "at": "2026-04-11T09:49:49.163Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/lib/chart-monotone-path.ts",
+      "action": "create",
+      "tokens": 1096,
+      "at": "2026-04-11T09:49:52.084Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6125,
+      "at": "2026-04-11T09:50:03.299Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6094,
+      "at": "2026-04-11T09:50:09.428Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6120,
+      "at": "2026-04-11T09:50:10.349Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6120,
+      "at": "2026-04-11T09:50:13.746Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6120,
+      "at": "2026-04-11T09:50:14.744Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6120,
+      "at": "2026-04-11T09:50:17.793Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6152,
+      "at": "2026-04-11T09:50:18.782Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6180,
+      "at": "2026-04-11T09:50:20.606Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6240,
+      "at": "2026-04-11T09:50:25.398Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 15983,
+      "at": "2026-04-11T09:50:35.264Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 16016,
+      "at": "2026-04-11T09:50:36.504Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 16016,
+      "at": "2026-04-11T09:50:38.121Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 16048,
+      "at": "2026-04-11T09:50:39.279Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 16062,
+      "at": "2026-04-11T09:50:42.887Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 16057,
+      "at": "2026-04-11T09:50:50.490Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17118,
+      "at": "2026-04-11T09:51:04.188Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/lib/chart-monotone-path.test.ts",
+      "action": "create",
+      "tokens": 232,
+      "at": "2026-04-11T09:51:22.418Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17122,
+      "at": "2026-04-11T09:51:23.976Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17123,
+      "at": "2026-04-11T09:51:25.775Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17122,
+      "at": "2026-04-11T09:51:26.813Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17123,
+      "at": "2026-04-11T09:51:27.559Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17123,
+      "at": "2026-04-11T09:51:32.085Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17122,
+      "at": "2026-04-11T09:51:33.219Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17121,
+      "at": "2026-04-11T09:51:36.690Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailChart.tsx",
+      "action": "create",
+      "tokens": 17121,
+      "at": "2026-04-11T09:51:37.923Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailTrends.tsx",
+      "action": "create",
+      "tokens": 6238,
+      "at": "2026-04-11T09:51:41.202Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailRisk.tsx",
+      "action": "create",
+      "tokens": 1004,
+      "at": "2026-04-11T09:51:47.376Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailRisk.tsx",
+      "action": "create",
+      "tokens": 1007,
+      "at": "2026-04-11T09:51:48.648Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailProfile.tsx",
+      "action": "create",
+      "tokens": 2122,
+      "at": "2026-04-11T09:51:50.027Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailProfile.tsx",
+      "action": "create",
+      "tokens": 2122,
+      "at": "2026-04-11T09:51:51.204Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailProfile.tsx",
+      "action": "create",
+      "tokens": 2122,
+      "at": "2026-04-11T09:51:52.205Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailProfile.tsx",
+      "action": "create",
+      "tokens": 2123,
+      "at": "2026-04-11T09:51:53.378Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailSimilar.tsx",
+      "action": "create",
+      "tokens": 1694,
+      "at": "2026-04-11T09:51:53.580Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailSimilar.tsx",
+      "action": "create",
+      "tokens": 1702,
+      "at": "2026-04-11T09:51:55.701Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailSimilar.tsx",
+      "action": "create",
+      "tokens": 1702,
+      "at": "2026-04-11T09:51:56.962Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailSimilar.tsx",
+      "action": "create",
+      "tokens": 1701,
+      "at": "2026-04-11T09:52:00.937Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailSimilar.tsx",
+      "action": "create",
+      "tokens": 1701,
+      "at": "2026-04-11T09:52:02.018Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailProfile.tsx",
+      "action": "create",
+      "tokens": 2122,
+      "at": "2026-04-11T09:52:05.861Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/fund/FundDetailProfile.tsx",
+      "action": "create",
+      "tokens": 2122,
+      "at": "2026-04-11T09:52:06.840Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
+      "action": "create",
+      "tokens": 23222,
+      "at": "2026-04-11T09:52:12.235Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
+      "action": "create",
+      "tokens": 23246,
+      "at": "2026-04-11T09:52:13.526Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/Footer.tsx",
+      "action": "create",
+      "tokens": 1485,
+      "at": "2026-04-11T09:52:14.555Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/Footer.tsx",
+      "action": "create",
+      "tokens": 1486,
+      "at": "2026-04-11T09:52:16.020Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/ds/FundRow.tsx",
+      "action": "create",
+      "tokens": 3042,
+      "at": "2026-04-11T09:52:19.522Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
+      "action": "create",
+      "tokens": 23318,
+      "at": "2026-04-11T09:52:23.506Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
+      "action": "create",
+      "tokens": 23405,
+      "at": "2026-04-11T09:52:26.622Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/ScoredFundsTable.tsx",
+      "action": "create",
+      "tokens": 13000,
+      "at": "2026-04-11T09:52:32.514Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/ScoredFundsTable.tsx",
+      "action": "create",
+      "tokens": 13006,
+      "at": "2026-04-11T09:52:37.514Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
+      "action": "create",
+      "tokens": 23474,
+      "at": "2026-04-11T09:52:44.277Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/app/globals.css",
+      "action": "create",
+      "tokens": 23526,
+      "at": "2026-04-11T09:52:45.737Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/ScoredFundsTable.tsx",
+      "action": "create",
+      "tokens": 13469,
+      "at": "2026-04-11T09:52:50.373Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/Footer.tsx",
+      "action": "create",
+      "tokens": 1598,
+      "at": "2026-04-11T09:52:54.936Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/Footer.tsx",
+      "action": "create",
+      "tokens": 1638,
+      "at": "2026-04-11T09:52:56.339Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/ScoredFundsTable.tsx",
+      "action": "create",
+      "tokens": 13478,
+      "at": "2026-04-11T09:52:56.733Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/ScoredFundsTable.tsx",
+      "action": "create",
+      "tokens": 13466,
+      "at": "2026-04-11T09:52:59.022Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/MarketHeader.tsx",
+      "action": "create",
+      "tokens": 1431,
+      "at": "2026-04-11T09:53:03.443Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7817,
+      "at": "2026-04-11T09:53:11.164Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7869,
+      "at": "2026-04-11T09:53:11.763Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7888,
+      "at": "2026-04-11T09:53:12.844Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7906,
+      "at": "2026-04-11T09:53:13.762Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7947,
+      "at": "2026-04-11T09:53:15.670Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7948,
+      "at": "2026-04-11T09:53:16.178Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7947,
+      "at": "2026-04-11T09:53:21.488Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7946,
+      "at": "2026-04-11T09:53:22.038Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/FeaturedThreeFunds.tsx",
+      "action": "create",
+      "tokens": 3544,
+      "at": "2026-04-11T09:53:22.514Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7944,
+      "at": "2026-04-11T09:53:39.404Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/home/HomePageClient.tsx",
+      "action": "create",
+      "tokens": 7941,
+      "at": "2026-04-11T09:53:41.342Z"
+    },
+    {
+      "file": "/Users/vandv/Desktop/Fonvesting/src/components/tefas/ScoredFundsTable.tsx",
+      "action": "create",
+      "tokens": 13500,
+      "at": "2026-04-11T09:53:54.794Z"
     }
   ],
   "edit_counts": {
-    "scripts/serving-rebuild-worker-server.ts": 1,
-    "src/app/api/jobs/rebuild-serving/route.ts": 2,
-    "src/components/home/HomePageClient.tsx": 1,
-    "railway.json": 1,
-    "package.json": 1,
-    "src/app/page.tsx": 1
+    "src/lib/chart-monotone-path.ts": 3,
+    "src/app/globals.css": 8,
+    "src/components/SitePageShell.tsx": 1,
+    "src/app/page.tsx": 1,
+    "src/app/fund/[code]/page.tsx": 1,
+    "src/components/fund/FundDetailTrends.tsx": 10,
+    "src/components/fund/FundDetailChart.tsx": 15,
+    "src/lib/chart-monotone-path.test.ts": 1,
+    "src/components/fund/FundDetailRisk.tsx": 2,
+    "src/components/fund/FundDetailProfile.tsx": 6,
+    "src/components/fund/FundDetailSimilar.tsx": 5,
+    "src/components/tefas/Footer.tsx": 4,
+    "src/components/ds/FundRow.tsx": 1,
+    "src/components/tefas/ScoredFundsTable.tsx": 6,
+    "src/components/tefas/MarketHeader.tsx": 1,
+    "src/components/home/HomePageClient.tsx": 10,
+    "src/components/home/FeaturedThreeFunds.tsx": 1
   },
   "anatomy_hits": 2,
-  "anatomy_misses": 11,
-  "repeated_reads_warned": 4,
+  "anatomy_misses": 8,
+  "repeated_reads_warned": 1,
   "cerebrum_warnings": 0,
-  "stop_count": 22
+  "stop_count": 0
 }

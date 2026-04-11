@@ -1,59 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { RankingMode, NormalizedScores, FundMetrics, RiskLevel } from "@/lib/scoring";
+import type { NormalizedScores, FundMetrics, RiskLevel } from "@/lib/scoring";
 import { getRiskLevelInfo, getScoreColor } from "@/lib/scoring";
-
-/**
- * Ranking Mode Toggle - Refined segmented control
- */
-interface RankingToggleProps {
-  mode: RankingMode;
-  onChange: (mode: RankingMode) => void;
-}
-
-const MODES: { key: RankingMode; label: string }[] = [
-  { key: "BEST", label: "En İyi" },
-  { key: "LOW_RISK", label: "Düşük Risk" },
-  { key: "HIGH_RETURN", label: "Yüksek Getiri" },
-  { key: "STABLE", label: "Stabil" },
-];
-
-export function RankingModeToggle({ mode, onChange }: RankingToggleProps) {
-  return (
-    <div
-      role="tablist"
-      aria-label="Sıralama modu"
-      className="ranking-mode-toggle inline-flex max-w-full flex-wrap rounded-[var(--ds-radius-control)] p-px"
-      style={{
-        border: "1px solid var(--ranking-toggle-track-border)",
-        background: "var(--ranking-toggle-track)",
-        gap: 0,
-      }}
-    >
-      {MODES.map((m) => {
-        const isActive = mode === m.key;
-        return (
-          <button
-            key={m.key}
-            type="button"
-            role="tab"
-            aria-selected={isActive}
-            onClick={() => onChange(m.key)}
-            className="relative min-h-[1.625rem] rounded-[calc(var(--ds-radius-control)-1px)] px-2 py-px text-[10px] font-medium tracking-[-0.02em] transition-[color,background-color] duration-200 ease-out sm:min-h-[1.75rem] sm:px-2.25 sm:text-[10.5px] sm:tracking-[-0.019em]"
-            style={{
-              background: isActive ? "var(--ranking-toggle-active-bg)" : "color-mix(in srgb, transparent 86%, var(--surface-control) 14%)",
-              color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
-              boxShadow: isActive ? "inset 0 1px 0 rgba(255,255,255,0.18)" : "none",
-            }}
-          >
-            {m.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /**
  * Score Badge - Compact pill style

@@ -11,8 +11,9 @@ import { fundTypeForApi } from "@/lib/fund-type-display";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { LIVE_DATA_CACHE_SEC } from "@/lib/data-freshness";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
+import type { ScoredFundRow } from "@/lib/services/fund-scores-types";
 
-const KEY_PREFIX = "scores:v8";
+const KEY_PREFIX = "scores:v9";
 const DB_SCORES_STALE_MS = 23 * 60 * 60 * 1000;
 
 type SupabaseScoresCacheRow = {
@@ -71,6 +72,92 @@ function scoreFieldForMode(mode: RankingMode): keyof Pick<
   return "finalScoreBest";
 }
 
+type SupabaseFundIdRow = { id: string };
+type SupabaseFundMasterRow = {
+  id: string;
+  code: string;
+  name: string;
+  shortName: string | null;
+  logoUrl: string | null;
+  lastPrice: number;
+  dailyReturn: number;
+  monthlyReturn: number;
+  yearlyReturn: number;
+  portfolioSize: number;
+  investorCount: number;
+  categoryId: string | null;
+  fundTypeId: string | null;
+};
+type SupabaseCategoryLookup = { id: string; code: string; name: string };
+type SupabaseFundTypeLookup = { id: string; code: number; name: string };
+
+/** Snapshot’ta satırı olmayan aktif Fund kayıtlarını REST ile ekler (Prisma yolu yoksa). */
+async function mergeSupabaseActiveFundsMissingFromSnapshot(
+  categoryKey: string,
+  fromSnapshot: ScoredFundRow[]
+): Promise<ScoredFundRow[]> {
+  const present = new Set(fromSnapshot.map((f) => f.fundId));
+  const activeRows = await fetchSupabaseRestJson<SupabaseFundIdRow[]>(
+    "Fund?select=id&isActive=eq.true&limit=16000",
+    { revalidate: LIVE_DATA_CACHE_SEC }
+  );
+  const missingIds = activeRows.map((r) => r.id).filter((id) => !present.has(id));
+  if (missingIds.length === 0) return fromSnapshot;
+
+  const [catRows, typeRows] = await Promise.all([
+    fetchSupabaseRestJson<SupabaseCategoryLookup[]>("FundCategory?select=id,code,name&limit=500", {
+      revalidate: LIVE_DATA_CACHE_SEC,
+    }),
+    fetchSupabaseRestJson<SupabaseFundTypeLookup[]>("FundType?select=id,code,name&limit=500", {
+      revalidate: LIVE_DATA_CACHE_SEC,
+    }),
+  ]);
+  const catById = new Map(catRows.map((c) => [c.id, c]));
+  const typeById = new Map(typeRows.map((t) => [t.id, t]));
+
+  const extra: ScoredFundRow[] = [];
+  const chunkSize = 100;
+  for (let i = 0; i < missingIds.length; i += chunkSize) {
+    const chunk = missingIds.slice(i, i + chunkSize);
+    const inClause = chunk.join(",");
+    const fetched = await fetchSupabaseRestJson<SupabaseFundMasterRow[]>(
+      `Fund?select=id,code,name,shortName,logoUrl,lastPrice,dailyReturn,monthlyReturn,yearlyReturn,portfolioSize,investorCount,categoryId,fundTypeId&id=in.(${inClause})`,
+      { revalidate: LIVE_DATA_CACHE_SEC }
+    );
+    for (const row of fetched) {
+      const cat = row.categoryId ? catById.get(row.categoryId) : null;
+      if (categoryKey && cat?.code !== categoryKey) continue;
+      const ft = row.fundTypeId ? typeById.get(row.fundTypeId) : null;
+      extra.push({
+        fundId: row.id,
+        code: row.code,
+        name: row.name,
+        shortName: row.shortName,
+        logoUrl: getFundLogoUrlForUi(row.id, row.code, row.logoUrl, row.name),
+        lastPrice: row.lastPrice,
+        dailyReturn: row.dailyReturn,
+        portfolioSize: row.portfolioSize,
+        investorCount: row.investorCount,
+        category: cat ? { code: cat.code, name: cat.name } : null,
+        fundType: ft ? fundTypeForApi({ code: ft.code, name: ft.name }) : null,
+        finalScore: null,
+      });
+    }
+  }
+
+  const merged = [...fromSnapshot, ...extra];
+  merged.sort((a, b) => {
+    const fa = a.finalScore;
+    const fb = b.finalScore;
+    const am = fa == null || !Number.isFinite(fa);
+    const bm = fb == null || !Number.isFinite(fb);
+    if (!am && !bm && fb !== fa) return fb - fa;
+    if (am !== bm) return am ? 1 : -1;
+    return a.code.localeCompare(b.code, "tr");
+  });
+  return merged;
+}
+
 async function getScoresPayloadFromSupabaseRest(
   mode: RankingMode,
   categoryKey: string,
@@ -127,7 +214,7 @@ async function getScoresPayloadFromSupabaseRest(
     ].join(","),
     date: `eq.${latestDate}`,
     order: `${scoreField}.desc,code.asc`,
-    limit: "3000",
+    limit: "12000",
   });
   if (categoryKey) {
     query.set("categoryCode", `eq.${categoryKey}`);
@@ -137,29 +224,36 @@ async function getScoresPayloadFromSupabaseRest(
     { revalidate: LIVE_DATA_CACHE_SEC }
   );
 
+  const fromSnapshot: ScoredFundRow[] = rows.map((row) => ({
+    fundId: row.fundId,
+    code: row.code,
+    finalScore: row[scoreField],
+    name: row.name,
+    shortName: row.shortName,
+    logoUrl: getFundLogoUrlForUi(row.fundId, row.code, row.logoUrl, row.name),
+    lastPrice: row.lastPrice,
+    dailyReturn: row.dailyReturn,
+    portfolioSize: row.portfolioSize,
+    investorCount: row.investorCount,
+    category:
+      row.categoryCode && row.categoryName ? { code: row.categoryCode, name: row.categoryName } : null,
+    fundType:
+      row.fundTypeCode != null && row.fundTypeName
+        ? fundTypeForApi({ code: row.fundTypeCode, name: row.fundTypeName })
+        : null,
+  }));
+
+  let funds = fromSnapshot;
+  try {
+    funds = await mergeSupabaseActiveFundsMissingFromSnapshot(categoryKey, fromSnapshot);
+  } catch (e) {
+    console.warn("[scores-cache] supabase universe merge skipped", e);
+  }
+
   const payload = enrichScoresPayloadLogos({
     mode,
-    total: rows.length,
-    funds: rows.map((row) => ({
-      fundId: row.fundId,
-      code: row.code,
-      finalScore: row[scoreField],
-      name: row.name,
-      shortName: row.shortName,
-      logoUrl: getFundLogoUrlForUi(row.fundId, row.code, row.logoUrl, row.name),
-      lastPrice: row.lastPrice,
-      dailyReturn: row.dailyReturn,
-      portfolioSize: row.portfolioSize,
-      investorCount: row.investorCount,
-      category:
-        row.categoryCode && row.categoryName
-          ? { code: row.categoryCode, name: row.categoryName }
-          : null,
-      fundType:
-        row.fundTypeCode != null && row.fundTypeName
-          ? fundTypeForApi({ code: row.fundTypeCode, name: row.fundTypeName })
-          : null,
-    })),
+    total: funds.length,
+    funds,
   });
 
   return queryTrim ? filterScoresPayloadByQuery(payload, queryTrim) : payload;

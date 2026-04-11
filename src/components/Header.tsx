@@ -22,7 +22,6 @@ const navLinks: NavItem[] = [
     activePathPrefixes: ["/fund/"],
   },
   { href: "/compare", label: "Karşılaştır", activePaths: ["/compare"] },
-  { href: "/sectors", label: "Kategoriler" },
   { href: "/indices", label: "Fon türleri" },
 ];
 

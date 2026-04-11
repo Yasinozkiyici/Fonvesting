@@ -39,6 +39,12 @@ export type DailySourceRefreshResult = {
     series: unknown[];
     message?: string;
   };
+  timings: {
+    totalMs: number;
+    recoveryMs: number;
+    historyMs: number;
+    macroMs: number;
+  };
 };
 
 const HISTORY_STEP_TIMEOUT_MS = 240_000;
@@ -329,6 +335,12 @@ export async function runDailySourceRefresh(options?: {
       history,
       macroRecovery,
       macro,
+      timings: {
+        totalMs: Date.now() - runStartedAt,
+        recoveryMs: recoveryDurationMs,
+        historyMs: historyDurationMs,
+        macroMs: macroDurationMs,
+      },
     };
   } catch (error) {
     await patchSourceRefreshStage("failed", {

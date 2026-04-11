@@ -2,6 +2,11 @@ import { Prisma } from "@prisma/client";
 import dns from "node:dns/promises";
 import net from "node:net";
 import { DAILY_JOB_SLA_MINUTES, getIstanbulWallClock, toIstanbulDateKey } from "@/lib/daily-sync-policy";
+import {
+  areRuntimeTargetsIdentical,
+  getDbRuntimeTargetDiagnostics,
+  type DbRuntimeTargetDiagnostics,
+} from "@/lib/db-runtime-diagnostics";
 import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 
@@ -29,6 +34,12 @@ export interface SystemHealthSnapshot {
     effectiveParams: Record<string, string>;
     dnsMs: number | null;
     tcpMs: number | null;
+    diagnostics: {
+      targets: DbRuntimeTargetDiagnostics[];
+      identicalAcrossPaths: boolean;
+      failureCategory: string | null;
+      failureDetail: string | null;
+    };
   };
   supabaseRest: {
     configured: boolean;
@@ -79,6 +90,32 @@ export interface SystemHealthSnapshot {
   };
   issues: SystemHealthIssue[];
   errors: string[];
+}
+
+function classifyDatabaseFailure(errorMessage: string): string {
+  const msg = errorMessage.toLowerCase();
+  if (msg.includes("timed out fetching a new connection") || msg.includes("unable to check out connection")) {
+    return "pool_exhausted";
+  }
+  if (msg.includes("connect_timeout") || msg.includes("timeout")) {
+    return "connect_timeout";
+  }
+  if (msg.includes("password authentication failed") || msg.includes("authentication failed")) {
+    return "auth_failed";
+  }
+  if (msg.includes("ssl") && (msg.includes("required") || msg.includes("handshake") || msg.includes("self signed"))) {
+    return "ssl_required_missing";
+  }
+  if (msg.includes("could not translate host name") || msg.includes("enotfound") || msg.includes("eai_again")) {
+    return "host_unreachable";
+  }
+  if (msg.includes("database") && msg.includes("does not exist")) {
+    return "wrong_database";
+  }
+  if (msg.includes("query engine") || msg.includes("invalid `prisma")) {
+    return "query_failed_after_connect";
+  }
+  return "connect_failed_unknown";
 }
 
 export interface SystemHealthJobSnapshot {
@@ -203,6 +240,12 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
   const errors: string[] = [];
   const issues: SystemHealthIssue[] = [];
   const includeExternalProbes = options?.includeExternalProbes === true;
+  const runtimeTargets = [
+    getDbRuntimeTargetDiagnostics("homepage"),
+    getDbRuntimeTargetDiagnostics("health"),
+    getDbRuntimeTargetDiagnostics("cron"),
+  ];
+  const targetIdentity = areRuntimeTargetsIdentical(runtimeTargets);
 
   let effectiveDbUrl = "";
   let effectiveHost: string | null = null;
@@ -352,6 +395,13 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
       });
     }
 
+    const failureDetail = formatError(error);
+    const failureCategory = classifyDatabaseFailure(failureDetail);
+    console.error("[health][database_ping_failed]", {
+      failureCategory,
+      failureDetail,
+      targetIdentity,
+    });
     return {
       checkedAt,
       ok: false,
@@ -370,6 +420,12 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
         effectiveParams,
         dnsMs: dnsProbe.ms,
         tcpMs: tcpProbe.ms,
+        diagnostics: {
+          targets: runtimeTargets,
+          identicalAcrossPaths: targetIdentity.identical,
+          failureCategory,
+          failureDetail,
+        },
       },
       supabaseRest: supabaseProbe,
       counts: {
@@ -686,15 +742,17 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
     });
   }
 
-  for (const expectation of cronExpectations) {
-    if (istanbulNow.minutesOfDay < expectation.cutoffMinute) continue;
-    if (expectation.completedDateKey === istanbulNow.dateKey && expectation.job?.status === "SUCCESS") continue;
+  if (isProduction) {
+    for (const expectation of cronExpectations) {
+      if (istanbulNow.minutesOfDay < expectation.cutoffMinute) continue;
+      if (expectation.completedDateKey === istanbulNow.dateKey && expectation.job?.status === "SUCCESS") continue;
 
-    issues.push({
-      code: `${expectation.key}_missed_sla`,
-      severity: "error",
-      message: `${expectation.label} bugün beklenen saatte tamamlanmadı.`,
-    });
+      issues.push({
+        code: `${expectation.key}_missed_sla`,
+        severity: "error",
+        message: `${expectation.label} bugün beklenen saatte tamamlanmadı.`,
+      });
+    }
   }
 
   for (const job of [sourceRefreshJob, servingRebuildJob, warmScoresJob, dailySyncJob]) {
@@ -743,6 +801,12 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
       effectiveParams,
       dnsMs: dnsProbe.ms,
       tcpMs: tcpProbe.ms,
+      diagnostics: {
+        targets: runtimeTargets,
+        identicalAcrossPaths: targetIdentity.identical,
+        failureCategory: null,
+        failureDetail: null,
+      },
     },
     supabaseRest: supabaseProbe,
     counts: {

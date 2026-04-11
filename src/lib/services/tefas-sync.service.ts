@@ -11,6 +11,7 @@ import { rebuildFundDerivedMetrics } from "@/lib/services/fund-derived-metrics.s
 import { warmAllScoresApiCaches } from "@/lib/services/fund-scores-cache.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchUsdTryEurTryLive } from "@/lib/services/exchange-rates.service";
+import { classifyDailyReturnPctPoints2dp, countDailyReturnDirections } from "@/lib/daily-return-ui";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TURKEY_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
@@ -175,17 +176,15 @@ export async function recomputeDailyReturnsFromHistory(options?: {
   const targetSessionDate = options?.targetSessionDate ?? null;
   const horizon = new Date((targetSessionDate ?? new Date()).getTime() - 14 * DAY_MS);
 
-  const [funds, historyRows] = await Promise.all([
-    prisma.fund.findMany({
-      where: { isActive: true },
-      select: { id: true, lastPrice: true, previousPrice: true, dailyReturn: true },
-    }),
-    prisma.fundPriceHistory.findMany({
-      where: { date: { gte: horizon } },
-      select: { id: true, fundId: true, date: true, price: true },
-      orderBy: [{ fundId: "asc" }, { date: "desc" }],
-    }),
-  ]);
+  const funds = await prisma.fund.findMany({
+    where: { isActive: true },
+    select: { id: true, lastPrice: true, previousPrice: true, dailyReturn: true },
+  });
+  const historyRows = await prisma.fundPriceHistory.findMany({
+    where: { date: { gte: horizon } },
+    select: { id: true, fundId: true, date: true, price: true },
+    orderBy: [{ fundId: "asc" }, { date: "desc" }],
+  });
 
   const historyByFund = new Map<string, Array<{ id: string; date: Date; price: number }>>();
   for (const row of historyRows) {
@@ -271,25 +270,23 @@ export async function recomputeFundReturnsFromHistory(options?: {
     (targetSessionDate ?? new Date()).getTime() - FUND_PRICE_HISTORY_LOOKBACK_DAYS * DAY_MS
   );
 
-  const [funds, historyRows] = await Promise.all([
-    prisma.fund.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        lastPrice: true,
-        previousPrice: true,
-        dailyReturn: true,
-        weeklyReturn: true,
-        monthlyReturn: true,
-        yearlyReturn: true,
-      },
-    }),
-    prisma.fundPriceHistory.findMany({
-      where: { date: { gte: horizon } },
-      select: { fundId: true, date: true, price: true },
-      orderBy: [{ fundId: "asc" }, { date: "asc" }],
-    }),
-  ]);
+  const funds = await prisma.fund.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      lastPrice: true,
+      previousPrice: true,
+      dailyReturn: true,
+      weeklyReturn: true,
+      monthlyReturn: true,
+      yearlyReturn: true,
+    },
+  });
+  const historyRows = await prisma.fundPriceHistory.findMany({
+    where: { date: { gte: horizon } },
+    select: { fundId: true, date: true, price: true },
+    orderBy: [{ fundId: "asc" }, { date: "asc" }],
+  });
 
   const historyByFund = new Map<string, Array<{ date: Date; price: number }>>();
   for (const row of historyRows) {
@@ -352,10 +349,11 @@ export async function rebuildMarketSnapshot(snapshotDate: Date): Promise<void> {
       where: { isActive: true },
       select: { dailyReturn: true, portfolioSize: true, investorCount: true },
     });
-    const adv = all.filter((f) => f.dailyReturn > 0).length;
-    const dec = all.filter((f) => f.dailyReturn < 0).length;
-    const unch = Math.max(0, all.length - adv - dec);
-    const rets = all.map((f) => f.dailyReturn).filter((x) => x !== 0);
+    const dir = countDailyReturnDirections(all.map((f) => f.dailyReturn));
+    const adv = dir.advancers;
+    const dec = dir.decliners;
+    const unch = dir.unchanged;
+    const rets = all.map((f) => f.dailyReturn).filter((x) => classifyDailyReturnPctPoints2dp(x) !== "neutral");
     const avg = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
 
     await tx.marketSnapshot.upsert({

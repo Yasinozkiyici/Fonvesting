@@ -1,7 +1,7 @@
 # anatomy.md
 
-> Auto-maintained by OpenWolf. Last scanned: 2026-04-10T16:00:20.565Z
-> Files: 543 tracked | Anatomy hits: 0 | Misses: 0
+> Auto-maintained by OpenWolf. Last scanned: 2026-04-11T09:53:54.777Z
+> Files: 599 tracked | Anatomy hits: 0 | Misses: 0
 
 ## ./
 
@@ -20,23 +20,23 @@
 - `.tmp-lh-sectors-before.json` (~192809 tok)
 - `.tmp-lh-sectors-final.json` (~196449 tok)
 - `1prisma` (~142 tok)
-- `AGENTS.md` — Repository Rules (~1015 tok)
+- `AGENTS.md` — Repository Rules (~1170 tok)
 - `CLAUDE.md` — OpenWolf (~57 tok)
 - `CONTRIBUTING.md` — Yatirim.io Geliştirme Kuralları (~194 tok)
 - `DEPLOYMENT.md` — Deployment (~993 tok)
 - `docker-compose.yml` — Docker Compose services (~141 tok)
 - `next-env.d.ts` — / <reference types="next" /> (~84 tok)
 - `next.config.js` — Next.js configuration (~308 tok)
-- `package.json` — Node.js package manifest (~1034 tok)
+- `package.json` — Node.js package manifest (~1052 tok)
 - `pnpm-lock.yaml` — pnpm lock file (~42743 tok)
 - `pnpm-workspace.yaml` (~45 tok)
 - `postcss.config.js` — PostCSS configuration (~24 tok)
 - `prisma.config.ts` — Declares cwd (~209 tok)
-- `railway.json` (~60 tok)
-- `tailwind.config.js` — Tailwind CSS configuration (~177 tok)
+- `railway.json` (~45 tok)
+- `tailwind.config.js` (~237 tok)
 - `tsconfig.json` — TypeScript configuration (~253 tok)
 - `tsconfig.tsbuildinfo` (~40243 tok)
-- `vercel.json` (~200 tok)
+- `vercel.json` (~28 tok)
 
 ## .claude/
 
@@ -142,7 +142,7 @@
 - `fetch-7day-history.ts` — Son 7 iş gününün TEFAS verilerini çekip FundPriceHistory tablosuna kaydeder (~1201 tok)
 - `full-tefas-import.ts` — Tüm TEFAS fonlarını (tür 0 + 1) çeker, kategorileri ve logoları günceller. (~169 tok)
 - `load-env.ts` — tsx ile çalışan scriptlerde, `../src/lib` altındaki modüllerden önce tek satır: (~112 tok)
-- `predeploy-check.mjs` — Declares loadEnvFile (~378 tok)
+- `predeploy-check.mjs` — loadEnvFile: parseEnvKeys (~731 tok)
 - `rebuild-derived-metrics.ts` — FundDerivedMetrics tablosunu 2 yıllık fiyat geçmişinden yeniden hesaplar. (~129 tok)
 - `rebuild-serving-layer.ts` — Declares main (~479 tok)
 - `requirements.txt` — Python dependencies (~13 tok)
@@ -154,6 +154,7 @@
 - `sync-macro-series.ts` — readArg: parseDateArg, main (~750 tok)
 - `sync-tefas-history.ts` — readArg: parseDateArg, resolveLatestSnapshotDate, main (~1279 tok)
 - `sync-tefas.ts` — Declares all (~220 tok)
+- `system-audit.mjs` — baseUrl: runCheck (~606 tok)
 - `tefas_export.py` — find_chrome_binary, setup_local_webdriver, num, inte + 4 more (~3096 tok)
 - `tefas-daily-maintenance.ts` — Declares main (~270 tok)
 - `tefas-metadata-only.ts` — TEFAS çekmeden yalnızca kategori + logo DB pass (hızlı). (~125 tok)
@@ -783,23 +784,117 @@
 
 ## src/app/
 
-- `globals.css` — Styles: 8 rules, 234 vars (~19710 tok)
-- `page.tsx` — revalidate (~927 tok)
+- `globals.css` — Mobil guardrail — bileşenlere ihtiyaç oldukça eklenir. (~23526 tok)
+- `page.tsx` — revalidate (~945 tok)
+
+## src/app/api/cron/daily/
+
+- `route.ts` — Serverless invocations cannot outlive `maxDuration`; RUNNING rows left by timeout/crash must recover (~2030 tok)
+
+## src/app/api/funds/
+
+- `route.ts` — Next.js API route: GET (~742 tok)
+
+## src/app/api/health/
+
+- `route.ts` — 503 yalnızca doğrudan DB erişimi yoksa; veri uyarıları/degrade durum 200 + gövdede açıklanır. (~859 tok)
 
 ## src/app/api/jobs/rebuild-serving/
 
 - `route.ts` — Next.js API route: GET (~564 tok)
 
+## src/app/api/market/
+
+- `route.ts` — Next.js API route: GET (~264 tok)
+
+## src/app/fund/[code]/
+
+- `page.tsx` — FundDetailTrends (~1142 tok)
+
+## src/components/
+
+- `Header.tsx` — navLinks (~1912 tok)
+- `SitePageShell.tsx` — Stoklar / sektörler sayfalarıyla aynı sabit zemin ve katman sırası (z-0 mesh, z-10 içerik). (~206 tok)
+
+## src/components/compare/
+
+- `CompareListEntry.tsx` — Liste üst çubuğunda: seçili kod sayısı — durum göstergesi; ana aksiyon gibi görünmez. (~688 tok)
+
+## src/components/ds/
+
+- `FundRow.tsx` — Ana sayfa mobil liste — gün yönü için kısa, skor dili yok (~3042 tok)
+- `PctChange.tsx` — Tablo hücresi — 1G / 7G yüzde (~423 tok)
+
 ## src/components/fund/
 
-- `FundDetailChart.tsx` — DAY_MS (~14700 tok)
+- `FundDetailChart.tsx` — Kıyas makro serileri iki kaynaktan gelebilir: (~17121 tok)
+- `FundDetailFutureRegions.tsx` — Alternatifler bölgesi: bugün yalnızca benzer fonlar; ileride ek modüller aynı grup içinde aralıklı e (~110 tok)
+- `FundDetailHero.tsx` — HeroPct (~2296 tok)
+- `FundDetailProfile.tsx` — ProfileRow (~2122 tok)
+- `FundDetailRisk.tsx` — Stat (~1007 tok)
+- `FundDetailSimilar.tsx` — 1Y getiri — ikincil ton, detay formatı ile. (~1701 tok)
+- `FundDetailTrends.tsx` — Grafik ve % için güvenilir başlangıç: para ≤0 veya yatırımcı <1 başlangıçları atlanır (0 baseline ha (~6238 tok)
 
 ## src/components/home/
 
-- `HomePageClient.tsx` — DEFAULT_PRESET (~8028 tok)
+- `FeaturedThreeFunds.tsx` — TEFAS uzun / resmi ad; yoksa kısa ad, en son kod. (~3544 tok)
+- `HomePageClient.tsx` — URL — tek yerden senkron (~7941 tok)
 - `SmartFundDiscovery.tsx` — RISK_OPTIONS (~2930 tok)
 
 ## src/components/tefas/
 
-- `MarketHeader.tsx` — Piyasa özeti: kısaltma yok, Türkçe gruplu tam gösterim (~1036 tok)
-- `ScoredFundsTable.tsx` — DEFAULT_SORT_FIELD (~12404 tok)
+- `Footer.tsx` — Fon detay: daha kompakt spacing + `site-footer--detail` (globals). Ana sayfa: `default`. (~1638 tok)
+- `HomeMainSkeleton.tsx` — Ana sayfa: kompakt hero + kategori ızgarası iskeleti. (~684 tok)
+- `MarketHeader.tsx` — Tablo / skor API `total` ile aynı keşif evreni; portföy özeti fon sayısından farklı olabilir (~1431 tok)
+- `ScoredFundsTable.tsx` — Ana sayfa hızlı başlangıç ile tablo üstü bağlam çubuğu (~13500 tok)
+- `ScoringComponents.tsx` — Score Badge - Compact pill style (~2067 tok)
+
+## src/lib/
+
+- `chart-monotone-path.test.ts` — Declares pts (~232 tok)
+- `chart-monotone-path.test.ts` (~120 tok)
+- `chart-monotone-path.ts` — Monotone cubic X (Steffen / d3-shape mantığı): tüm düğümlerden geçer, (~1096 tok)
+- `chart-monotone-path.ts` — SVG monotone cubic X path (d3-shape Steffen); fon detay grafikleri, ara nokta uydurmaz. (~650 tok)
+- `client-data.ts` — Exports MarketApiPayload, MarketCategoryRow, StocksResponsePayload, SparklineApiPayload + 7 more (~4060 tok)
+- `compare-selection.ts` — Tarayıcıda seçili fon kodları; karşılaştırma sayfası bu listeyi okur. (~577 tok)
+- `daily-return-ui.test.ts` — Declares f (~620 tok)
+- `daily-return-ui.ts` — Günlük getiri (yüzde puanı, örn. 1,25 = %1,25) — tablo, özet ve yön sayıları için tek kaynak. (~606 tok)
+- `data-freshness.ts` — Exports LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, LIVE_DATA_PAGE_REVALIDATE_SEC, liveDataCacheControl (~1146 tok)
+- `db-runtime-diagnostics.ts` — API routes: GET (5 endpoints) (~1303 tok)
+- `fund-detail-comparison.test.ts` — Declares makeBlock (~4713 tok)
+- `fund-detail-comparison.ts` — Yüzde puanı cinsinden “başa baş” eşiği: |fon − referans| ≤ bu değer ise durum nötr. (~4161 tok)
+- `fund-detail-format.test.ts` (~454 tok)
+- `fund-detail-format.ts` — Fon detay sayfası için tutarlı sayı/yüzde sunumu (liste/anasayfa davranışını değiştirmez). (~2298 tok)
+- `home-market-fund-stats.test.ts` — Declares r (~340 tok)
+- `home-market-fund-stats.ts` — Ana sayfa üst metrik şeridi ile fon tablosu sayıları farklı kaynaklardan gelebilir: (~452 tok)
+- `kiyas-policy-return-window.ts` — Politika faizi penceresi getirisi (Prisma’sız; benchmark UI ile sunucu policy ölçeği hizası). (~120 tok)
+- `kiyas-policy-return-window.ts` — Politika faizi penceresi getirisi — Prisma bağımlılığı yok (unit test / client güvenli). (~502 tok)
+- `market-tone.ts` — Piyasa genişliği + ortalama günlük getiri ile editoryal "günün görünümü" etiketi. (~254 tok)
+- `system-health.ts` — :***@").split("?")[0] ?? urlStr; (~8925 tok)
+- `tefas-discovery-rail.test.ts` — Declares cats (~301 tok)
+- `tefas-discovery-rail.ts` — Kategori adında aranacak ipuçları (sırayla dener, ilk eşleşen kod) (~1828 tok)
+
+## src/lib/pipeline/
+
+- `dailyPipelineDebug.ts` — Exports readDailyPipelineLatestDates (~393 tok)
+- `runDailyPipeline.ts` — Exports DailyPipelineRunResult, runDailyPipeline (~864 tok)
+
+## src/lib/scoring/
+
+- `metrics.ts` — Core financial metrics calculation (~2058 tok)
+- `ranking.ts` — Fund ranking system with multiple modes (~5221 tok)
+
+## src/lib/services/
+
+- `daily-maintenance.service.ts` — Exports DailyMaintenanceResult, runDailyMaintenance (~185 tok)
+- `fund-daily-snapshot.service.ts` — Günlük snapshot satırları: 3 yıl tutulur (eski günler silinir). (~12707 tok)
+- `fund-derived-metrics.service.ts` — ~2 yıllık geçmişten türetilmiş satırları yazar / günceller (senkron / job). (~5238 tok)
+- `fund-detail-kiyas.service.ts` — DB’deki makro seri kodları (MacroSeries.code) — UI’da kaynak adı gösterilmez. (~6576 tok)
+- `fund-list.service.ts` — API routes: GET (1 endpoints) (~3358 tok)
+- `fund-scores-cache.service.ts` — Snapshot’ta satırı olmayan aktif Fund kayıtlarını REST ile ekler (Prisma yolu yoksa). (~3606 tok)
+- `serving-rebuild.service.ts` — Exports ServingStepError, ServingRebuildResult, ServingDailyRefreshResult (~4687 tok)
+- `tefas-sync.service.ts` — Günlük %: TEFAS sütunu → satır (önceki/son fiyat) → history’de önceki gün → DB’deki son kapanış. (~7313 tok)
+
+## src/types/
+
+- `scored-funds.ts` — Sunucu metin filtresi uygulandıysa (q/query) (~169 tok)

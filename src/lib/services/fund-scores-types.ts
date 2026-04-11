@@ -4,7 +4,8 @@ import type { RankingMode } from "@/lib/scoring";
 export type ScoredFundRow = {
   fundId: string;
   code: string;
-  finalScore: number;
+  /** Günlük özet / türev metrik yoksa null (satır yine listelenir). */
+  finalScore: number | null;
   name: string;
   shortName: string | null;
   logoUrl: string | null;

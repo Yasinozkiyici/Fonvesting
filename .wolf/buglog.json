@@ -1,4 +1,115 @@
 {
   "version": 1,
-  "bugs": []
+  "bugs": [
+    {
+      "id": "bug-001",
+      "timestamp": "2026-04-10T20:32:00.000Z",
+      "error_message": "Daily data stale kalıyor; production DB pool exhaustion / Prisma checkout timeout nedeniyle pipeline tamamlanamıyor.",
+      "file": "src/app/api/cron/daily/route.ts",
+      "root_cause": "Cron route overlap guard yoktu; üst üste RUNNING çağrılar ve serving aşamasındaki eşzamanlı ağır okumalar checkout baskısını artırıyordu.",
+      "fix": "SyncLog tabanlı single-flight guard ve stale RUNNING recovery eklendi; serving recompute ağır DB okumaları Promise.all yerine sıralı hale getirildi.",
+      "tags": [
+        "daily-cron",
+        "prisma",
+        "pool-exhaustion",
+        "checkout-timeout"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-10T20:32:00.000Z"
+    },
+    {
+      "id": "bug-002",
+      "timestamp": "2026-04-10T17:29:22Z",
+      "error_message": "Unhandled Runtime Error: TypeError: Cannot read properties of undefined (reading 'call')",
+      "file": ".next runtime cache (webpack chunks)",
+      "root_cause": "Dev ortamında bozulmuş/uyuşmayan Next.js chunk cache'i nedeniyle module factory çözümlemesi kırıldı.",
+      "fix": "`pnpm dev:reset` ile çalışan dev süreci durdurulup .next cache temizlenerek Next dev temiz başlatıldı.",
+      "tags": [
+        "nextjs",
+        "webpack",
+        "chunk-cache",
+        "dev-reset"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-10T17:29:22Z"
+    },
+    {
+      "id": "bug-003",
+      "timestamp": "2026-04-10T20:50:00.000Z",
+      "error_message": "Production /api/cron/daily returns 504 FUNCTION_INVOCATION_TIMEOUT while serving_rebuild shows TIMEOUT.",
+      "file": "src/lib/services/serving-rebuild.service.ts",
+      "root_cause": "Serving rebuild path duplicated large history reads across snapshot and derived rebuild stages, increasing total runtime past serverless request limits.",
+      "fix": "Added step-level timing telemetry and reused a single preloaded history dataset across snapshot and derived rebuild stages.",
+      "tags": [
+        "serving-rebuild",
+        "timeout",
+        "performance",
+        "telemetry"
+      ],
+      "related_bugs": [
+        "bug-001"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-10T20:50:00.000Z"
+    },
+    {
+      "id": "bug-004",
+      "timestamp": "2026-04-10T21:06:00.000Z",
+      "error_message": "Daily cron path exceeded production runtime due to heavy full serving rebuild in request lifecycle.",
+      "file": "src/lib/services/serving-rebuild.service.ts",
+      "root_cause": "Daily-critical flow executed full snapshot+derived recomputation and cache work instead of bounded incremental freshness update.",
+      "fix": "Added runServingDailyIncremental and switched daily maintenance to incremental serving path; full rebuild preserved for maintenance usage.",
+      "tags": [
+        "daily-refresh",
+        "architecture",
+        "runtime-limit",
+        "incremental-serving"
+      ],
+      "related_bugs": [
+        "bug-001",
+        "bug-003"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-10T21:06:00.000Z"
+    },
+    {
+      "id": "bug-005",
+      "timestamp": "2026-04-10T22:30:00.000Z",
+      "error_message": "Ana sayfa fon tablosunda evren daralıyordu (GRO vb. kayıp); skor null satırlar istemcide düşüyordu.",
+      "file": "src/app/page.tsx, src/lib/client-data.ts, src/lib/services/fund-daily-snapshot.service.ts, src/lib/services/fund-derived-metrics.service.ts, src/lib/services/fund-scores-cache.service.ts",
+      "root_cause": "SSR ilk yanıt 50 fonla kesiliyordu; normalizeScoredFund finalScore zorunlu sayıydı; liste yalnızca snapshot/derived satırı olan fonlardan üretiliyordu.",
+      "fix": "Tam skor payload SSR; finalScore null kabulü; aktif Fund master ile snapshot/derived eksiklerini birleştirme; Supabase REST için Fund+FundCategory+FundType ile tamamlama; limit 12k; skor sıralamasında null sona.",
+      "tags": [
+        "funds-list",
+        "scores-api",
+        "universe-merge",
+        "supabase-rest"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-10T22:30:00.000Z"
+    },
+    {
+      "id": "bug-006",
+      "timestamp": "2026-04-11T00:00:00.000Z",
+      "error_message": "Fon detayında tasarım yok / çıplak HTML; Cannot find module './vendor-chunks/lucide-react@0.544.0_react@18.2.0.js'",
+      "file": ".next/server (webpack vendor chunks)",
+      "root_cause": "`next dev` açıkken `next build` veya paralel derleme .next çıktısını bozdu; SSR 500 ile pages/_error’a düşünce kök layout.css bağlanmıyor.",
+      "fix": "Çalışan dev’i durdurup `pnpm dev:reset` (veya .next sil + tek süreçte dev). Üretim derlemesini dev ile aynı anda çalıştırma.",
+      "tags": [
+        "nextjs",
+        "webpack",
+        "lucide-react",
+        "dev-vs-build",
+        "unstyled"
+      ],
+      "related_bugs": [
+        "bug-002"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-11T00:00:00.000Z"
+    }
+  ]
 }

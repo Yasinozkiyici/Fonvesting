@@ -27,6 +27,22 @@ export interface NormalizedScores {
   consistencyScore?: number;
 }
 
+/** Snapshot/skor üretilemeyen fonlar için sıralama karşılaştırması (nötr dilimler). */
+export const NEUTRAL_SORT_SCORES: NormalizedScores = {
+  returnScore: 50,
+  riskScore: 50,
+  stabilityScore: 50,
+  sharpeScore: 50,
+  sortinoScore: 50,
+  drawdownScore: 50,
+  portfolioScaleScore: 50,
+  investorStrengthScore: 50,
+  periodReturnScore: 50,
+  categoryRelativeScore: 50,
+  referenceStrengthScore: 50,
+  consistencyScore: 50,
+};
+
 export interface FundScore {
   fundId: string;
   code: string;
@@ -310,7 +326,8 @@ export function stableSortKey(scores: NormalizedScores): number {
 
 export type RankSortInput = {
   code: string;
-  finalScore: number;
+  /** Günlük özet satırı yoksa null (liste evreninde kalsın, sıralamada sona itilir). */
+  finalScore: number | null;
   scores: NormalizedScores;
   yearlyReturn: number;
   monthlyReturn: number;
@@ -346,7 +363,12 @@ export function compareRankedFunds(mode: RankingMode, a: RankSortInput, b: RankS
     const kb = stableSortKey(b.scores);
     if (kb !== ka) return kb - ka;
   }
-  if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+  const fa = a.finalScore != null && Number.isFinite(a.finalScore) ? a.finalScore : null;
+  const fb = b.finalScore != null && Number.isFinite(b.finalScore) ? b.finalScore : null;
+  if (fa == null && fb == null) return a.code.localeCompare(b.code, "tr");
+  if (fa == null) return 1;
+  if (fb == null) return -1;
+  if (fb !== fa) return fb - fa;
   return a.code.localeCompare(b.code, "tr");
 }
 

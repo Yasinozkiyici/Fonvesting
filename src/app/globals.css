@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /**
+   * Mobil guardrail — bileşenlere ihtiyaç oldukça eklenir.
+   * Renk değiştirmez; yatay taşma / dokunma alanı için ortak dil.
+   */
+  .u-clip-x {
+    overflow-x: clip;
+  }
+  .u-min-tap {
+    min-height: var(--m-tap-min);
+    min-width: var(--m-tap-min);
+  }
+  .u-inline-flex-tap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--m-tap-min);
+    min-width: var(--m-tap-min);
+  }
+  /** Uzun kod / sayı / URL satırlarında taşmayı kır — kart alt metinleri için */
+  .u-break-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
 /* ========================================
    Tema: varsayılan AÇIK tema :root üzerinde (SSR / ilk boya güvenli).
    Koyu tema yalnızca [data-theme="dark"] ile — :root+koyu birleşimi beyaz ekran / kontrast hatalarına yol açabiliyordu.
@@ -159,6 +185,14 @@
   --ds-16: 1rem;
   --ds-24: 1.5rem;
   --ds-glass-border: rgba(15, 23, 42, 0.075);
+
+  /* Mobil ürün sistemi — hazırlık tokenları (aşamalı bileşen bağlantısı) */
+  --m-tap-min: 2.75rem; /* ~44px — birincil dokunma hedefi */
+  --m-page-gutter-x: var(--ds-12); /* ana içerik px-3 ile hizalı */
+
+  /* Ana sayfa — Fon keşif (light): yüzey / hover / chip paritesi için */
+  --discovery-preset-hover-elev: 0 8px 22px -16px rgba(15, 23, 42, 0.12);
+  --discovery-preset-inset: inset 0 1px 0 rgba(255, 255, 255, 0.42);
 }
 
 [data-theme="dark"] {
@@ -296,6 +330,239 @@
   --ds-glass-border: rgba(255, 255, 255, 0.068);
 
   --row-accent-line: #93a8e8;
+
+  --discovery-preset-hover-elev: 0 14px 36px -14px rgba(0, 0, 0, 0.55);
+  --discovery-preset-inset: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* === Ana sayfa — Fon keşif modülü (tema paritesi) === */
+.discovery-module {
+  border-color: color-mix(in srgb, var(--border-subtle) 58%, var(--chart-compare-ref));
+  background: color-mix(in srgb, var(--bg-muted) 24%, var(--card-bg));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-subtle) 50%, transparent), var(--shadow-xs);
+}
+
+[data-theme="dark"] .discovery-module {
+  border-color: color-mix(in srgb, var(--border-default) 38%, var(--chart-compare-ref));
+  background: color-mix(in srgb, var(--bg-muted) 38%, var(--bg-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-subtle) 65%, transparent), var(--shadow-xs);
+}
+
+.discovery-module-accent-rule {
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--chart-compare-ref) 44%, transparent),
+    transparent
+  );
+}
+
+.discovery-module-inner {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--chart-compare-ref) 6%, transparent) 0%,
+    color-mix(in srgb, var(--bg-muted) 32%, transparent) 46%,
+    transparent 74%
+  );
+}
+
+[data-theme="dark"] .discovery-module-inner {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--chart-compare-ref) 14%, transparent) 0%,
+    color-mix(in srgb, var(--bg-elevated) 55%, transparent) 48%,
+    transparent 78%
+  );
+}
+
+.discovery-preset-card {
+  --preset-tint: color-mix(in srgb, var(--chart-compare-ref) 11%, var(--bg-muted));
+  border-color: color-mix(in srgb, var(--border-subtle) 88%, transparent);
+  background: color-mix(in srgb, var(--card-bg) 86%, var(--preset-tint));
+}
+
+.discovery-preset-card[data-tone="growth"] {
+  --preset-tint: color-mix(in srgb, var(--success-muted) 14%, var(--bg-muted));
+}
+.discovery-preset-card[data-tone="defensive"] {
+  --preset-tint: color-mix(in srgb, var(--text-tertiary) 18%, var(--bg-muted));
+}
+.discovery-preset-card[data-tone="cash"] {
+  --preset-tint: color-mix(in srgb, var(--chart-compare-ref) 16%, var(--bg-muted));
+}
+.discovery-preset-card[data-tone="thematic"] {
+  --preset-tint: color-mix(in srgb, var(--accent-blue-soft) 35%, var(--bg-muted));
+}
+.discovery-preset-card[data-tone="categories"] {
+  --preset-tint: color-mix(in srgb, var(--chart-compare-ref) 9%, var(--bg-muted));
+}
+
+.discovery-preset-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--border-default) 55%, var(--chart-compare-ref));
+  box-shadow: var(--discovery-preset-hover-elev);
+}
+
+.discovery-preset-card[data-active="true"] {
+  border-color: color-mix(in srgb, var(--chart-compare-ref) 46%, var(--border-default));
+  background: color-mix(in srgb, var(--card-bg) 54%, var(--preset-tint));
+  box-shadow:
+    var(--discovery-preset-inset),
+    0 0 0 1px color-mix(in srgb, var(--chart-compare-ref) 16%, transparent),
+    0 1px 0 color-mix(in srgb, var(--chart-compare-ref) 8%, transparent);
+}
+
+[data-theme="dark"] .discovery-preset-card[data-active="true"] {
+  border-color: color-mix(in srgb, var(--chart-compare-ref) 40%, var(--border-default));
+  background: color-mix(in srgb, var(--card-bg) 42%, var(--preset-tint));
+  box-shadow:
+    var(--discovery-preset-inset),
+    0 0 0 1px color-mix(in srgb, var(--chart-compare-ref) 24%, transparent),
+    0 1px 0 color-mix(in srgb, #fff 4%, transparent);
+}
+
+.discovery-preset-card[data-active="true"] .discovery-preset-card__bar {
+  opacity: 1;
+  filter: saturate(1.05);
+}
+
+.discovery-preset-card__bar {
+  background: color-mix(in srgb, var(--chart-compare-ref) 72%, var(--text-tertiary));
+}
+
+.discovery-rail {
+  border-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+}
+
+.discovery-rail__title {
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+}
+
+.discovery-rail-reset {
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, var(--chart-compare-ref));
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--bg-muted) 26%, var(--card-bg));
+  color: var(--text-secondary);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 0.3125rem 0.5rem;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.discovery-rail-reset:hover {
+  border-color: color-mix(in srgb, var(--border-default) 55%, var(--chart-compare-ref));
+  background: color-mix(in srgb, var(--bg-muted) 40%, var(--card-bg));
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .discovery-rail-reset {
+  border-color: color-mix(in srgb, var(--border-default) 38%, var(--chart-compare-ref));
+  background: color-mix(in srgb, var(--bg-elevated) 40%, var(--card-bg));
+  color: color-mix(in srgb, var(--text-secondary) 92%, var(--text-primary));
+}
+
+[data-theme="dark"] .discovery-rail-reset:hover {
+  background: color-mix(in srgb, var(--bg-elevated) 58%, var(--card-bg));
+  color: var(--text-primary);
+}
+
+.discovery-chip {
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-muted) 28%, var(--card-bg));
+}
+
+.discovery-chip:hover {
+  border-color: color-mix(in srgb, var(--border-default) 70%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-muted) 42%, var(--card-bg));
+}
+
+.discovery-chip[data-active="true"] {
+  font-weight: 600;
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--chart-compare-ref) 46%, var(--border-strong));
+  background: color-mix(in srgb, var(--surface-selected) 82%, var(--card-bg));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--chart-compare-ref) 8%, transparent);
+}
+
+[data-theme="dark"] .discovery-chip[data-active="true"] {
+  border-color: color-mix(in srgb, var(--chart-compare-ref) 38%, var(--border-strong));
+  background: color-mix(in srgb, var(--surface-selected) 95%, var(--card-bg));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 0 1px color-mix(in srgb, var(--chart-compare-ref) 14%, transparent);
+}
+
+.discovery-context-note {
+  border-left-color: color-mix(in srgb, var(--chart-compare-ref) 52%, var(--border-default));
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-muted) 18%, transparent);
+}
+
+[data-theme="dark"] .discovery-context-note {
+  background: color-mix(in srgb, var(--bg-elevated) 38%, var(--bg-muted));
+  border-left-color: color-mix(in srgb, var(--chart-compare-ref) 58%, var(--border-default));
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
+}
+
+.featured-discovery-tile {
+  border-color: color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  background: color-mix(in srgb, var(--card-bg) 92%, var(--bg-muted));
+}
+
+.featured-discovery-tile:hover,
+.featured-discovery-tile:focus-visible {
+  border-color: color-mix(in srgb, var(--border-default) 55%, var(--chart-compare-ref));
+  box-shadow: var(--discovery-preset-hover-elev);
+}
+
+.featured-discovery-tile__accent {
+  background: color-mix(in srgb, var(--chart-compare-ref) 65%, var(--accent-blue));
+}
+
+.featured-discovery-tile__veil {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chart-compare-ref) 16%, transparent);
+}
+
+[data-theme="dark"] .featured-discovery-tile {
+  border-color: color-mix(in srgb, var(--border-default) 42%, transparent);
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--bg-elevated));
+}
+
+[data-theme="dark"] .featured-discovery-tile__veil {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chart-compare-ref) 22%, transparent);
+}
+
+.table-quickstart-caption {
+  color: var(--text-secondary);
+}
+
+.table-quickstart-meta {
+  color: var(--text-tertiary);
+}
+
+.table-quickstart-pill {
+  border-color: color-mix(in srgb, var(--border-default) 55%, var(--chart-compare-ref));
+  background: color-mix(in srgb, var(--bg-muted) 22%, var(--card-bg));
+  color: var(--text-secondary);
+}
+
+.table-quickstart-pill strong {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .table-quickstart-pill {
+  border-color: color-mix(in srgb, var(--border-default) 48%, var(--chart-compare-ref));
+  background: color-mix(in srgb, var(--bg-elevated) 55%, var(--card-bg));
+}
+
+[data-theme="dark"] .table-quickstart-caption {
+  color: color-mix(in srgb, var(--text-secondary) 88%, var(--text-primary));
 }
 
 /* ========================================
@@ -1126,6 +1393,91 @@ body {
   opacity: 0.82;
 }
 
+/* Footer — nötr slate kapanış (düşük satürasyon; lacivert değil) */
+.site-footer {
+  background: linear-gradient(180deg, #4a5568 0%, #434c5c 40%, #3d4554 100%);
+  border-top: 1px solid rgba(148, 163, 184, 0.11);
+  color: #d6dee8;
+}
+
+/* Fon detay kapanışı: ana sayfa footer’ını değiştirmez */
+.site-footer.site-footer--detail {
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.05) 0%, transparent 20px),
+    linear-gradient(180deg, #505a66 0%, #464e5a 42%, #404752 100%);
+  border-top-color: rgba(148, 163, 184, 0.1);
+  color: #d4dce6;
+}
+.site-footer__lede {
+  color: rgba(230, 236, 244, 0.86);
+}
+.site-footer__disclaimer {
+  color: rgba(148, 163, 184, 0.92);
+}
+.site-footer__group-title {
+  color: rgba(148, 163, 184, 0.95);
+}
+.site-footer__link {
+  color: rgba(203, 213, 225, 0.92);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.site-footer__link:hover {
+  color: color-mix(in srgb, var(--accent-blue) 42%, #e2e8f0);
+}
+.site-footer__social {
+  color: rgba(203, 213, 225, 0.9);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.site-footer__social:hover {
+  color: color-mix(in srgb, var(--accent-blue) 38%, #e2e8f0);
+}
+.site-footer__rule {
+  border-top-color: rgba(148, 163, 184, 0.12);
+}
+.site-footer__copyright {
+  color: rgba(148, 163, 184, 0.95);
+}
+.site-footer__mail {
+  color: rgba(203, 213, 225, 0.92);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.site-footer__mail:hover {
+  color: color-mix(in srgb, var(--accent-blue) 40%, #f1f5f9);
+}
+.site-footer__iconbtn {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.2);
+  color: rgba(226, 232, 240, 0.9);
+}
+.site-footer__iconbtn:hover {
+  border-color: color-mix(in srgb, var(--accent-blue) 35%, rgba(148, 163, 184, 0.28));
+  color: color-mix(in srgb, var(--accent-blue) 45%, #f8fafc);
+  background: rgba(15, 23, 42, 0.28);
+}
+.site-footer .site-logo {
+  color: #f1f5f9;
+}
+.site-footer .site-logo__tld {
+  color: #b6c9e4;
+}
+[data-theme="dark"] .site-footer {
+  background: linear-gradient(180deg, #353a45 0%, #2f343e 55%, #2a2e37 100%);
+  border-top-color: rgba(148, 163, 184, 0.09);
+}
+
+[data-theme="dark"] .site-footer.site-footer--detail {
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.035) 0%, transparent 18px),
+    linear-gradient(180deg, #363b45 0%, #30343d 52%, #2b2f36 100%);
+  border-top-color: rgba(148, 163, 184, 0.085);
+}
+[data-theme="dark"] .site-footer__iconbtn {
+  background: rgba(0, 0, 0, 0.18);
+}
+
 .font-mono {
   font-family: 'JetBrains Mono', 'SF Mono', monospace;
 }
@@ -1338,6 +1690,15 @@ body {
   outline: none;
   border-color: rgba(42, 111, 212, 0.32);
   box-shadow: 0 0 0 1px rgba(42, 111, 212, 0.12);
+}
+
+/* Ana sayfa — mobil sticky fon araması (dokunma + okunabilirlik) */
+.research-search.research-search--home-sticky {
+  height: auto;
+  min-height: var(--m-tap-min, 2.75rem);
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+  font-size: 0.875rem;
 }
 
 .research-select-wrap {
@@ -2170,6 +2531,18 @@ body {
   background: color-mix(in srgb, var(--card-bg) 85%, var(--bg-elevated));
 }
 
+/* Ana sayfa fonlar — Piyasa Nabzı ekstra sıkı şerit */
+.ds-hero-stats.market-snapshot-bar-compact.market-pulse-micro {
+  padding: 0.25rem 0.125rem;
+  border-radius: 7px;
+}
+
+@media (min-width: 640px) {
+  .ds-hero-stats.market-snapshot-bar-compact.market-pulse-micro {
+    padding: 0.3125rem 0.1875rem;
+  }
+}
+
 .market-snapshot-item-sm {
   display: flex;
   flex-direction: column;
@@ -2524,6 +2897,29 @@ body {
   justify-content: center;
 }
 
+/* ScoredFundsTable modülü — üst chrome ile thead görsel sürekliliği (yalnız bu section) */
+.scored-funds-table-module .table-header-row {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 68%, transparent);
+  background: color-mix(in srgb, var(--table-header-bg) 92%, transparent);
+}
+
+.scored-funds-table-module .fund-data-table th.fund-th {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.scored-funds-table-module .fund-data-table .sortable-th-btn {
+  gap: 0.3125rem;
+  min-height: 1.125rem;
+  padding-top: 0.0625rem;
+  padding-bottom: 0.0625rem;
+}
+
+.scored-funds-table-module .fund-data-table .sort-icon-slot {
+  flex: 0 0 15px;
+  width: 15px;
+}
+
 /* Fon türü — kompakt çerçeve, yumuşak veri işaretçisi + düşük doygunluklu tonlar */
 .fund-type-chip {
   box-sizing: border-box;
@@ -2671,6 +3067,19 @@ body {
   --mfc-pct-zero: var(--text-secondary);
   --mfc-dot: rgba(15, 23, 42, 0.35);
   --mfc-pill-bg: rgba(15, 23, 42, 0.035);
+}
+
+/* Ana sayfa skor tablosu — daha sığ, hızlı tarama satırı */
+.mobile-fund-card.mobile-fund-card--scan {
+  min-height: 0;
+  padding: 9px 11px;
+  border-radius: 12px;
+}
+
+.mobile-fund-card.mobile-fund-card--scan .mobile-fund-card__link {
+  margin: -9px -11px;
+  padding: 9px 11px;
+  border-radius: 12px;
 }
 
 [data-theme="dark"] .mobile-fund-card {

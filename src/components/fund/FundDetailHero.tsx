@@ -1,39 +1,29 @@
 import Link from "next/link";
 import { FundLogoMark } from "@/components/tefas/FundLogoMark";
-import {
-  formatCompactCurrency,
-  formatCompactNumber,
-  formatFundLastPrice,
-  fundDisplaySubtitle,
-} from "@/lib/fund-list-format";
+import { formatCompactCurrency, formatCompactNumber, fundDisplaySubtitle } from "@/lib/fund-list-format";
+import { formatDetailNavPrice, formatDetailSignedPercent } from "@/lib/fund-detail-format";
 import { fundTypeChipToneClass } from "@/lib/fund-type-chip-tone";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
 
 function HeroPct({ value }: { value: number }) {
   const v = Number(value);
-  if (!Number.isFinite(v) || Math.abs(v) > 100) {
+  const text = formatDetailSignedPercent(v, { maxAbs: 100 });
+  if (text === "—") {
     return (
       <span className="tabular-nums text-[15px] font-semibold tracking-[-0.02em] sm:text-[17px]" style={{ color: "var(--text-secondary)" }}>
         —
       </span>
     );
   }
-  if (v === 0) {
-    return (
-      <span className="tabular-nums text-[15px] font-semibold tracking-[-0.02em] sm:text-[17px]" style={{ color: "var(--text-secondary)" }}>
-        0,00%
-      </span>
-    );
-  }
   const pos = v > 0;
+  const zero = v === 0;
   return (
     <span
       className="tabular-nums text-[15px] font-semibold tracking-[-0.02em] sm:text-[17px]"
-      style={{ color: pos ? "var(--success)" : "var(--danger)" }}
+      style={{ color: zero ? "var(--text-secondary)" : pos ? "var(--success)" : "var(--danger)" }}
     >
-      {pos ? "+" : ""}
-      {v.toFixed(2).replace(".", ",")}%
+      {text}
     </span>
   );
 }
@@ -149,10 +139,10 @@ export function FundDetailHero({ data }: Props) {
               Son fiyat
             </dt>
             <dd
-              className="mt-0.5 truncate tabular-nums text-[13px] font-semibold tracking-[-0.02em] sm:text-[15px]"
-              style={{ color: "var(--text-primary)" }}
+              className="mt-0.5 min-w-0 tabular-nums text-[13px] font-semibold leading-tight tracking-[-0.02em] sm:text-[15px]"
+              style={{ color: "var(--text-primary)", overflowWrap: "anywhere" }}
             >
-              {formatFundLastPrice(fund.lastPrice)}
+              {formatDetailNavPrice(fund.lastPrice)}
             </dd>
           </div>
           <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">

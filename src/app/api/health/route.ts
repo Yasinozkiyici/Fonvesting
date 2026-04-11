@@ -23,7 +23,8 @@ export async function GET(request: Request) {
   const isProduction = process.env.NODE_ENV === "production";
   const allowDetails = hasDetailedHealthAccess(request.headers);
   const snapshot = await getSystemHealthSnapshot({ includeExternalProbes: allowDetails });
-  const statusCode = snapshot.ok ? 200 : 503;
+  /** 503 yalnızca doğrudan DB erişimi yoksa; veri uyarıları/degrade durum 200 + gövdede açıklanır. */
+  const statusCode = snapshot.database.canConnect ? 200 : 503;
 
   if (isProduction && !allowDetails) {
     return NextResponse.json(
@@ -32,10 +33,18 @@ export async function GET(request: Request) {
         status: snapshot.status,
         service: "fonvesting",
         timestamp: snapshot.checkedAt,
+        liveness: snapshot.database.canConnect,
+        livenessDetail: snapshot.database.canConnect
+          ? null
+          : snapshot.database.diagnostics.failureCategory ?? "database_unreachable",
         database: {
           configured: snapshot.database.configured,
           engine: snapshot.database.engine,
           canConnect: snapshot.database.canConnect,
+          diagnostics: {
+            identicalAcrossPaths: snapshot.database.diagnostics.identicalAcrossPaths,
+            failureCategory: snapshot.database.diagnostics.failureCategory,
+          },
         },
         counts: {
           funds: snapshot.counts.funds,

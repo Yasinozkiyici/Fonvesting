@@ -491,26 +491,30 @@ function buildTrendSeries(rows: FundHistoryRow[]): {
   portfolioSize: FundDetailTrendPoint[];
   investorCount: FundDetailTrendPoint[];
 } {
-  const bySession = new Map<number, { portfolioSize: number; investorCount: number }>();
+  const bySession = new Map<number, { portfolioSize: number | null; investorCount: number | null }>();
   for (const row of rows) {
-    const key = startOfUtcDay(row.date).getTime();
-    bySession.set(key, {
-      portfolioSize: row.portfolioSize,
-      investorCount: row.investorCount,
-    });
+    const key = normalizeHistorySessionDate(row.date).getTime();
+    const current = bySession.get(key) ?? { portfolioSize: null, investorCount: null };
+    if (Number.isFinite(row.portfolioSize) && row.portfolioSize > 0) {
+      current.portfolioSize = row.portfolioSize;
+    }
+    if (Number.isFinite(row.investorCount) && row.investorCount >= 0) {
+      current.investorCount = row.investorCount;
+    }
+    bySession.set(key, current);
   }
   const ordered = [...bySession.entries()].sort((a, b) => a[0] - b[0]);
   return {
     portfolioSize: downsampleTimeSeries(
       ordered
-      .filter(([, value]) => Number.isFinite(value.portfolioSize) && value.portfolioSize > 0)
-      .map(([t, value]) => ({ t, v: value.portfolioSize })),
+      .filter(([, value]) => value.portfolioSize != null)
+      .map(([t, value]) => ({ t, v: value.portfolioSize as number })),
       DETAIL_TREND_SERIES_MAX_POINTS
     ),
     investorCount: downsampleTimeSeries(
       ordered
-      .filter(([, value]) => Number.isFinite(value.investorCount) && value.investorCount > 0)
-      .map(([t, value]) => ({ t, v: value.investorCount })),
+      .filter(([, value]) => value.investorCount != null)
+      .map(([t, value]) => ({ t, v: value.investorCount as number })),
       DETAIL_TREND_SERIES_MAX_POINTS
     ),
   };

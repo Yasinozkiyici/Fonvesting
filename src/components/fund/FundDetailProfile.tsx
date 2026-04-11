@@ -1,6 +1,7 @@
 import { RiskBadge } from "@/components/tefas/ScoringComponents";
 import { MobileDetailAccordion } from "@/components/fund/MobileDetailAccordion";
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
+import { formatDetailSignedPercent } from "@/lib/fund-detail-format";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
 
@@ -9,20 +10,19 @@ type RowProps = { label: string; hint?: string; children: React.ReactNode };
 function ProfileRow({ label, hint, children }: RowProps) {
   return (
     <div
-      className="fund-detail-profile-row-sep flex flex-col gap-1.5 border-b py-3 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,9.1rem)_minmax(0,1fr)] lg:items-start lg:gap-5 lg:py-3.5"
-      style={{ borderColor: "color-mix(in srgb, var(--border-subtle) 68%, transparent)" }}
+      className="fund-detail-profile-row-sep flex flex-col gap-1 border-b border-[color-mix(in_srgb,var(--border-subtle)_48%,transparent)] py-2.5 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,9.25rem)_minmax(0,1fr)] lg:items-start lg:gap-5 lg:py-3"
     >
-      <div className="min-w-0">
-        <div className="text-[10px] font-medium uppercase sm:text-[10.5px]" style={{ color: "var(--text-muted)", letterSpacing: "0.05em" }}>
+      <div className="min-w-0 lg:pt-0.5">
+        <div className="text-[10px] font-semibold uppercase sm:text-[10.5px]" style={{ color: "var(--text-muted)", letterSpacing: "0.07em" }}>
           {label}
         </div>
         {hint ? (
-          <p className="mt-0.5 max-w-[26ch] text-[10px] leading-snug" style={{ color: "var(--text-tertiary)" }}>
+          <p className="mt-0.5 max-w-[30ch] text-[10px] leading-relaxed" style={{ color: "var(--text-tertiary)" }}>
             {hint}
           </p>
         ) : null}
       </div>
-      <div className="min-w-0 text-[13px] font-medium leading-relaxed sm:text-[13.5px]" style={{ color: "var(--text-primary)" }}>
+      <div className="min-w-0 text-[13px] font-semibold leading-snug sm:text-[13.5px]" style={{ color: "var(--text-primary)" }}>
         {children}
       </div>
     </div>
@@ -32,16 +32,16 @@ function ProfileRow({ label, hint, children }: RowProps) {
 function ReturnCapsule({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <span
-      className="inline-flex min-h-[1.65rem] items-center gap-1 rounded-[0.72rem] border px-1.75 py-[0.28rem]"
+      className="inline-flex min-h-[1.6rem] items-center gap-1.5 rounded-[0.65rem] border px-2 py-[0.26rem]"
       style={{
-        borderColor: "color-mix(in srgb, var(--border-subtle) 78%, transparent)",
-        background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+        borderColor: "color-mix(in srgb, var(--border-subtle) 70%, transparent)",
+        background: "color-mix(in srgb, var(--bg-muted) 35%, var(--card-bg))",
       }}
     >
-      <span className="text-[9px] font-medium uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.05em" }}>
+      <span className="text-[8.5px] font-semibold uppercase tracking-[0.06em]" style={{ color: "var(--text-muted)" }}>
         {label}
       </span>
-      <span className="text-[10.5px] font-semibold tabular-nums tracking-[-0.015em]" style={{ color: "var(--text-primary)" }}>
+      <span className="text-[10.5px] font-semibold tabular-nums tracking-[-0.018em]" style={{ color: "var(--text-primary)" }}>
         {value}
       </span>
     </span>
@@ -49,14 +49,14 @@ function ReturnCapsule({ label, value }: { label: string; value: React.ReactNode
 }
 
 function fmtTefasReturn(v: number): React.ReactNode {
-  if (!Number.isFinite(v) || Math.abs(v) > 1000) {
-    return <span style={{ color: "var(--text-muted)" }}>—</span>;
-  }
-  const pos = v > 0;
+  const text = formatDetailSignedPercent(v, { maxAbs: 1000 });
+  if (text === "—") return <span style={{ color: "var(--text-muted)" }}>—</span>;
+  const num = Number(v);
+  const pos = num > 0;
+  const zero = num === 0;
   return (
-    <span className="tabular-nums font-semibold tracking-[-0.02em]" style={{ color: pos ? "var(--success)" : v < 0 ? "var(--danger)" : "var(--text-secondary)" }}>
-      {pos ? "+" : ""}
-      {v.toFixed(2).replace(".", ",")}%
+    <span className="tabular-nums font-semibold tracking-[-0.02em]" style={{ color: zero ? "var(--text-secondary)" : pos ? "var(--success)" : "var(--danger)" }}>
+      {text}
     </span>
   );
 }
@@ -82,7 +82,7 @@ export function FundDetailProfile({ data }: Props) {
     <div
       className="rounded-[1.05rem] border px-3.5 py-2.5 sm:px-4 sm:py-3"
       style={{
-        borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+        borderColor: "color-mix(in srgb, var(--border-subtle) 78%, transparent)",
         background: "var(--card-bg)",
         boxShadow: "var(--shadow-xs)",
       }}
@@ -92,7 +92,7 @@ export function FundDetailProfile({ data }: Props) {
         {fund.category ? <ProfileRow label="Kategori">{fund.category.name}</ProfileRow> : null}
         {fund.portfolioManagerInferred ? (
           <ProfileRow label="Portföy yöneticisi" hint="Fon unvanından türetilmiş özet.">
-            {fund.portfolioManagerInferred}
+            <span className="line-clamp-2 break-words">{fund.portfolioManagerInferred}</span>
           </ProfileRow>
         ) : null}
         <ProfileRow label="İşlem para birimi">
@@ -105,8 +105,11 @@ export function FundDetailProfile({ data }: Props) {
             </span>
           </ProfileRow>
         ) : null}
-        <ProfileRow label="Getiri özeti" hint="Yakın ve orta vadeli görünüm.">
-          <span className="flex flex-wrap gap-1.25">
+        <ProfileRow label="Getiri özeti" hint="Kısa ve orta vade TEFAS özet getirileri.">
+          <span
+            className="inline-flex max-w-full flex-wrap gap-1.5 rounded-[0.75rem] px-1 py-1 sm:max-w-[min(100%,28rem)] sm:px-1.5 sm:py-1.5"
+            style={{ background: "color-mix(in srgb, var(--bg-muted) 42%, var(--card-bg))" }}
+          >
             <ReturnCapsule label="1H" value={fmtTefasReturn(fund.weeklyReturn)} />
             <ReturnCapsule label="1A" value={fmtTefasReturn(fund.monthlyReturn)} />
             <ReturnCapsule label="1Y" value={fmtTefasReturn(fund.yearlyReturn)} />
@@ -116,10 +119,10 @@ export function FundDetailProfile({ data }: Props) {
         {riskLevel ? (
           <ProfileRow label="Risk seviyesi">
             <span
-              className="inline-flex items-center rounded-[0.72rem] border px-1.75 py-[0.28rem]"
+              className="inline-flex items-center rounded-[0.7rem] border px-2 py-[0.34rem] shadow-[var(--shadow-xs)]"
               style={{
-                borderColor: "color-mix(in srgb, var(--border-subtle) 80%, transparent)",
-                background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+                borderColor: "color-mix(in srgb, var(--border-subtle) 65%, transparent)",
+                background: "color-mix(in srgb, var(--card-bg) 88%, var(--bg-muted))",
               }}
             >
               <RiskBadge level={riskLevel} />
@@ -169,8 +172,8 @@ export function FundDetailProfile({ data }: Props) {
       <section aria-labelledby="fund-detail-profile-heading" className="hidden md:block">
         <div>
           <FundDetailSectionTitle id="fund-detail-profile-heading">Fon Profili</FundDetailSectionTitle>
-          <p className="mt-1 text-[12px] leading-snug sm:text-[13px]" style={{ color: "var(--text-secondary)" }}>
-            Fonun temel kimliği, risk sınıfı ve güncel veri kapsamı tek panelde özetlenir.
+          <p className="mt-1.5 text-[12px] leading-relaxed sm:text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            Kimlik, risk ve veri kapsamı tek panelde.
           </p>
         </div>
         <div className="mt-2">{content}</div>

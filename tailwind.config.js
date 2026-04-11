@@ -3,6 +3,12 @@ module.exports = {
   content: ['./src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      /* Projede kullanılan ara değerler (varsayılan ölçekte yoktu → sınıflar boşa düşüyordu) */
+      spacing: {
+        '1.25': '0.3125rem',
+        '2.25': '0.5625rem',
+        '2.75': '0.6875rem',
+      },
       fontFamily: {
         sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'SF Mono', 'Consolas', 'monospace'],
