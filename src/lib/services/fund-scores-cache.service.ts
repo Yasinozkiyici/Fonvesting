@@ -6,6 +6,7 @@ import {
   filterScoresPayloadByQuery,
   type ScoresApiPayload,
 } from "@/lib/services/fund-scores-compute.service";
+import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 import { normalizeScoresPayloadFundTypes } from "@/lib/fund-type-display";
 import { fundTypeForApi } from "@/lib/fund-type-display";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
@@ -15,6 +16,24 @@ import type { ScoredFundRow } from "@/lib/services/fund-scores-types";
 
 const KEY_PREFIX = "scores:v9";
 const DB_SCORES_STALE_MS = 23 * 60 * 60 * 1000;
+const MEMORY_SCORES_TTL_MS = 5 * 60 * 1000;
+
+type ScoresMemoryCacheEntry = {
+  updatedAt: number;
+  payload: ScoresApiPayload;
+};
+
+type GlobalWithScoresMemory = typeof globalThis & {
+  __scoresMemoryCache?: Map<string, ScoresMemoryCacheEntry>;
+};
+
+function getScoresMemoryCache(): Map<string, ScoresMemoryCacheEntry> {
+  const g = globalThis as GlobalWithScoresMemory;
+  if (!g.__scoresMemoryCache) {
+    g.__scoresMemoryCache = new Map<string, ScoresMemoryCacheEntry>();
+  }
+  return g.__scoresMemoryCache;
+}
 
 type SupabaseScoresCacheRow = {
   payload: ScoresApiPayload;
@@ -269,43 +288,54 @@ export async function getScoresPayloadCached(
   categoryKey: string,
   queryTrim = ""
 ): Promise<ScoresApiPayload> {
-  if (hasSupabaseRestConfig()) {
-    try {
-      return await getScoresPayloadFromSupabaseRest(mode, categoryKey, queryTrim);
-    } catch (error) {
-      console.error("[scores-cache] supabase-rest fallback failed", error);
-    }
-  }
-
   const cacheKey = scoresApiCacheKey(mode, categoryKey, "");
   const normalizedQuery = queryTrim.trim();
+  const memory = getScoresMemoryCache();
+  const memoryHit = memory.get(cacheKey);
+  if (memoryHit && Date.now() - memoryHit.updatedAt < MEMORY_SCORES_TTL_MS) {
+    return normalizedQuery
+      ? filterScoresPayloadByQuery(memoryHit.payload, normalizedQuery)
+      : memoryHit.payload;
+  }
 
   try {
     const row = await prisma.scoresApiCache.findUnique({ where: { cacheKey } });
     const cacheIsFresh = row?.payload != null && Date.now() - row.updatedAt.getTime() < DB_SCORES_STALE_MS;
     if (cacheIsFresh && row?.payload != null) {
       const payload = normalizeScoresPayloadFundTypes(row.payload as unknown as ScoresApiPayload);
+      memory.set(cacheKey, { updatedAt: Date.now(), payload });
       return normalizedQuery ? filterScoresPayloadByQuery(payload, normalizedQuery) : payload;
     }
   } catch (e) {
     if (!isRelationMissingError(e)) throw e;
   }
 
-  const payload = await computeScoresPayload(mode, categoryKey, "");
+  const fromSnapshot = await getScoresPayloadFromDailySnapshot(mode, categoryKey, { includeTotal: true });
+  if (fromSnapshot) {
+    const payload = enrichScoresPayloadLogos(fromSnapshot);
+    memory.set(cacheKey, { updatedAt: Date.now(), payload });
+    return normalizedQuery ? filterScoresPayloadByQuery(payload, normalizedQuery) : payload;
+  }
 
-  try {
-    const json = JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue;
-    await prisma.scoresApiCache.upsert({
-      where: { cacheKey },
-      create: { cacheKey, payload: json },
-      update: { payload: json },
-    });
-  } catch (e) {
-    if (!isRelationMissingError(e)) throw e;
-    if (process.env.NODE_ENV === "development") {
-      console.warn(
-        "[scores-cache] ScoresApiCache tablosu yok; yanıt hesaplandı ama kaydedilmedi. Üretimde hız için: prisma migrate deploy"
-      );
+  const payload = await computeScoresPayload(mode, categoryKey, "");
+  memory.set(cacheKey, { updatedAt: Date.now(), payload });
+
+  const persistOnRead = process.env.SCORES_CACHE_PERSIST_ON_READ === "1";
+  if (persistOnRead) {
+    try {
+      const json = JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue;
+      await prisma.scoresApiCache.upsert({
+        where: { cacheKey },
+        create: { cacheKey, payload: json },
+        update: { payload: json },
+      });
+    } catch (e) {
+      if (!isRelationMissingError(e)) throw e;
+      if (process.env.NODE_ENV === "development") {
+        console.warn(
+          "[scores-cache] ScoresApiCache tablosu yok; yanıt hesaplandı ama kaydedilmedi. Üretimde hız için: prisma migrate deploy"
+        );
+      }
     }
   }
 

@@ -94,19 +94,19 @@ export default function Footer({ variant = "default" }: FooterProps) {
                 href="https://x.com/getyatirim"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="site-footer__iconbtn inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+                className="site-footer__iconbtn touch-manipulation inline-flex h-7 w-7 max-md:h-11 max-md:w-11 items-center justify-center rounded-md border transition-colors"
                 aria-label="X (Twitter)"
               >
-                <Twitter className="h-3.5 w-3.5" strokeWidth={2} />
+                <Twitter className="h-3.5 w-3.5 max-md:h-4 max-md:w-4" strokeWidth={2} />
               </a>
               <a
                 href="https://github.com/yatirimio"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="site-footer__iconbtn inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors"
+                className="site-footer__iconbtn touch-manipulation inline-flex h-7 w-7 max-md:h-11 max-md:w-11 items-center justify-center rounded-md border transition-colors"
                 aria-label="GitHub"
               >
-                <Github className="h-3.5 w-3.5" strokeWidth={2} />
+                <Github className="h-3.5 w-3.5 max-md:h-4 max-md:w-4" strokeWidth={2} />
               </a>
             </div>
           </div>

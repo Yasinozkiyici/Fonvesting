@@ -37,7 +37,7 @@ export function CompareListEntry({ className = "" }: { className?: string }) {
 
   return (
     <span
-      className={`compare-list-entry inline-flex h-7 max-w-full shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-0 tabular-nums ${className}`}
+      className={`compare-list-entry inline-flex max-w-full shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-1 tabular-nums max-md:min-h-[var(--m-tap-min,2.75rem)] max-md:items-stretch max-md:px-2 max-md:py-1.5 md:h-7 md:py-0 ${className}`}
       style={{
         borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
         background: "color-mix(in srgb, var(--bg-muted) 18%, var(--card-bg))",
@@ -46,18 +46,19 @@ export function CompareListEntry({ className = "" }: { className?: string }) {
       <Link
         href="/compare"
         prefetch={false}
-        className="min-w-0 truncate text-[9px] font-medium tracking-tight"
+        className="inline-flex min-h-0 min-w-0 max-w-[min(100%,14rem)] flex-1 items-center truncate text-[9px] font-medium tracking-tight max-md:min-h-[2.5rem] max-md:px-1 max-md:py-1 touch-manipulation"
         style={{ color: "var(--text-tertiary)" }}
       >
-        Karşılaştırma{" "}
+        <span className="md:hidden">Kıyas</span>
+        <span className="hidden md:inline">Karşılaştırma</span>{" "}
         <span className="font-semibold tabular-nums" style={{ color: "var(--text-secondary)" }}>
           · {count}
         </span>
       </Link>
-      <span className="h-3 w-px shrink-0 self-center" style={{ background: "color-mix(in srgb, var(--border-subtle) 55%, transparent)" }} aria-hidden />
+      <span className="hidden h-4 w-px shrink-0 self-stretch md:block" style={{ background: "color-mix(in srgb, var(--border-subtle) 55%, transparent)" }} aria-hidden />
       <button
         type="button"
-        className={`shrink-0 text-[9px] font-medium ${focusRing}`}
+        className={`touch-manipulation shrink-0 self-center text-[9px] font-medium max-md:min-h-[2.5rem] max-md:min-w-[3.25rem] max-md:rounded-md max-md:px-2 md:self-auto ${focusRing}`}
         style={{ color: "var(--text-tertiary)" }}
         onClick={() => clearCompareCodes()}
         aria-label="Karşılaştırma seçimini temizle"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 type FundLogoMarkProps = {
   code: string;
@@ -21,6 +21,10 @@ export function FundLogoMark({
   initialsClassName,
 }: FundLogoMarkProps) {
   const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    // Liste satırı yeniden kullanıldığında önceki broken-logo state'i yeni fon logosuna taşınmasın.
+    setFailed(false);
+  }, [code, logoUrl]);
   const showImg = Boolean(logoUrl) && !failed;
   const initials = code.slice(0, 2).toUpperCase();
 

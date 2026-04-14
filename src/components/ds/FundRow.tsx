@@ -53,8 +53,8 @@ export const FundRowMobile = memo(function FundRowMobile({ fund }: { fund: Score
   const secondaryLine = `${formatFundLastPrice(fund.lastPrice)} · ${formatCompactCurrency(fund.portfolioSize)} · ${formatCompactNumber(fund.investorCount)} yatırımcı`;
 
   return (
-    <div className="mobile-fund-card mobile-fund-card--scan">
-      <Link href={fundDetailHref(fund.code)} prefetch={false} className="mobile-fund-card__link">
+    <div className="mobile-fund-card mobile-fund-card--scan mobile-fund-card--with-compare flex min-w-0 gap-0.5">
+      <Link href={fundDetailHref(fund.code)} prefetch={false} className="mobile-fund-card__link mobile-fund-card__link--with-compare min-w-0 flex-1">
         <div className="flex min-w-0 items-stretch gap-2.5">
           <FundLogoMark
             code={fund.code}
@@ -104,6 +104,12 @@ export const FundRowMobile = memo(function FundRowMobile({ fund }: { fund: Score
           </div>
         </div>
       </Link>
+      <div
+        className="flex shrink-0 flex-col justify-center self-stretch border-l pl-1"
+        style={{ borderColor: "color-mix(in srgb, var(--mfc-border) 78%, transparent)" }}
+      >
+        <FundCompareControl code={fund.code} variant="card" />
+      </div>
     </div>
   );
 });
@@ -114,8 +120,12 @@ export function FundListRowMobile({ fund }: { fund: FundListRow }) {
   const descriptor = cardDescriptor(typeLabel, fund.category?.name ?? null);
 
   return (
-    <div className="mobile-fund-card">
-      <Link href={fundDetailHref(fund.code)} prefetch={false} className="mobile-fund-card__link">
+    <div className="mobile-fund-card mobile-fund-card--with-compare flex min-w-0 gap-0.5">
+      <Link
+        href={fundDetailHref(fund.code)}
+        prefetch={false}
+        className="mobile-fund-card__link mobile-fund-card__link--with-compare min-w-0 flex-1"
+      >
         <div className="flex items-start gap-2">
           <FundLogoMark
             code={fund.code}
@@ -153,6 +163,12 @@ export function FundListRowMobile({ fund }: { fund: FundListRow }) {
           </div>
         </div>
       </Link>
+      <div
+        className="flex shrink-0 flex-col justify-center self-stretch border-l pl-1"
+        style={{ borderColor: "color-mix(in srgb, var(--mfc-border) 78%, transparent)" }}
+      >
+        <FundCompareControl code={fund.code} variant="card" />
+      </div>
     </div>
   );
 }

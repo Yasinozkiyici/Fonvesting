@@ -1,9 +1,9 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock3, LayoutGrid, Network, Scale, Shield, TrendingUp, type LucideIcon } from "lucide-react";
 import ScoredFundsTable from "@/components/tefas/ScoredFundsTable";
-import { FeaturedThreeFunds } from "@/components/home/FeaturedThreeFunds";
 import { fetchNormalizedJson, normalizeScoredResponse } from "@/lib/client-data";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
 import type { RankingMode } from "@/lib/scoring";
@@ -54,6 +54,28 @@ function universeScopeLabel(kind: "preset" | "theme" | "category" | null): strin
 const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--accent-blue)_48%,var(--border-subtle))] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--card-bg)]";
 
+function FeaturedThreeFundsSkeleton() {
+  return (
+    <div className="mt-3 grid grid-cols-3 gap-2 sm:gap-2.5" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="h-[4.25rem] rounded-[10px] border sm:h-[4.75rem]"
+          style={{
+            borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+            background: "color-mix(in srgb, var(--bg-muted) 45%, var(--card-bg))",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+const FeaturedThreeFunds = dynamic(
+  () => import("@/components/home/FeaturedThreeFunds").then((mod) => mod.FeaturedThreeFunds),
+  { ssr: true, loading: () => <FeaturedThreeFundsSkeleton /> }
+);
+
 function primaryToRankingMode(primary: DiscoveryPrimaryKind | null): RankingMode {
   if (primary === "balanced") return "STABLE";
   if (primary === "growth" || primary === "thematic") return "HIGH_RETURN";
@@ -93,7 +115,7 @@ export function HomePageClient({
         id: "balanced",
         title: "Dengeli",
         short: "Dengeli",
-        micro: "Dağılım ve riski birlikte dengeleyen bakış",
+        micro: "Dengeli risk-getiri yaklaşımı",
         insight:
           "Dengeli görünüm, getiri ile oynaklığı birlikte tartan fonları daha görünür hale getirir; ikinci adımda dengeli karakterini netleştirirsin.",
         mode: "STABLE",
@@ -103,7 +125,7 @@ export function HomePageClient({
         id: "growth",
         title: "Büyüme",
         short: "Büyüme",
-        micro: "Uzun vade ve potansiyel odaklı seçimler",
+        micro: "Uzun vadeli büyüme odaklı",
         insight:
           "Büyüme görünümü, uzun vadeli büyüme potansiyeli öne çıkan fonları öne taşır; ikinci adımda büyüme stilini seçersin.",
         mode: "HIGH_RETURN",
@@ -113,7 +135,7 @@ export function HomePageClient({
         id: "defensive",
         title: "Savunmacı",
         short: "Savunmacı",
-        micro: "Oynaklığı daha kontrollü tutan fonlar",
+        micro: "Daha kontrollü risk profili",
         insight:
           "Savunmacı görünüm, riski daha kontrollü tutan fonları daha görünür hale getirir; ikinci adımda savunmacı profilini seçersin.",
         mode: "LOW_RISK",
@@ -123,7 +145,7 @@ export function HomePageClient({
         id: "cash",
         title: "Nakit",
         short: "Nakit",
-        micro: "Likidite ve kısa vade önceliği",
+        micro: "Likidite ve kısa vade odaklı",
         insight:
           "Nakit görünümü, likidite ve kısa vadeye yakın fonlarda keşif sunar; ikinci adımda vade/ likidite tonunu seçersin.",
         mode: "LOW_RISK",
@@ -133,7 +155,7 @@ export function HomePageClient({
         id: "thematic",
         title: "Tematik",
         short: "Tematik",
-        micro: "Tema ve sektör odağında daraltılmış keşif",
+        micro: "Tema ve sektör odaklı fonlar",
         insight:
           "Tematik görünüm, tema ve sektör odağındaki fonları öne çıkarır; ikinci adımda alt temayı seçersin (kategori şeridi değil).",
         mode: "HIGH_RETURN",
@@ -209,20 +231,25 @@ export function HomePageClient({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
+    const before = `${url.pathname}${url.search}`;
     if (baselineReset && !activePrimary) {
       url.searchParams.delete("mode");
       url.searchParams.delete("theme");
       url.searchParams.delete("sector");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+      const next = `${url.pathname}${url.search}`;
+      if (next !== before) window.history.replaceState({}, "", next);
       return;
     }
-    url.searchParams.set("mode", effectiveMode);
+    // Varsayılan landing URL temiz kalmalı: BEST modu query param'a zorlanmaz.
+    if (effectiveMode === "BEST") url.searchParams.delete("mode");
+    else url.searchParams.set("mode", effectiveMode);
     url.searchParams.delete("intent");
     if (effectiveTheme) url.searchParams.set("theme", effectiveTheme);
     else url.searchParams.delete("theme");
     if (effectiveCategory) url.searchParams.set("sector", effectiveCategory);
     else url.searchParams.delete("sector");
-    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    const next = `${url.pathname}${url.search}`;
+    if (next !== before) window.history.replaceState({}, "", next);
   }, [activePrimary, baselineReset, effectiveCategory, effectiveMode, effectiveTheme]);
 
   const selectPrimary = useCallback(
@@ -325,18 +352,42 @@ export function HomePageClient({
       return;
     }
     const ac = new AbortController();
+    const spotlightLimit = effectiveTheme ? 2500 : 300;
+    const spotlightCategory =
+      effectiveCategory.trim().length > 0
+        ? `&category=${encodeURIComponent(effectiveCategory.trim())}`
+        : "";
+    const spotlightTheme = effectiveTheme ? `&theme=${encodeURIComponent(effectiveTheme)}` : "";
+    const spotlightUrl = `/api/funds/scores?mode=${effectiveMode}&limit=${spotlightLimit}${spotlightCategory}${spotlightTheme}`;
+    console.info(
+      `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
+        `request_url=${spotlightUrl} phase=requested`
+    );
     fetchNormalizedJson(
-      `/api/funds/scores?mode=${effectiveMode}`,
+      spotlightUrl,
       "Fon API",
       normalizeScoredResponse,
-      { signal: ac.signal }
+      { signal: ac.signal },
+      effectiveTheme || effectiveCategory.trim().length > 0 ? 12_000 : 8_000
     )
-      .then(setModeSpotlightPayload)
+      .then((payload) => {
+        console.info(
+          `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
+            `server_rows=${payload.funds.length} universe_total=${payload.total} phase=response`
+        );
+        setModeSpotlightPayload(payload);
+      })
       .catch(() => {
-        if (!ac.signal.aborted) setModeSpotlightPayload(null);
+        if (!ac.signal.aborted) {
+          console.info(
+            `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
+              `phase=failed`
+          );
+          setModeSpotlightPayload(null);
+        }
       });
     return () => ac.abort();
-  }, [discoveryActive, effectiveMode]);
+  }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme]);
 
   const estimatedUniverseLabel = useMemo(() => {
     const baseFunds = initialScoresPreview?.funds ?? [];
@@ -371,24 +422,26 @@ export function HomePageClient({
       if (bMissing) return -1;
       return nb - na;
     });
+    console.info(
+      `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
+        `spotlight_pool=${list.length} spotlight_shown=${Math.min(3, ranked.length)} empty_reason=${
+          ranked.length === 0 ? (funds.length === 0 ? "server_empty" : "client_filter_empty") : "none"
+        } phase=selected`
+    );
     return ranked.slice(0, 3).map((fund, i) => ({
       fund,
       tag: `Bu sıralamada ${i + 1}`,
       micro: fund.fundType?.name?.trim() || fund.category?.name?.trim() || null,
       pickHint: spotlightPickHint,
     }));
-  }, [discoveryActive, effectiveCategory, effectiveTheme, fundsForSpotlights, spotlightPickHint]);
+  }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme, fundsForSpotlights, spotlightPickHint]);
 
   const featuredSectionTitle = useMemo(() => {
-    if (!discoveryActive) return "Örnek üçlü — bugünün kesiti";
-    const sec = resolvedFilters.secondaryLabel;
-    if (sec) return `${sec} odağında öne çıkan 3 fon`;
-    return "Öne çıkan 3 fon";
-  }, [discoveryActive, resolvedFilters.secondaryLabel]);
+    return "Seçiminize göre öne çıkan fonlar";
+  }, []);
 
-  const featuredSectionSubtitle = discoveryActive
-    ? "Aynı süzgeç burada da geçerli; karta tıklayınca fon detayına gidersin."
-    : "Bir karta dokun: ikinci adım açılır, üç örnek ve tablo birlikte güncellenir.";
+  const featuredSectionSubtitle =
+    "Seçiminize uygun öne çıkan fonlar burada listelenir.";
 
   const railChips = useMemo(() => {
     if (!activePrimary) return [];
@@ -399,7 +452,7 @@ export function HomePageClient({
 
   return (
     <>
-      <section className="discovery-module relative mt-2.5 overflow-hidden rounded-xl border sm:mt-3.5" aria-label="Fon keşfi">
+      <section className="discovery-module relative mt-3 overflow-hidden rounded-xl border sm:mt-3.5" aria-label="Fon keşfi">
         <div className="discovery-module-accent-rule pointer-events-none absolute bottom-3 left-0 top-3 w-px rounded-full opacity-90" aria-hidden />
         <div className="discovery-module-inner relative px-3 py-2 pl-3.5 sm:px-4 sm:py-3 sm:pl-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
@@ -414,13 +467,13 @@ export function HomePageClient({
                 className="mt-0.5 text-[1.05rem] font-semibold leading-[1.16] tracking-[-0.036em] sm:text-[1.12rem] sm:leading-[1.18] sm:tracking-[-0.038em]"
                 style={{ color: "var(--text-primary)" }}
               >
-                Önce rota, sonra incelik
+                Yatırım stratejinize uygun fonları keşfedin
               </h2>
               <p
                 className="mt-1 hidden max-w-[34rem] text-[10.5px] font-medium leading-snug sm:block sm:text-[11px]"
                 style={{ color: "var(--text-secondary)" }}
               >
-                Kartına dokun; altında ikinci adım açılır. Üç örnek ve tablo seçiminle birlikte güncellenir.
+                Strateji, tema ve kategoriye göre filtreleyin; öne çıkan fonlar ve liste anlık güncellensin.
                 {marketDayTone != null ? (
                   <span className="font-medium tabular-nums" style={{ color: "var(--text-tertiary)" }}>
                     {" "}
@@ -429,7 +482,7 @@ export function HomePageClient({
                 ) : null}
               </p>
               <p className="mt-1 text-[11px] font-medium leading-snug sm:hidden" style={{ color: "var(--text-secondary)" }}>
-                Aşağıdan rota seç; tablo anında daralır.
+                Strateji, tema ve kategoriye göre filtreleyin; öne çıkan fonlar ve liste anlık güncellensin.
                 {marketDayTone != null ? (
                   <span className="tabular-nums" style={{ color: "var(--text-tertiary)" }}>
                     {" "}
@@ -443,7 +496,7 @@ export function HomePageClient({
               style={{ color: "var(--text-tertiary)" }}
             >
               <span className="hidden max-w-[15rem] text-[9.5px] font-medium leading-snug sm:inline">
-                Keşfi sıfırlayınca tam listeye dönersin.
+                Filtreleri temizleyerek tüm fonlara dönebilirsiniz.
               </span>
               {discoveryActive ? (
                 <button
@@ -475,8 +528,8 @@ export function HomePageClient({
                   data-tone={preset.id}
                   data-active={match ? "true" : "false"}
                   onClick={() => onPresetCardClick(preset)}
-                  className={`discovery-preset-card group relative flex min-h-[4.35rem] w-[min(42vw,11.25rem)] shrink-0 snap-start flex-col rounded-[10px] border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow,transform] duration-200 sm:min-h-[4.85rem] sm:w-auto sm:px-3 sm:py-2.5 ${focusRing} ${
-                    match ? "" : "hover:-translate-y-px motion-reduce:hover:translate-y-0"
+                  className={`discovery-preset-card touch-manipulation group relative flex min-h-[4.35rem] w-[min(42vw,11.25rem)] shrink-0 snap-start flex-col rounded-[10px] border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow,transform] duration-150 sm:min-h-[4.85rem] sm:w-auto sm:px-3 sm:py-2.5 ${focusRing} ${
+                    match ? "" : "sm:hover:-translate-y-px"
                   }`}
                 >
                   {match ? (
@@ -487,7 +540,7 @@ export function HomePageClient({
                   ) : null}
                   <div className="flex items-center gap-1.5">
                     <Icon
-                      className="h-3 w-3 shrink-0 opacity-[0.66] transition-[opacity,transform] duration-200 group-hover:opacity-[0.9] group-hover:scale-[1.02] motion-reduce:group-hover:scale-100"
+                      className="h-3 w-3 shrink-0 opacity-[0.66] transition-[opacity,transform] duration-150 sm:group-hover:scale-[1.02] sm:group-hover:opacity-[0.9]"
                       strokeWidth={1.55}
                       style={{ color: match ? "var(--text-primary)" : "var(--text-tertiary)" }}
                       aria-hidden
@@ -526,8 +579,8 @@ export function HomePageClient({
               data-tone="categories"
               data-active={categoriesCardActive ? "true" : "false"}
               onClick={toggleCategoriesRailOnly}
-              className={`discovery-preset-card group relative flex min-h-[4.35rem] w-[min(42vw,11.25rem)] shrink-0 snap-start flex-col rounded-[10px] border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow,transform,opacity] duration-200 sm:min-h-[4.85rem] sm:w-auto sm:px-3 sm:py-2.5 ${focusRing} ${
-                categoriesCardActive ? "" : "hover:-translate-y-px motion-reduce:hover:translate-y-0"
+              className={`discovery-preset-card touch-manipulation group relative flex min-h-[4.35rem] w-[min(42vw,11.25rem)] shrink-0 snap-start flex-col rounded-[10px] border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow,transform,opacity] duration-150 sm:min-h-[4.85rem] sm:w-auto sm:px-3 sm:py-2.5 ${focusRing} ${
+                categoriesCardActive ? "" : "sm:hover:-translate-y-px"
               } ${categories.length === 0 ? "cursor-not-allowed opacity-50" : ""}`}
             >
               {categoriesCardActive ? (
@@ -538,7 +591,7 @@ export function HomePageClient({
               ) : null}
               <div className="flex items-center gap-1.5">
                 <LayoutGrid
-                  className="h-3 w-3 shrink-0 opacity-[0.66] transition-opacity duration-200 group-hover:opacity-[0.88]"
+                  className="h-3 w-3 shrink-0 opacity-[0.66] transition-opacity duration-150 sm:group-hover:opacity-[0.88]"
                   strokeWidth={1.55}
                   style={{ color: categoriesCardActive && railOpen ? "var(--text-primary)" : "var(--text-tertiary)" }}
                   aria-hidden
@@ -554,7 +607,7 @@ export function HomePageClient({
                 className="mt-1 line-clamp-2 min-h-[2lh] text-[8.5px] font-medium leading-snug sm:text-[9px]"
                 style={{ color: "var(--text-tertiary)" }}
               >
-                Fon sınıfına göre keşif
+                Fon türlerine göre keşif
               </span>
               <span className="mt-auto pt-1.5 text-[7.5px] font-semibold uppercase tracking-[0.1em] sm:text-[8px]" style={{ color: "var(--text-tertiary)" }}>
                 <span
@@ -598,7 +651,7 @@ export function HomePageClient({
                       role="listitem"
                       data-active={picked ? "true" : "false"}
                       onClick={() => onSecondaryChip(chip.id)}
-                      className={`discovery-chip shrink-0 rounded-full px-3 py-2 text-left text-[10px] font-semibold leading-snug transition-[background-color,color,box-shadow,border-color] duration-200 sm:px-3 sm:py-1.5 sm:text-[10px] ${focusRing}`}
+                      className={`discovery-chip touch-manipulation shrink-0 rounded-full px-3 py-2 text-left text-[10px] font-semibold leading-snug transition-[background-color,color,box-shadow,border-color] duration-150 sm:px-3 sm:py-1.5 sm:text-[10px] ${focusRing}`}
                     >
                       {chip.label}
                     </button>

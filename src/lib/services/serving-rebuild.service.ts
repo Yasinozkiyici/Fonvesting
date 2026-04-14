@@ -4,6 +4,7 @@ import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { rebuildFundDailySnapshots } from "@/lib/services/fund-daily-snapshot.service";
 import { rebuildFundDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
 import { warmAllScoresApiCaches } from "@/lib/services/fund-scores-cache.service";
+import { rebuildFundDetailCoreServingCache } from "@/lib/services/fund-detail-core-serving.service";
 import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.service";
 import { rebuildMarketSnapshot, recomputeFundReturnsFromHistory } from "@/lib/services/tefas-sync.service";
 import { fetchUsdTryEurTryLive } from "@/lib/services/exchange-rates.service";
@@ -60,6 +61,9 @@ export type ServingRebuildResult = {
     written: number;
   };
   warm: {
+    written: number;
+  };
+  detailCore: {
     written: number;
   };
   timings: {
@@ -416,6 +420,10 @@ async function runServingCore(options: { warmCaches: boolean; incrementalDaily: 
     ? ({ written: 0 } as const)
     : await markStep("rebuild_derived_metrics", () => rebuildFundDerivedMetrics());
 
+  const detailCore = await markStep("rebuild_fund_detail_core_serving_cache", () =>
+    rebuildFundDetailCoreServingCache({ sourceDate: snapshotDate })
+  );
+
   const warm = options.warmCaches
     ? await markStep("warm_scores_cache", () => warmAllScoresApiCaches())
     : { written: 0 };
@@ -429,6 +437,7 @@ async function runServingCore(options: { warmCaches: boolean; incrementalDaily: 
       updatedFundStats: fundStats.updatedFunds,
       writtenSnapshots: serving.written,
       writtenDerivedMetrics: derived.written,
+      writtenDetailCore: detailCore.written,
       warmedCaches: warm.written,
       completedAt: new Date().toISOString(),
       incrementalDaily: options.incrementalDaily,
@@ -441,6 +450,7 @@ async function runServingCore(options: { warmCaches: boolean; incrementalDaily: 
     returns,
     serving: { written: serving.written },
     derived: { written: derived.written },
+    detailCore: { written: detailCore.written },
     warm: { written: warm.written },
     timings: {
       totalMs: Date.now() - runStartedAt,

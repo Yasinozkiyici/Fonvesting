@@ -240,16 +240,7 @@ async function computeAllFundsFromLatestSnapshot(): Promise<FundListRow[]> {
 
 async function getCachedAllFunds(): Promise<FundListRow[]> {
   const loadCached = unstable_cache(
-    async () => {
-      if (hasSupabaseRestConfig()) {
-        try {
-          return await computeAllFundsFromLatestSnapshotFromSupabaseRest();
-        } catch (error) {
-          console.error("[fund-list] supabase-rest snapshot load failed", error);
-        }
-      }
-      return computeAllFundsFromLatestSnapshot();
-    },
+    async () => computeAllFundsFromLatestSnapshot(),
     ["fund-list-all-v9"],
     { revalidate: LIVE_DATA_CACHE_SEC }
   );
@@ -336,14 +327,6 @@ function sortAndFilterFunds(items: FundListRow[], input: FundListQueryInput): Fu
 }
 
 export async function getFundsPage(input: FundListQueryInput): Promise<FundListPageResult> {
-  if (hasSupabaseRestConfig()) {
-    try {
-      return await queryFundsPageFromSupabaseRest(input);
-    } catch (error) {
-      console.error("[fund-list] rest page query failed", error);
-    }
-  }
-
   const allFunds = await getAllFundsCached();
   const items = sortAndFilterFunds(allFunds, input);
   const total = items.length;

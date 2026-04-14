@@ -11,7 +11,7 @@ function HeroPct({ value }: { value: number }) {
   const text = formatDetailSignedPercent(v, { maxAbs: 100 });
   if (text === "—") {
     return (
-      <span className="tabular-nums text-[15px] font-semibold tracking-[-0.02em] sm:text-[17px]" style={{ color: "var(--text-secondary)" }}>
+      <span className="tabular-nums text-[14px] font-semibold tracking-[-0.02em] sm:text-[17px]" style={{ color: "var(--text-secondary)" }}>
         —
       </span>
     );
@@ -20,7 +20,7 @@ function HeroPct({ value }: { value: number }) {
   const zero = v === 0;
   return (
     <span
-      className="tabular-nums text-[15px] font-semibold tracking-[-0.02em] sm:text-[17px]"
+      className="tabular-nums text-[14px] font-semibold tracking-[-0.02em] sm:text-[17px]"
       style={{ color: zero ? "var(--text-secondary)" : pos ? "var(--success)" : "var(--danger)" }}
     >
       {text}
@@ -40,9 +40,14 @@ export function FundDetailHero({ data }: Props) {
   const typeLabel = fundTypeDisplayLabel(fund.fundType);
   const typeTone = fundTypeChipToneClass(fund.fundType, typeLabel);
 
+  const investorFull = Number.isFinite(fund.investorCount)
+    ? Math.max(0, Math.round(fund.investorCount)).toLocaleString("tr-TR")
+    : "—";
+
   return (
     <section
-      className="rounded-[1.05rem] border px-3.5 py-3 sm:px-4.5 sm:py-3.5 lg:px-5 lg:py-4"
+      data-detail-section="overview"
+      className="scroll-mt-28 rounded-[1.05rem] border px-3 py-2.5 sm:scroll-mt-0 sm:px-4.5 sm:py-3.5 md:scroll-mt-0 lg:px-5 lg:py-4"
       style={{
         borderColor: "var(--border-subtle)",
         background: "var(--card-bg)",
@@ -50,7 +55,7 @@ export function FundDetailHero({ data }: Props) {
       }}
       aria-labelledby="fund-detail-identity-heading"
     >
-      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.45fr)_minmax(21rem,27rem)] lg:items-center lg:gap-4">
+      <div className="flex flex-col gap-2.5 sm:gap-3 lg:grid lg:grid-cols-[minmax(0,1.45fr)_minmax(21rem,27rem)] lg:items-center lg:gap-4">
         <div className="flex min-w-0 items-start gap-2.5 sm:gap-3">
           <FundLogoMark
             code={fund.code}
@@ -65,7 +70,15 @@ export function FundDetailHero({ data }: Props) {
             initialsClassName="text-[12px] font-semibold tracking-tight tabular-nums"
           />
           <div className="min-w-0 flex-1 lg:max-w-[42rem]">
-            <p className="text-[9.5px] font-medium tracking-[0.03em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
+            <Link
+              href="/"
+              prefetch={false}
+              className="mb-1 inline-flex text-[11px] font-semibold transition-opacity hover:opacity-90 md:hidden"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              ← Tüm fonlar
+            </Link>
+            <p className="hidden text-[9.5px] font-medium tracking-[0.03em] sm:text-[10px] md:block" style={{ color: "var(--text-muted)" }}>
               <Link
                 href="/"
                 className="transition-colors hover:opacity-90"
@@ -99,7 +112,7 @@ export function FundDetailHero({ data }: Props) {
             </div>
             {helperText ? (
               <p
-                className="mt-1 max-w-[42rem] line-clamp-1 text-[10px] leading-snug sm:text-[11px]"
+                className="mt-1 max-w-[42rem] line-clamp-2 text-[10px] leading-snug sm:line-clamp-1 sm:text-[11px]"
                 style={{ color: "var(--text-tertiary)" }}
                 title={fund.name}
               >
@@ -127,55 +140,69 @@ export function FundDetailHero({ data }: Props) {
           </div>
         </div>
 
-        <dl
-          className="grid w-full shrink-0 grid-cols-2 gap-x-2.5 gap-y-2 rounded-[0.95rem] border px-2.5 py-2.25 sm:grid-cols-4 sm:px-3 sm:py-2.5 lg:w-full lg:max-w-[27rem] lg:self-center"
+        <div
+          className="w-full shrink-0 rounded-[0.95rem] border px-2.5 py-2 sm:px-3 sm:py-2.5 lg:w-full lg:max-w-[27rem] lg:self-center"
           style={{
             borderColor: "color-mix(in srgb, var(--border-subtle) 88%, transparent)",
             background: "color-mix(in srgb, var(--card-bg) 94%, var(--bg-muted))",
           }}
         >
-          <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">
-            <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Son fiyat
-            </dt>
-            <dd
-              className="mt-0.5 min-w-0 tabular-nums text-[13px] font-semibold leading-tight tracking-[-0.02em] sm:text-[15px]"
-              style={{ color: "var(--text-primary)", overflowWrap: "anywhere" }}
-            >
-              {formatDetailNavPrice(fund.lastPrice)}
-            </dd>
-          </div>
-          <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">
-            <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
-              1G
-            </dt>
-            <dd className="mt-0.5">
-              <HeroPct value={fund.dailyReturn} />
-            </dd>
-          </div>
-          <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">
-            <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Yatırımcı
-            </dt>
-            <dd
-              className="mt-0.5 truncate tabular-nums text-[13px] font-semibold tracking-[-0.018em] sm:text-[15px]"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {formatCompactNumber(fund.investorCount)}
-            </dd>
-          </div>
-          <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">
-            <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
-              Portföy
-            </dt>
-            <dd
-              className="mt-0.5 truncate tabular-nums text-[13px] font-semibold tracking-[-0.018em] sm:text-[15px]"
-              style={{ color: "var(--text-primary)" }}
-            >
-              {formatCompactCurrency(fund.portfolioSize)}
-            </dd>
-          </div>
-        </dl>
+          <dl className="grid grid-cols-2 gap-x-2 gap-y-1.5 sm:grid-cols-4 sm:gap-x-2.5 sm:gap-y-2">
+            <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">
+              <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
+                Son fiyat
+              </dt>
+              <dd
+                className="mt-0.5 min-w-0 tabular-nums text-[13px] font-semibold leading-tight tracking-[-0.02em] sm:text-[15px]"
+                style={{ color: "var(--text-primary)", overflowWrap: "anywhere" }}
+              >
+                {formatDetailNavPrice(fund.lastPrice)}
+              </dd>
+            </div>
+            <div className="min-w-0 rounded-[0.8rem] px-1 py-0.5">
+              <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
+                1G
+              </dt>
+              <dd className="mt-0.5">
+                <HeroPct value={fund.dailyReturn} />
+              </dd>
+            </div>
+            <div className="col-span-2 hidden min-w-0 rounded-[0.8rem] px-1 py-0.5 sm:col-span-1 sm:block">
+              <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
+                Yatırımcı
+              </dt>
+              <dd
+                className="mt-0.5 truncate tabular-nums text-[13px] font-semibold tracking-[-0.018em] sm:text-[15px]"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {formatCompactNumber(fund.investorCount)}
+              </dd>
+            </div>
+            <div className="col-span-2 hidden min-w-0 rounded-[0.8rem] px-1 py-0.5 sm:col-span-1 sm:block">
+              <dt className="text-[9.5px] font-medium uppercase tracking-[0.05em] sm:text-[10px]" style={{ color: "var(--text-muted)" }}>
+                Portföy
+              </dt>
+              <dd
+                className="mt-0.5 truncate tabular-nums text-[13px] font-semibold tracking-[-0.018em] sm:text-[15px]"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {formatCompactCurrency(fund.portfolioSize)}
+              </dd>
+            </div>
+          </dl>
+          <p
+            className="mt-1.5 border-t pt-1.5 text-[11px] font-medium tabular-nums leading-snug sm:hidden"
+            style={{ color: "var(--text-tertiary)", borderColor: "color-mix(in srgb, var(--border-subtle) 65%, transparent)" }}
+          >
+            <span style={{ color: "var(--text-muted)" }}>Portföy </span>
+            <span style={{ color: "var(--text-primary)" }}>{formatCompactCurrency(fund.portfolioSize)}</span>
+            <span className="mx-1.5 opacity-40" aria-hidden>
+              ·
+            </span>
+            <span style={{ color: "var(--text-muted)" }}>Yatırımcı </span>
+            <span style={{ color: "var(--text-primary)" }}>{investorFull}</span>
+          </p>
+        </div>
       </div>
     </section>
   );

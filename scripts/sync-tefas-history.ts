@@ -9,6 +9,7 @@ import {
 } from "../src/lib/services/tefas-history.service";
 import { rebuildFundDailySnapshots } from "../src/lib/services/fund-daily-snapshot.service";
 import { rebuildFundDerivedMetrics } from "../src/lib/services/fund-derived-metrics.service";
+import { rebuildFundDetailCoreServingCache } from "../src/lib/services/fund-detail-core-serving.service";
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import { rebuildMarketSnapshot, recomputeFundReturnsFromHistory } from "../src/lib/services/tefas-sync.service";
 import { startOfUtcDay } from "../src/lib/trading-calendar-tr";
@@ -75,6 +76,7 @@ async function main() {
   await rebuildMarketSnapshot(snapshotDate);
   const serving = await rebuildFundDailySnapshots(snapshotDate);
   await rebuildFundDerivedMetrics();
+  const detailCore = await rebuildFundDetailCoreServingCache({ sourceDate: snapshotDate });
   const warm = await warmAllScoresApiCaches();
   await refreshFundHistorySyncState({
     phase: append ? "history_append" : "history_backfill",
@@ -102,6 +104,7 @@ async function main() {
       snapshotDate: snapshotDate.toISOString(),
       updatedFunds: returns.updatedFunds,
       writtenSnapshots: serving.written,
+      writtenDetailCore: detailCore.written,
       warmedCaches: warm.written,
       completedAt: new Date().toISOString(),
     },
@@ -115,6 +118,7 @@ async function main() {
         recovery,
         returns,
         serving,
+        detailCore,
         warm,
       },
       null,

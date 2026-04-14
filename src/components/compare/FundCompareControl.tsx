@@ -12,12 +12,14 @@ import {
 
 type Props = {
   code: string;
+  /** `card`: mobil liste kartı — minimum dokunma alanı. `table`: masaüstü satırı (kompakt). */
+  variant?: "table" | "card";
 };
 
 /**
  * Masaüstü satır sonu / mobil kart: kompakt ikon; tabloda satır hover’da belirginleşir, seçiliyken kalır.
  */
-export function FundCompareControl({ code }: Props) {
+export function FundCompareControl({ code, variant = "table" }: Props) {
   const [onList, setOnList] = useState(false);
 
   const sync = useCallback(() => {
@@ -52,11 +54,16 @@ export function FundCompareControl({ code }: Props) {
 
   const label = onList ? "Karşılaştırmadan çıkar" : "Karşılaştırmaya ekle";
 
+  const sizeClass =
+    variant === "card"
+      ? "compare-row-icon--card min-h-[var(--m-tap-min,2.75rem)] min-w-[var(--m-tap-min,2.75rem)] touch-manipulation rounded-[0.65rem]"
+      : "compare-row-icon--table h-[1.5rem] w-[1.5rem] rounded-md";
+
   return (
     <button
       type="button"
       onClick={handleClick}
-      className={`compare-row-icon inline-flex h-[1.5rem] w-[1.5rem] shrink-0 items-center justify-center rounded-md border border-transparent transition-[opacity,background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--card-bg)] ${
+      className={`compare-row-icon inline-flex shrink-0 items-center justify-center border border-transparent transition-[opacity,background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--border-focus)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--card-bg)] ${sizeClass} ${
         onList
           ? "compare-row-icon--on opacity-100"
           : "compare-row-icon--off opacity-[0.46] hover:opacity-[0.88] group-hover:opacity-[0.68] group-hover:border-[var(--border-subtle)] focus-visible:opacity-100"
@@ -79,9 +86,17 @@ export function FundCompareControl({ code }: Props) {
       aria-pressed={onList}
     >
       {onList ? (
-        <Check className="h-2.5 w-2.5" strokeWidth={1.6} aria-hidden />
+        <Check
+          className={variant === "card" ? "h-[15px] w-[15px]" : "h-2.5 w-2.5"}
+          strokeWidth={1.6}
+          aria-hidden
+        />
       ) : (
-        <Plus className="h-[13px] w-[13px]" strokeWidth={1.75} aria-hidden />
+        <Plus
+          className={variant === "card" ? "h-4 w-4" : "h-[13px] w-[13px]"}
+          strokeWidth={1.75}
+          aria-hidden
+        />
       )}
     </button>
   );

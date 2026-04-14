@@ -11,6 +11,65 @@ const KIYAS_CHART_MAX_POINTS = 240;
 const MAX_DAILY_MACRO_STALENESS_DAYS = 10;
 const MAX_POLICY_STALENESS_DAYS = 180;
 const SUPABASE_MACRO_PAGE_SIZE = 1000;
+/** Supabase REST isteği opsiyonel kıyas bütçesini tüketebildiği için varsayılan DB yolunu kullan; REST yalnızca açıkça etkinleştirilsin. */
+const KIYAS_SUPABASE_REST_ENABLED = process.env.FUND_DETAIL_KIYAS_SUPABASE_REST === "1";
+const KIYAS_SUPABASE_TIMEOUT_MS = parseEnvInt("FUND_DETAIL_KIYAS_SUPABASE_TIMEOUT_MS", 1_400, 300, 3_500);
+const KIYAS_MACRO_CACHE_TTL_MS = parseEnvInt("FUND_DETAIL_KIYAS_MACRO_CACHE_TTL_MS", 120_000, 5_000, 30 * 60_000);
+const KIYAS_CATEGORY_CACHE_TTL_MS = parseEnvInt(
+  "FUND_DETAIL_KIYAS_CATEGORY_CACHE_TTL_MS",
+  45_000,
+  3_000,
+  10 * 60_000
+);
+
+function parseEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (typeof raw !== "string" || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+export type KiyasTelemetry = {
+  queryCount: number;
+  cacheHitCount: number;
+  dedupedCount: number;
+};
+
+type KiyasRuntimeState = {
+  macroCache: Map<string, { updatedAt: number; data: Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>> }>;
+  macroInFlight: Map<string, Promise<Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>>>>;
+  categoryCache: Map<string, { updatedAt: number; data: KiyasDerivedSlice | null }>;
+  categoryInFlight: Map<string, Promise<KiyasDerivedSlice | null>>;
+};
+
+function bumpQuery(telemetry?: KiyasTelemetry, count = 1): void {
+  if (!telemetry) return;
+  telemetry.queryCount += count;
+}
+
+function bumpCacheHit(telemetry?: KiyasTelemetry): void {
+  if (!telemetry) return;
+  telemetry.cacheHitCount += 1;
+}
+
+function bumpDeduped(telemetry?: KiyasTelemetry): void {
+  if (!telemetry) return;
+  telemetry.dedupedCount += 1;
+}
+
+function getKiyasRuntimeState(): KiyasRuntimeState {
+  const g = globalThis as typeof globalThis & { __fundDetailKiyasRuntimeState?: KiyasRuntimeState };
+  if (!g.__fundDetailKiyasRuntimeState) {
+    g.__fundDetailKiyasRuntimeState = {
+      macroCache: new Map(),
+      macroInFlight: new Map(),
+      categoryCache: new Map(),
+      categoryInFlight: new Map(),
+    };
+  }
+  return g.__fundDetailKiyasRuntimeState;
+}
 
 /** Makro seri kodları zaman içinde farklı adlarla tutulabildiği için alias seti kullanılır. */
 const MACRO_CODE_ALIASES: Record<KiyasRefKey, string[]> = {
@@ -483,15 +542,30 @@ export function computeKiyasPeriodRowsForFundRef(
 }
 
 export async function fetchKiyasMacroBuckets(
-  anchor: Date
+  anchor: Date,
+  telemetry?: KiyasTelemetry
 ): Promise<Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>>> {
   const a = startOfUtcDay(anchor);
+  const state = getKiyasRuntimeState();
+  const cacheKey = `${a.toISOString()}|rest:${KIYAS_SUPABASE_REST_ENABLED ? 1 : 0}`;
+  const cached = state.macroCache.get(cacheKey);
+  if (cached && Date.now() - cached.updatedAt <= KIYAS_MACRO_CACHE_TTL_MS) {
+    bumpCacheHit(telemetry);
+    return cached.data;
+  }
+  const inflight = state.macroInFlight.get(cacheKey);
+  if (inflight) {
+    bumpDeduped(telemetry);
+    return inflight;
+  }
+
+  const loadPromise = (async (): Promise<Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>>> => {
   const macroByRef: Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>> = {};
-  if (hasSupabaseRestConfig()) {
+  if (KIYAS_SUPABASE_REST_ENABLED && hasSupabaseRestConfig()) {
     try {
       const seriesRows = await fetchSupabaseRestJson<SupabaseMacroSeriesRow[]>(
         `MacroSeries?select=id,code&isActive=eq.true&limit=500`,
-        { revalidate: 300 }
+        { revalidate: 300, timeoutMs: KIYAS_SUPABASE_TIMEOUT_MS, retries: 0 }
       );
       const idToCode = new Map(
         seriesRows
@@ -500,7 +574,10 @@ export async function fetchKiyasMacroBuckets(
           .map((item) => [item.id, item.refKey] as const)
       );
       const seriesIds = [...idToCode.keys()];
-      if (seriesIds.length === 0) return macroByRef;
+      if (seriesIds.length === 0) {
+        state.macroCache.set(cacheKey, { updatedAt: Date.now(), data: macroByRef });
+        return macroByRef;
+      }
 
       const from = addUtcDays(a, -LOOKBACK_DAYS).toISOString();
       const until = a.toISOString();
@@ -509,7 +586,7 @@ export async function fetchKiyasMacroBuckets(
       while (true) {
         const page = await fetchSupabaseRestJson<SupabaseMacroObservationRow[]>(
           `MacroObservation?select=seriesId,date,value&seriesId=in.(${seriesIds.join(",")})&date=gte.${from}&date=lte.${until}&order=date.asc&limit=${SUPABASE_MACRO_PAGE_SIZE}&offset=${offset}`,
-          { revalidate: 300 }
+          { revalidate: 300, timeoutMs: KIYAS_SUPABASE_TIMEOUT_MS, retries: 0 }
         );
         obs.push(...page);
         if (page.length < SUPABASE_MACRO_PAGE_SIZE) break;
@@ -527,12 +604,14 @@ export async function fetchKiyasMacroBuckets(
       for (const [k, v] of buckets) {
         macroByRef[k as KiyasRefKey] = finalizeMacroBucket(k as KiyasRefKey, v);
       }
+      state.macroCache.set(cacheKey, { updatedAt: Date.now(), data: macroByRef });
       return macroByRef;
     } catch (error) {
       console.error("[fund-detail-kiyas] supabase-rest macro fetch failed", error);
     }
   }
 
+  bumpQuery(telemetry);
   const seriesRows = await prisma.macroSeries.findMany({
     where: { isActive: true },
     select: { id: true, code: true },
@@ -545,9 +624,13 @@ export async function fetchKiyasMacroBuckets(
   );
   const seriesIds = [...idToCode.keys()];
 
-  if (seriesIds.length === 0) return macroByRef;
+  if (seriesIds.length === 0) {
+    state.macroCache.set(cacheKey, { updatedAt: Date.now(), data: macroByRef });
+    return macroByRef;
+  }
 
   const from = addUtcDays(a, -LOOKBACK_DAYS);
+  bumpQuery(telemetry);
   const obs = await prisma.macroObservation.findMany({
     where: { seriesId: { in: seriesIds }, date: { lte: a, gte: from } },
     orderBy: { date: "asc" },
@@ -564,28 +647,58 @@ export async function fetchKiyasMacroBuckets(
   for (const [k, v] of buckets) {
     macroByRef[k as KiyasRefKey] = finalizeMacroBucket(k as KiyasRefKey, v);
   }
+  state.macroCache.set(cacheKey, { updatedAt: Date.now(), data: macroByRef });
   return macroByRef;
+  })();
+
+  state.macroInFlight.set(cacheKey, loadPromise);
+  try {
+    return await loadPromise;
+  } finally {
+    state.macroInFlight.delete(cacheKey);
+  }
 }
 
 export async function fetchKiyasCategoryAvgsExcludingFund(
   categoryId: string | null,
-  excludeFundId: string
+  excludeFundId: string,
+  telemetry?: KiyasTelemetry
 ): Promise<KiyasDerivedSlice | null> {
   if (!categoryId) return null;
-  if (hasSupabaseRestConfig()) {
+  const state = getKiyasRuntimeState();
+  const cacheKey = `${categoryId}|${excludeFundId}|rest:${KIYAS_SUPABASE_REST_ENABLED ? 1 : 0}`;
+  const cached = state.categoryCache.get(cacheKey);
+  if (cached && Date.now() - cached.updatedAt <= KIYAS_CATEGORY_CACHE_TTL_MS) {
+    bumpCacheHit(telemetry);
+    return cached.data;
+  }
+  const inflight = state.categoryInFlight.get(cacheKey);
+  if (inflight) {
+    bumpDeduped(telemetry);
+    return inflight;
+  }
+
+  const loadPromise = (async (): Promise<KiyasDerivedSlice | null> => {
+  if (KIYAS_SUPABASE_REST_ENABLED && hasSupabaseRestConfig()) {
     try {
       const fundRows = await fetchSupabaseRestJson<SupabaseFundIdRow[]>(
         `Fund?select=id&categoryId=eq.${categoryId}&isActive=eq.true&id=neq.${excludeFundId}&limit=500`,
-        { revalidate: 300 }
+        { revalidate: 300, timeoutMs: KIYAS_SUPABASE_TIMEOUT_MS, retries: 0 }
       );
       const fundIds = fundRows.map((row) => row.id);
-      if (fundIds.length < MIN_CATEGORY_FUNDS) return null;
+      if (fundIds.length < MIN_CATEGORY_FUNDS) {
+        state.categoryCache.set(cacheKey, { updatedAt: Date.now(), data: null });
+        return null;
+      }
 
       const metricsRows = await fetchSupabaseRestJson<SupabaseDerivedMetricsSlice[]>(
         `FundDerivedMetrics?select=return30d,return90d,return180d,return1y,return2y&fundId=in.(${fundIds.join(",")})&limit=500`,
-        { revalidate: 300 }
+        { revalidate: 300, timeoutMs: KIYAS_SUPABASE_TIMEOUT_MS, retries: 0 }
       );
-      if (metricsRows.length < MIN_CATEGORY_FUNDS) return null;
+      if (metricsRows.length < MIN_CATEGORY_FUNDS) {
+        state.categoryCache.set(cacheKey, { updatedAt: Date.now(), data: null });
+        return null;
+      }
 
       const avg = (values: Array<number | null | undefined>): number | null => {
         const items = values.filter((value): value is number => finite(value));
@@ -593,7 +706,7 @@ export async function fetchKiyasCategoryAvgsExcludingFund(
         return items.reduce((sum, value) => sum + value, 0) / items.length;
       };
 
-      return {
+      const result: KiyasDerivedSlice = {
         return30d: avg(metricsRows.map((row) => row.return30d)),
         return90d: avg(metricsRows.map((row) => row.return90d)),
         return180d: avg(metricsRows.map((row) => row.return180d)),
@@ -601,28 +714,35 @@ export async function fetchKiyasCategoryAvgsExcludingFund(
         return2y: avg(metricsRows.map((row) => row.return2y)),
         return3y: null,
       };
+      state.categoryCache.set(cacheKey, { updatedAt: Date.now(), data: result });
+      return result;
     } catch (error) {
       console.error("[fund-detail-kiyas] supabase-rest category averages failed", error);
     }
   }
 
   const whereCat = { fund: { categoryId, isActive: true, id: { not: excludeFundId } } };
-  const [agg, total] = await Promise.all([
-    prisma.fundDerivedMetrics.aggregate({
-      where: whereCat,
-      _avg: {
-        return30d: true,
-        return90d: true,
-        return180d: true,
-        return1y: true,
-        return2y: true,
-        // 3Y category ortalaması şu aşamada ham geçmişten türetilmiyor.
-      },
-    }),
-    prisma.fundDerivedMetrics.count({ where: whereCat }),
-  ]);
-  if (total < MIN_CATEGORY_FUNDS) return null;
-  return {
+  bumpQuery(telemetry);
+  const agg = await prisma.fundDerivedMetrics.aggregate({
+    where: whereCat,
+    _avg: {
+      return30d: true,
+      return90d: true,
+      return180d: true,
+      return1y: true,
+      return2y: true,
+      // 3Y category ortalaması şu aşamada ham geçmişten türetilmiyor.
+    },
+    _count: {
+      _all: true,
+    },
+  });
+  const total = agg._count._all;
+  if (total < MIN_CATEGORY_FUNDS) {
+    state.categoryCache.set(cacheKey, { updatedAt: Date.now(), data: null });
+    return null;
+  }
+  const result: KiyasDerivedSlice = {
     return30d: agg._avg.return30d,
     return90d: agg._avg.return90d,
     return180d: agg._avg.return180d,
@@ -630,6 +750,16 @@ export async function fetchKiyasCategoryAvgsExcludingFund(
     return2y: agg._avg.return2y,
     return3y: null,
   };
+  state.categoryCache.set(cacheKey, { updatedAt: Date.now(), data: result });
+  return result;
+  })();
+
+  state.categoryInFlight.set(cacheKey, loadPromise);
+  try {
+    return await loadPromise;
+  } finally {
+    state.categoryInFlight.delete(cacheKey);
+  }
 }
 
 export async function buildFundKiyasBlock(input: {
@@ -648,14 +778,27 @@ export async function buildFundKiyasBlock(input: {
     return3y: number | null;
   } | null;
   pricePoints: PricePoint[];
-}): Promise<FundKiyasViewPayload | null> {
+}, options?: { telemetry?: KiyasTelemetry }): Promise<FundKiyasViewPayload | null> {
   const anchor = startOfUtcDay(input.anchorDate);
   const order = resolveKiyasReferenceOrder(input.categoryCode, input.fundTypeCode, input.fundName);
+  const telemetry = options?.telemetry;
 
-  const [categoryAvgs, macroByRef] = await Promise.all([
-    fetchKiyasCategoryAvgsExcludingFund(input.categoryId, input.fundId),
-    fetchKiyasMacroBuckets(anchor),
+  const [macroResult, categoryResult] = await Promise.allSettled([
+    fetchKiyasMacroBuckets(anchor, telemetry),
+    fetchKiyasCategoryAvgsExcludingFund(input.categoryId, input.fundId, telemetry),
   ]);
+
+  const macroByRef: Partial<Record<KiyasRefKey, Array<{ date: Date; value: number }>>> =
+    macroResult.status === "fulfilled" ? macroResult.value : {};
+  const categoryAvgs: KiyasDerivedSlice | null =
+    categoryResult.status === "fulfilled" ? categoryResult.value : null;
+
+  if (macroResult.status === "rejected") {
+    console.error("[fund-detail-kiyas] macro buckets failed", macroResult.reason);
+  }
+  if (categoryResult.status === "rejected") {
+    console.error("[fund-detail-kiyas] category averages failed", categoryResult.reason);
+  }
 
   const rowsByRef: Record<string, KiyasPeriodRow[]> = {};
   const refs: KiyasRefOption[] = [];

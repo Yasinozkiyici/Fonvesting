@@ -5,9 +5,53 @@ type FetchJsonOptions = {
   retries?: number;
 };
 
-const DEFAULT_TIMEOUT_MS = 12_000;
-const DEFAULT_RETRIES = 1;
+type SupabaseRestCircuitState = {
+  openUntil: number;
+  consecutiveFailures: number;
+  lastFailureAt: number;
+};
+
+const DEFAULT_TIMEOUT_MS = 3_500;
+const DEFAULT_RETRIES = 0;
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const CIRCUIT_OPEN_MS = 45_000;
+const CIRCUIT_FAILURE_THRESHOLD = 2;
+const FAILURE_STREAK_RESET_MS = 90_000;
+
+declare global {
+  var __supabaseRestCircuitState: SupabaseRestCircuitState | undefined;
+}
+
+function getCircuitState(): SupabaseRestCircuitState {
+  if (!globalThis.__supabaseRestCircuitState) {
+    globalThis.__supabaseRestCircuitState = {
+      openUntil: 0,
+      consecutiveFailures: 0,
+      lastFailureAt: 0,
+    };
+  }
+  return globalThis.__supabaseRestCircuitState;
+}
+
+function markSupabaseRestSuccess() {
+  const state = getCircuitState();
+  state.openUntil = 0;
+  state.consecutiveFailures = 0;
+  state.lastFailureAt = 0;
+}
+
+function markSupabaseRestFailure() {
+  const state = getCircuitState();
+  const now = Date.now();
+  if (state.lastFailureAt === 0 || now - state.lastFailureAt > FAILURE_STREAK_RESET_MS) {
+    state.consecutiveFailures = 0;
+  }
+  state.lastFailureAt = now;
+  state.consecutiveFailures += 1;
+  if (state.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD) {
+    state.openUntil = now + CIRCUIT_OPEN_MS;
+  }
+}
 
 function getSupabaseRestConfig(): { url: string; key: string } | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -24,6 +68,15 @@ export async function fetchSupabaseRestResponse(pathAndQuery: string, options: F
   const config = getSupabaseRestConfig();
   if (!config) {
     throw new Error("supabase_rest_not_configured");
+  }
+
+  const circuit = getCircuitState();
+  const now = Date.now();
+  if (circuit.openUntil > now) {
+    throw new Error(`supabase_rest_circuit_open_${circuit.openUntil - now}ms`);
+  }
+  if (circuit.openUntil !== 0 && circuit.openUntil <= now) {
+    circuit.openUntil = 0;
   }
 
   const baseUrl = config.url.replace(/\/+$/, "");
@@ -51,6 +104,7 @@ export async function fetchSupabaseRestResponse(pathAndQuery: string, options: F
       });
 
       if (response.ok) {
+        markSupabaseRestSuccess();
         return response;
       }
 
@@ -63,6 +117,7 @@ export async function fetchSupabaseRestResponse(pathAndQuery: string, options: F
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const retryable = message.includes("timeout") || message.includes("abort") || message.includes("fetch failed");
+      markSupabaseRestFailure();
       if (attempt >= maxAttempts || !retryable) {
         throw (error instanceof Error ? error : new Error(String(error)));
       }

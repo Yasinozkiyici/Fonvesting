@@ -19,7 +19,9 @@ import { CompareListEntry } from "@/components/compare/CompareListEntry";
 import { MobileBottomSheet } from "@/components/ds/MobileBottomSheet";
 import {
   fetchNormalizedJson,
+  fetchNormalizedJsonWithMeta,
   normalizeCategoryOptions,
+  normalizeFundListResponse,
   normalizeScoredResponse,
 } from "@/lib/client-data";
 import { fundMatchesTheme, getFundTheme, type FundThemeId } from "@/lib/fund-themes";
@@ -37,12 +39,169 @@ type SortField = "portfolioSize" | "dailyReturn" | "investorCount" | "lastPrice"
 type SortDir = "asc" | "desc";
 const DEFAULT_SORT_FIELD: SortField = "portfolioSize";
 const DEFAULT_SORT_DIR: SortDir = "desc";
+const SCORES_FETCH_TIMEOUT_MS_DEFAULT = 12_000;
+const SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN = 14_000;
+const SCORES_BOOTSTRAP_RETRY_MS = 3_500;
+const SCORES_CORE_ROWS_FALLBACK_TIMEOUT_MS = 6_500;
+const SCORES_CORE_ROWS_FALLBACK_PAGE_SIZE = 120;
+const SCORES_LAST_GOOD_STORAGE_KEY = "scores-table:last-good:v1";
+
+type BootstrapSource = "ssr" | "last_good" | "bootstrap_fallback" | "valid_empty";
+type StoredLastGoodPayload = { payload: ScoredResponse; scopeKey: string | null };
+
+function buildScoresScopeKey(
+  mode: RankingMode,
+  category: string,
+  theme: FundThemeId | null
+): string {
+  const normalizedCategory = category.trim().toUpperCase();
+  return `${mode}|${normalizedCategory || "all"}|${theme ?? "none"}`;
+}
 
 function rankingModeLabel(mode: RankingMode): string {
   if (mode === "LOW_RISK") return "Düşük Risk";
   if (mode === "HIGH_RETURN") return "Yüksek Getiri";
   if (mode === "STABLE") return "Stabil";
   return "En İyi";
+}
+
+function formatHomepageCountCaption(input: {
+  shown: number;
+  registeredTotal: number;
+  loadedCount: number;
+  hasFilters: boolean;
+  filteredHint: string | null;
+}): string {
+  const shownStr = input.shown.toLocaleString("tr-TR");
+  const regStr = input.registeredTotal.toLocaleString("tr-TR");
+  const fullUniverse = input.shown === input.registeredTotal;
+  if (input.hasFilters) {
+    if (fullUniverse) return `${shownStr} fon · ${input.filteredHint ?? "filtre"}`;
+    return `${shownStr} fon · ${input.filteredHint ?? "filtre"} (evren ${regStr})`;
+  }
+  if (fullUniverse) return `${shownStr} fon · tam evren`;
+  // Homepage integrity guard: preview satır sayısını tam evren gibi göstermeyelim.
+  if (input.loadedCount < input.registeredTotal || input.registeredTotal > input.shown) {
+    return `Önizleme: ${shownStr} · Evren: ${regStr}`;
+  }
+  return `${shownStr} fon listeleniyor`;
+}
+
+function headerValue(headers: Headers, key: string): string {
+  return (headers.get(key) ?? "").trim();
+}
+
+function isDegradedEmptyResponse(headers: Headers, payload: ScoredResponse): boolean {
+  if (payload.funds.length > 0) return false;
+  const degraded = headerValue(headers, "x-scores-degraded");
+  const source = headerValue(headers, "x-scores-source");
+  const emptyResult = headerValue(headers, "x-scores-empty-result");
+  if (emptyResult === "degraded") return true;
+  if (degraded) return true;
+  if (source === "empty") return true;
+  return false;
+}
+
+function isValidBusinessEmptyResponse(headers: Headers, payload: ScoredResponse): boolean {
+  if (payload.funds.length > 0) return false;
+  const emptyResult = headerValue(headers, "x-scores-empty-result");
+  return emptyResult === "valid";
+}
+
+function scoresFetchTimeoutForMode(mode: RankingMode): number {
+  if (mode === "HIGH_RETURN") return SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN;
+  return SCORES_FETCH_TIMEOUT_MS_DEFAULT;
+}
+
+function isTimeoutLikeClientError(cause: unknown): boolean {
+  if (cause instanceof DOMException && cause.name === "AbortError") return true;
+  if (!(cause instanceof Error)) return false;
+  const message = cause.message.toLowerCase();
+  return message.includes("zaman aşımına uğradı") || message.includes("timeout");
+}
+
+function mapFundsPayloadToScoredResponse(
+  mode: RankingMode,
+  payload: {
+  items: Array<{
+    id: string;
+    code: string;
+    name: string;
+    shortName: string | null;
+    logoUrl: string | null;
+    portfolioSize: number;
+    lastPrice: number;
+    dailyReturn: number;
+    investorCount: number;
+    category: { code: string; name: string; color: string | null } | null;
+    fundType: { code: number; name: string } | null;
+  }>;
+    total: number;
+  }
+): ScoredResponse {
+  return {
+    mode,
+    total: payload.total,
+    funds: payload.items.map((item) => ({
+      fundId: item.id,
+      code: item.code,
+      name: item.name,
+      shortName: item.shortName,
+      logoUrl: item.logoUrl,
+      lastPrice: item.lastPrice,
+      dailyReturn: item.dailyReturn,
+      portfolioSize: item.portfolioSize,
+      investorCount: item.investorCount,
+      category: item.category ? { code: item.category.code, name: item.category.name } : null,
+      fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
+      finalScore: null,
+    })),
+  };
+}
+
+function readStoredLastGoodPayload(): StoredLastGoodPayload | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(SCORES_LAST_GOOD_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    let payloadInput: unknown = parsed;
+    let scopeKey: string | null = null;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      "payload" in parsed
+    ) {
+      const record = parsed as { payload?: unknown; scopeKey?: unknown };
+      payloadInput = record.payload;
+      if (typeof record.scopeKey === "string" && record.scopeKey.trim()) {
+        scopeKey = record.scopeKey.trim();
+      }
+    }
+    const payload = normalizeScoredResponse(payloadInput);
+    if (!payload) return null;
+    return { payload, scopeKey: scopeKey ?? buildScoresScopeKey(payload.mode, "", null) };
+  } catch {
+    return null;
+  }
+}
+
+function persistStoredLastGoodPayload(payload: ScoredResponse, scopeKey: string): void {
+  if (typeof window === "undefined") return;
+  if (!Array.isArray(payload.funds) || payload.funds.length === 0) return;
+  try {
+    window.sessionStorage.setItem(
+      SCORES_LAST_GOOD_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        scopeKey,
+        payload,
+      })
+    );
+  } catch {
+    // sessionStorage quota / privacy mode vb. durumlarda sessiz geç.
+  }
 }
 
 interface ScoredFundsTableProps {
@@ -83,17 +242,57 @@ export default function ScoredFundsTable({
   referenceUniverseTotal = null,
 }: ScoredFundsTableProps) {
   const seededInitialData = normalizeScoredResponse(initialData);
+  const seededInitialDataLooksPartial = Boolean(
+    seededInitialData && seededInitialData.funds.length > 0 && seededInitialData.total > seededInitialData.funds.length
+  );
   const seededCategories = normalizeCategoryOptions(initialCategories);
+  const initialScopeKey = buildScoresScopeKey(
+    initialMode,
+    enableCategoryFilter ? initialCategory : "",
+    initialTheme
+  );
   const [rankingMode, setRankingMode] = useState<RankingMode>(initialMode);
   const [modePayloads, setModePayloads] = useState<Partial<Record<RankingMode, ScoredResponse>>>(() =>
     seededInitialData ? { [initialMode]: seededInitialData } : {}
   );
+  const [modePayloadScopes, setModePayloadScopes] = useState<Partial<Record<RankingMode, string>>>(() =>
+    seededInitialData ? { [initialMode]: initialScopeKey } : {}
+  );
   const modePayloadsRef = useRef(modePayloads);
   modePayloadsRef.current = modePayloads;
+  const modePayloadScopesRef = useRef(modePayloadScopes);
+  modePayloadScopesRef.current = modePayloadScopes;
 
   const hasInitialForCurrentMode = Boolean(seededInitialData && rankingMode === initialMode);
   const [loading, setLoading] = useState(!hasInitialForCurrentMode);
   const [error, setError] = useState<string | null>(null);
+  const [degradedNotice, setDegradedNotice] = useState<string | null>(null);
+  const [lastGoodPayload, setLastGoodPayload] = useState<ScoredResponse | null>(() => {
+    if (seededInitialData && seededInitialData.funds.length > 0) return seededInitialData;
+    return null;
+  });
+  const [lastGoodScopeKey, setLastGoodScopeKey] = useState<string | null>(() => {
+    if (seededInitialData && seededInitialData.funds.length > 0) return initialScopeKey;
+    return null;
+  });
+  const [storageHydrated, setStorageHydrated] = useState(false);
+  const [bootstrapFallbackActive, setBootstrapFallbackActive] = useState(false);
+  const [bootstrapRetryTick, setBootstrapRetryTick] = useState(0);
+  const firstRowsProbeRef = useRef<{ mode: RankingMode; startedAt: number; logged: boolean } | null>(null);
+  const initialScopeRefreshDoneRef = useRef(false);
+  const [lastScoresMeta, setLastScoresMeta] = useState<{
+    degraded: string;
+    source: string;
+    emptyResult: string;
+  }>({
+    degraded: "",
+    source: "",
+    emptyResult: "",
+  });
+  const [bootstrapSource, setBootstrapSource] = useState<BootstrapSource>(() => {
+    if (seededInitialData && seededInitialData.funds.length > 0) return "ssr";
+    return "bootstrap_fallback";
+  });
   const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState<SortField>(DEFAULT_SORT_FIELD);
   const [sortDir, setSortDir] = useState<SortDir>(DEFAULT_SORT_DIR);
@@ -106,7 +305,19 @@ export default function ScoredFundsTable({
   const prevRankingModeRef = useRef<RankingMode | null>(null);
   const deferredSearch = useDeferredValue(search.trim());
   const pageSize = 50;
+  const currentFetchScopeKey = buildScoresScopeKey(
+    rankingMode,
+    enableCategoryFilter ? category : "",
+    activeTheme
+  );
+  const payloadScopeKeyForCurrentMode = modePayloadScopes[rankingMode] ?? null;
   const payloadForCurrentMode = modePayloads[rankingMode] ?? null;
+  const payloadForCurrentScope =
+    payloadForCurrentMode && payloadScopeKeyForCurrentMode === currentFetchScopeKey
+      ? payloadForCurrentMode
+      : null;
+  const lastGoodMatchesScope = lastGoodScopeKey != null && lastGoodScopeKey === currentFetchScopeKey;
+  const displayPayload = payloadForCurrentScope ?? (lastGoodMatchesScope ? lastGoodPayload : null);
 
   useEffect(() => {
     setRankingMode(initialMode);
@@ -124,7 +335,19 @@ export default function ScoredFundsTable({
     const seeded = normalizeScoredResponse(initialData);
     if (!seeded) return;
     setModePayloads((prev) => ({ ...prev, [initialMode]: seeded }));
-  }, [initialData, initialMode]);
+    setModePayloadScopes((prev) => ({ ...prev, [initialMode]: initialScopeKey }));
+    setLastGoodPayload(seeded);
+    setLastGoodScopeKey(initialScopeKey);
+    if (seeded.funds.length > 0) persistStoredLastGoodPayload(seeded, initialScopeKey);
+  }, [initialData, initialMode, initialScopeKey]);
+
+  useEffect(() => {
+    if (!bootstrapFallbackActive) return;
+    const timer = window.setTimeout(() => {
+      setBootstrapRetryTick((value) => value + 1);
+    }, SCORES_BOOTSTRAP_RETRY_MS);
+    return () => window.clearTimeout(timer);
+  }, [bootstrapFallbackActive]);
 
   useEffect(() => {
     if (seededCategories.length > 0) return;
@@ -132,6 +355,23 @@ export default function ScoredFundsTable({
       .then(setCategories)
       .catch(console.error);
   }, [seededCategories.length]);
+
+  useEffect(() => {
+    if (storageHydrated) return;
+    if (!lastGoodPayload || lastGoodPayload.funds.length === 0) {
+      const stored = readStoredLastGoodPayload();
+      if (stored?.payload && stored.payload.funds.length > 0) {
+        setLastGoodPayload(stored.payload);
+        setLastGoodScopeKey(stored.scopeKey);
+      }
+    }
+    setStorageHydrated(true);
+  }, [lastGoodPayload, storageHydrated]);
+
+  useEffect(() => {
+    if (!seededInitialData || seededInitialData.funds.length === 0) return;
+    persistStoredLastGoodPayload(seededInitialData, initialScopeKey);
+  }, [initialScopeKey, seededInitialData]);
 
   const syncUrlState = useCallback((next: {
     mode?: RankingMode;
@@ -142,6 +382,7 @@ export default function ScoredFundsTable({
   }) => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
+    const before = `${url.pathname}${url.search}${url.hash}`;
     const mode = next.mode ?? rankingMode;
     const intent = next.intent !== undefined ? next.intent : activeIntent;
     const theme = next.theme !== undefined ? next.theme : activeTheme;
@@ -171,7 +412,10 @@ export default function ScoredFundsTable({
       url.searchParams.delete("query");
     }
 
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    const after = `${url.pathname}${url.search}${url.hash}`;
+    if (after !== before) {
+      window.history.replaceState({}, "", after);
+    }
   }, [activeIntent, activeTheme, category, rankingMode, search]);
 
   useEffect(() => {
@@ -219,39 +463,309 @@ export default function ScoredFundsTable({
   ]);
 
   useEffect(() => {
+    if (!storageHydrated) return;
     const cached = modePayloadsRef.current[rankingMode];
+    const cachedScope = modePayloadScopesRef.current[rankingMode] ?? null;
+    const cachedMatchesScope = Boolean(cached && cachedScope === currentFetchScopeKey);
     const needsInitialRefresh =
-      initialDataIsPartial && rankingMode === initialMode && cached === seededInitialData;
-    if (cached && !needsInitialRefresh) {
+      (initialDataIsPartial || seededInitialDataLooksPartial) &&
+      rankingMode === initialMode &&
+      cached === seededInitialData &&
+      currentFetchScopeKey === initialScopeKey &&
+      cachedMatchesScope;
+    const needsInitialScopeRefresh =
+      !initialScopeRefreshDoneRef.current &&
+      rankingMode === initialMode &&
+      currentFetchScopeKey === initialScopeKey &&
+      cachedMatchesScope;
+    if (cachedMatchesScope && !needsInitialRefresh && !needsInitialScopeRefresh) {
       setLoading(false);
       setError(null);
       return;
     }
     const controller = new AbortController();
-    if (!cached) setLoading(true);
+    if (!cachedMatchesScope) setLoading(true);
     setError(null);
+    setBootstrapFallbackActive(false);
+    setDegradedNotice(null);
+    const timeoutMs = scoresFetchTimeoutForMode(rankingMode);
+    // Tema / kategori süzgeci istemcide uygulanıyorsa dar limit üst sıradaki fonlarda kalır → yanlış boş liste.
+    const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category));
+    const modeLimitParam =
+      rankingMode === "HIGH_RETURN" && !needsWideScoresPayload ? "&limit=300" : "";
+    const categoryParam =
+      enableCategoryFilter && category.trim()
+        ? `&category=${encodeURIComponent(category.trim())}`
+        : "";
+    const themeParam = activeTheme ? `&theme=${encodeURIComponent(activeTheme)}` : "";
+    const requestUrl = `/api/funds/scores?mode=${rankingMode}${categoryParam}${themeParam}${modeLimitParam}`;
+    const startedAt = Date.now();
+    const previousRowsBeforeFetch = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
+    const fallbackRowsBeforeFetch = lastGoodPayload?.funds.length ?? 0;
+    const bootstrapWithoutRows = previousRowsBeforeFetch === 0 && fallbackRowsBeforeFetch === 0;
+    if (bootstrapWithoutRows) {
+      firstRowsProbeRef.current = { mode: rankingMode, startedAt, logged: false };
+    }
+    const markFirstRowsVisible = (source: "scores" | "core_rows_fallback", rows: number): void => {
+      if (rows <= 0) return;
+      const probe = firstRowsProbeRef.current;
+      if (!probe || probe.logged || probe.mode !== rankingMode) return;
+      probe.logged = true;
+      const elapsed = Date.now() - probe.startedAt;
+      console.info(
+        `[funds_table_first_rows_ms] mode=${rankingMode} source=${source} ms=${elapsed} rows=${rows}`
+      );
+    };
+    console.info(
+      `[scores-table] transition_requested mode=${rankingMode} category=${category || "all"} q=${search.trim() ? "1" : "0"} ` +
+        `intent=${activeIntent ?? "none"} theme=${activeTheme ?? "none"} timeout_ms=${timeoutMs} url=${requestUrl}`
+    );
+    console.info(
+      `[discover-filter-input] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
+        `intent=${activeIntent ?? "none"} q=${search.trim() ? "1" : "0"} server_url=${requestUrl}`
+    );
 
-    fetchNormalizedJson(
-      `/api/funds/scores?mode=${rankingMode}`,
+    let scoresResolved = false;
+    if (bootstrapWithoutRows) {
+      const coreRowsUrl = `/api/funds?page=1&pageSize=${SCORES_CORE_ROWS_FALLBACK_PAGE_SIZE}&sort=portfolioSize:desc&light=1`;
+      void fetchNormalizedJsonWithMeta(
+        coreRowsUrl,
+        "Fon Liste API",
+        normalizeFundListResponse,
+        { signal: controller.signal },
+        SCORES_CORE_ROWS_FALLBACK_TIMEOUT_MS
+      )
+        .then(({ data }) => {
+          if (controller.signal.aborted || scoresResolved) return;
+          if (!data || !Array.isArray(data.items) || data.items.length === 0) return;
+          const corePayload = mapFundsPayloadToScoredResponse(rankingMode, data);
+          setModePayloads((previous) => {
+            const existing = previous[rankingMode];
+            const existingScope = modePayloadScopesRef.current[rankingMode] ?? null;
+            if (existing && existing.funds.length > 0 && existingScope === currentFetchScopeKey) return previous;
+            return { ...previous, [rankingMode]: corePayload };
+          });
+          setModePayloadScopes((previous) => ({ ...previous, [rankingMode]: currentFetchScopeKey }));
+          setLastGoodPayload((previous) => {
+            if (previous && previous.funds.length > 0 && lastGoodScopeKey === currentFetchScopeKey) return previous;
+            return corePayload;
+          });
+          setLastGoodScopeKey(currentFetchScopeKey);
+          persistStoredLastGoodPayload(corePayload, currentFetchScopeKey);
+          setBootstrapFallbackActive(false);
+          setBootstrapSource("bootstrap_fallback");
+          setDegradedNotice("Skorlar hazırlanıyor. Temel fon listesi gösteriliyor.");
+          setLoading(false);
+          console.info(
+            `[funds_table_core_loaded] mode=${rankingMode} rows=${corePayload.funds.length} source=api_funds`
+          );
+          markFirstRowsVisible("core_rows_fallback", corePayload.funds.length);
+        })
+        .catch((coreError) => {
+          if (controller.signal.aborted) return;
+          console.warn(
+            `[funds_table_core_loaded] mode=${rankingMode} rows=0 source=api_funds error=1 message=${
+              coreError instanceof Error ? coreError.message : "unknown"
+            }`
+          );
+        });
+    }
+
+    fetchNormalizedJsonWithMeta(
+      requestUrl,
       "Fon API",
       normalizeScoredResponse,
-      { signal: controller.signal }
+      { signal: controller.signal },
+      timeoutMs
     )
-      .then((json) => {
-        setModePayloads((previous) => ({ ...previous, [rankingMode]: json }));
+      .then(({ data: json, headers, status, rawBytes }) => {
+        scoresResolved = true;
+        const previousRows = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
+        const fallbackRows = lastGoodPayload?.funds.length ?? 0;
+        const hadRows = previousRows > 0 || fallbackRows > 0;
+        const fundsCount = json.funds.length;
+        const degradedHeader = headerValue(headers, "x-scores-degraded");
+        const sourceHeader = headerValue(headers, "x-scores-source");
+        const emptyResultHeader = headerValue(headers, "x-scores-empty-result");
+        const discoverServerCount = headerValue(headers, "x-discover-server-result-count");
+        const discoverUniverseTotal = headerValue(headers, "x-discover-universe-total");
+        setLastScoresMeta({
+          degraded: degradedHeader,
+          source: sourceHeader,
+          emptyResult: emptyResultHeader,
+        });
+        const degradedEmpty = isDegradedEmptyResponse(headers, json);
+        const validBusinessEmpty = isValidBusinessEmptyResponse(headers, json);
+
+        let uiAction:
+          | "replace_rows"
+          | "keep_previous_rows"
+          | "keep_last_good_rows"
+          | "show_bootstrap_fallback"
+          | "show_valid_empty" = "replace_rows";
+        if (degradedEmpty && previousRows > 0) {
+          uiAction = "keep_previous_rows";
+          setDegradedNotice("Skor verisi geçici olarak alınamadı. Son başarılı tablo gösteriliyor.");
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=degraded_empty action=keep_previous_rows funds=${fundsCount} source=${
+              sourceHeader || "none"
+            } degraded=${degradedHeader || "none"}`
+          );
+        } else if (degradedEmpty && previousRows === 0 && fallbackRows > 0) {
+          uiAction = "keep_last_good_rows";
+          setDegradedNotice("Skor verisi geçici olarak alınamadı. Son başarılı liste korunuyor.");
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=degraded_empty action=keep_last_good_rows funds=${fundsCount} source=${
+              sourceHeader || "none"
+            } degraded=${degradedHeader || "none"}`
+          );
+        } else if (degradedEmpty) {
+          uiAction = "show_bootstrap_fallback";
+          setBootstrapFallbackActive(!hadRows);
+          setBootstrapSource("bootstrap_fallback");
+          setDegradedNotice("Skor verisi geçici olarak alınamadı. İlk liste yeniden deneniyor.");
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=degraded_empty action=show_bootstrap_fallback funds=${fundsCount} source=${
+              sourceHeader || "none"
+            } degraded=${degradedHeader || "none"}`
+          );
+        } else if (json.funds.length === 0 && !validBusinessEmpty) {
+          uiAction = "show_bootstrap_fallback";
+          setBootstrapFallbackActive(!hadRows);
+          setBootstrapSource("bootstrap_fallback");
+          setDegradedNotice("Skor verisi henüz hazır değil. İlk liste yeniden deneniyor.");
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=unknown_empty action=show_bootstrap_fallback funds=0 source=${
+              sourceHeader || "none"
+            } degraded=${degradedHeader || "none"}`
+          );
+        } else if (validBusinessEmpty && !hadRows) {
+          uiAction = "show_valid_empty";
+          setBootstrapSource("valid_empty");
+          setBootstrapFallbackActive(false);
+          setDegradedNotice(null);
+        } else {
+          if (json.funds.length > 0) {
+            setBootstrapSource("ssr");
+          }
+          setBootstrapFallbackActive(false);
+          setDegradedNotice(null);
+        }
+
+        if (uiAction === "replace_rows" || uiAction === "show_valid_empty") {
+          setModePayloads((previous) => ({ ...previous, [rankingMode]: json }));
+          setModePayloadScopes((previous) => ({ ...previous, [rankingMode]: currentFetchScopeKey }));
+          if (json.funds.length > 0) {
+            setLastGoodPayload(json);
+            setLastGoodScopeKey(currentFetchScopeKey);
+            persistStoredLastGoodPayload(json, currentFetchScopeKey);
+            setBootstrapSource("last_good");
+            markFirstRowsVisible("scores", json.funds.length);
+          }
+        }
+        setError(null);
+
+        const bootstrapSourceForLog: BootstrapSource =
+          previousRows > 0 ? "ssr" : fallbackRows > 0 ? "last_good" : uiAction === "show_valid_empty" ? "valid_empty" : "bootstrap_fallback";
+        const bootstrapAction =
+          previousRows > 0
+            ? "keep_ssr"
+            : fallbackRows > 0
+              ? "keep_last_good"
+              : uiAction === "show_valid_empty"
+                ? "show_valid_empty"
+                : uiAction === "show_bootstrap_fallback"
+                  ? "show_bootstrap_fallback"
+                  : "keep_ssr";
+        console.info(
+          `[scores-table] transition_response mode=${rankingMode} status=${status} funds=${fundsCount} ` +
+            `degraded=${degradedHeader || "0"} source=${sourceHeader || "none"} empty_result=${emptyResultHeader || "none"} ` +
+            `action=${uiAction} prev_rows=${previousRows} fallback_rows=${fallbackRows} payload_bytes=${rawBytes} ` +
+            `bootstrap_source=${bootstrapSourceForLog} bootstrap_action=${bootstrapAction} ` +
+            `discover_server_count=${discoverServerCount || "unknown"} discover_universe_total=${discoverUniverseTotal || "unknown"} ` +
+            `ms=${Date.now() - startedAt}`
+        );
       })
       .catch((cause) => {
         if (cause instanceof DOMException && cause.name === "AbortError") return;
+        scoresResolved = true;
+        const previousRows = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
+        const fallbackRows = lastGoodPayload?.funds.length ?? 0;
+        const timeoutLike = isTimeoutLikeClientError(cause);
+        const keepRows = previousRows > 0 || fallbackRows > 0;
+        if (timeoutLike && keepRows) {
+          setError(null);
+          setBootstrapFallbackActive(false);
+          setDegradedNotice("Skor verisi gecikti. Son başarılı tablo korunuyor.");
+          console.warn(
+            `[scores-table] transition_timeout_keep_previous mode=${rankingMode} prev_rows=${previousRows} fallback_rows=${fallbackRows} timeout_ms=${timeoutMs}`
+          );
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=client_timeout_keep_rows action=keep_previous_rows timeout_ms=${timeoutMs}`
+          );
+          return;
+        }
+        if (timeoutLike && !keepRows) {
+          setError(null);
+          setBootstrapFallbackActive(true);
+          setBootstrapSource("bootstrap_fallback");
+          setDegradedNotice("İlk liste gecikti. Geçici bekleme ekranı gösteriliyor, yeniden deneniyor.");
+          console.warn(
+            `[scores-table] bootstrap_timeout mode=${rankingMode} prev_rows=${previousRows} fallback_rows=${fallbackRows} timeout_ms=${timeoutMs} ` +
+              `bootstrap_source=bootstrap_fallback bootstrap_action=show_bootstrap_fallback`
+          );
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=client_timeout_no_rows action=show_bootstrap_fallback timeout_ms=${timeoutMs}`
+          );
+          return;
+        }
+        if (!keepRows) {
+          setError(null);
+          setBootstrapFallbackActive(true);
+          setBootstrapSource("bootstrap_fallback");
+          setDegradedNotice("İlk liste geçici olarak alınamadı. Otomatik yeniden deniyoruz.");
+          console.warn(
+            `[scores-table] bootstrap_error mode=${rankingMode} prev_rows=${previousRows} fallback_rows=${fallbackRows} ` +
+              `bootstrap_source=bootstrap_fallback bootstrap_action=show_bootstrap_fallback`
+          );
+          return;
+        }
+        setBootstrapFallbackActive(false);
         setError(cause instanceof Error ? cause.message : "Veri yüklenemedi");
+        console.error(
+          `[scores-table] transition_failed mode=${rankingMode} category=${category || "all"} q=${search.trim() ? "1" : "0"} ` +
+            `timeout_like=${timeoutLike ? 1 : 0} prev_rows=${previousRows} fallback_rows=${fallbackRows}`,
+          cause
+        );
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          if (needsInitialScopeRefresh) initialScopeRefreshDoneRef.current = true;
+          setLoading(false);
+        }
       });
 
     return () => {
       controller.abort();
     };
-  }, [initialDataIsPartial, initialMode, rankingMode, seededInitialData]);
+  }, [
+    activeIntent,
+    activeTheme,
+    bootstrapRetryTick,
+    category,
+    currentFetchScopeKey,
+    enableCategoryFilter,
+    initialDataIsPartial,
+    initialMode,
+    initialScopeKey,
+    lastGoodScopeKey,
+    lastGoodPayload,
+    rankingMode,
+    search,
+    seededInitialData,
+    seededInitialDataLooksPartial,
+    storageHydrated,
+  ]);
 
   useEffect(() => {
     if (prevRankingModeRef.current === null) {
@@ -266,6 +780,26 @@ export default function ScoredFundsTable({
     }
     setPage(1);
   }, [activeIntent, rankingMode]);
+
+  useEffect(() => {
+    console.info(
+      `[scores-table] filter_state mode=${rankingMode} category=${category || "all"} q=${search.trim() ? "1" : "0"} ` +
+        `intent=${activeIntent ?? "none"} theme=${activeTheme ?? "none"} rows=${displayPayload?.funds.length ?? 0} ` +
+        `mode_rows=${payloadForCurrentScope?.funds.length ?? 0} fallback_rows=${
+          lastGoodMatchesScope ? lastGoodPayload?.funds.length ?? 0 : 0
+        } scope_match=${payloadForCurrentScope ? 1 : 0}`
+    );
+  }, [
+    activeIntent,
+    activeTheme,
+    category,
+    displayPayload?.funds.length,
+    lastGoodMatchesScope,
+    lastGoodPayload?.funds.length,
+    payloadForCurrentScope?.funds.length,
+    rankingMode,
+    search,
+  ]);
 
   const handleRankingModeChange = (next: RankingMode) => {
     setRankingMode(next);
@@ -294,11 +828,27 @@ export default function ScoredFundsTable({
     setSortDir("desc");
   };
 
+  const serverScopedByTheme = Boolean(
+    activeTheme &&
+      payloadForCurrentScope &&
+      payloadScopeKeyForCurrentMode === currentFetchScopeKey
+  );
+
   const themeScopedFunds = useMemo(() => {
-    const funds = payloadForCurrentMode?.funds ?? [];
-    if (!activeTheme) return funds;
+    const funds = displayPayload?.funds ?? [];
+    // Sunucu /api/funds/scores?theme=... ile daralttıysa istemcide ikinci kez daraltma false-empty üretebilir.
+    if (!activeTheme || serverScopedByTheme) return funds;
     return funds.filter((fund) => fundMatchesTheme(fund, activeTheme));
-  }, [activeTheme, payloadForCurrentMode]);
+  }, [activeTheme, displayPayload, serverScopedByTheme]);
+
+  /** Keşif modunda URL/şerit ile uyumlu satır sayısı (arama metni hariç). */
+  const routeScopedMatchCount = useMemo(() => {
+    let list = themeScopedFunds;
+    if (enableCategoryFilter && category) {
+      list = list.filter((fund) => fund.category?.code === category);
+    }
+    return list.length;
+  }, [category, enableCategoryFilter, themeScopedFunds]);
 
   const availableCategories = useMemo(() => {
     if (!enableCategoryFilter) return [];
@@ -329,10 +879,23 @@ export default function ScoredFundsTable({
     syncUrlState({ category: "" });
   }, [availableCategories, categories.length, category, enableCategoryFilter, syncUrlState]);
 
+  const serverScopedByCategory = Boolean(
+    enableCategoryFilter &&
+      category &&
+      payloadForCurrentScope &&
+      payloadScopeKeyForCurrentMode === currentFetchScopeKey
+  );
+
   const filteredFunds = useMemo(() => {
     const query = deferredSearch.toLocaleLowerCase("tr-TR");
     const list = themeScopedFunds.filter((fund) => {
-      if (enableCategoryFilter && category && fund.category?.code !== category) return false;
+      if (
+        enableCategoryFilter &&
+        category &&
+        !serverScopedByCategory &&
+        fund.category?.code !== category
+      )
+        return false;
       if (!query) return true;
       return fund.code.toLocaleLowerCase("tr-TR").includes(query) || fund.name.toLocaleLowerCase("tr-TR").includes(query);
     });
@@ -383,11 +946,113 @@ export default function ScoredFundsTable({
 
       return sortDir === "desc" ? bVal - aVal : aVal - bVal;
     });
-  }, [category, deferredSearch, enableCategoryFilter, sortDir, sortField, themeScopedFunds]);
+  }, [
+    category,
+    deferredSearch,
+    enableCategoryFilter,
+    serverScopedByCategory,
+    sortDir,
+    sortField,
+    themeScopedFunds,
+  ]);
 
   const totalPages = Math.max(1, Math.ceil(filteredFunds.length / pageSize));
   const paginatedFunds = filteredFunds.slice((page - 1) * pageSize, page * pageSize);
   const hasFilters = Boolean(search || (enableCategoryFilter && category) || activeIntent || activeTheme);
+  useEffect(() => {
+    console.info(
+      `[discover-client-filter] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
+        `server_rows=${displayPayload?.funds.length ?? 0} theme_scoped_rows=${themeScopedFunds.length} ` +
+        `route_scoped_rows=${routeScopedMatchCount} client_filtered_count=${filteredFunds.length} q=${deferredSearch ? "1" : "0"}`
+    );
+  }, [
+    activeTheme,
+    category,
+    deferredSearch,
+    displayPayload?.funds.length,
+    filteredFunds.length,
+    rankingMode,
+    routeScopedMatchCount,
+    themeScopedFunds.length,
+  ]);
+  useEffect(() => {
+    console.info(
+      `[discover-visible-rows] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
+        `visible_rows=${paginatedFunds.length} filtered_total=${filteredFunds.length} page=${page}/${totalPages} ` +
+        `universe_total=${referenceUniverseTotal ?? displayPayload?.total ?? filteredFunds.length}`
+    );
+  }, [
+    activeTheme,
+    category,
+    displayPayload?.total,
+    filteredFunds.length,
+    page,
+    paginatedFunds.length,
+    rankingMode,
+    referenceUniverseTotal,
+    totalPages,
+  ]);
+  const lastEmptyReasonRef = useRef<string>("");
+  useEffect(() => {
+    if (loading || bootstrapFallbackActive || paginatedFunds.length > 0) return;
+    let reason = "none";
+    if (error) reason = "error";
+    else if (lastScoresMeta.emptyResult === "degraded" || Boolean(lastScoresMeta.degraded)) reason = "degraded_empty";
+    else if (lastScoresMeta.emptyResult === "valid") reason = "valid_empty";
+    else if (hasFilters) reason = "filtered_empty";
+    else reason = "unknown_empty";
+    const logKey = `${reason}|${rankingMode}|${category || "all"}|${deferredSearch ? "1" : "0"}`;
+    if (lastEmptyReasonRef.current === logKey) return;
+    lastEmptyReasonRef.current = logKey;
+    console.info(
+      `[funds_table_empty_reason] mode=${rankingMode} reason=${reason} filters=${hasFilters ? 1 : 0} ` +
+        `empty_result=${lastScoresMeta.emptyResult || "none"} source=${lastScoresMeta.source || "none"} degraded=${
+          lastScoresMeta.degraded || "none"
+        }`
+    );
+  }, [
+    bootstrapFallbackActive,
+    category,
+    deferredSearch,
+    error,
+    hasFilters,
+    lastScoresMeta.degraded,
+    lastScoresMeta.emptyResult,
+    lastScoresMeta.source,
+    loading,
+    paginatedFunds.length,
+    rankingMode,
+  ]);
+  useEffect(() => {
+    if (paginatedFunds.length === 0) return;
+    console.info(
+      `[funds_table_core_loaded] mode=${rankingMode} loaded=1 rows=${paginatedFunds.length} loading=${loading ? 1 : 0}`
+    );
+  }, [loading, paginatedFunds.length, rankingMode]);
+  useEffect(() => {
+    const homepageRowsSource = (() => {
+      if (payloadForCurrentMode && payloadForCurrentMode.funds.length > 0) {
+        if (rankingMode === initialMode && seededInitialData && payloadForCurrentMode === seededInitialData) return "ssr";
+        if (lastScoresMeta.source) return `scores_${lastScoresMeta.source}`;
+        return "scores";
+      }
+      if (lastGoodPayload && lastGoodPayload.funds.length > 0) return "last_good";
+      if (bootstrapFallbackActive) return "bootstrap_fallback";
+      return "none";
+    })();
+    console.info(
+      `[homepage_rows] mode=${rankingMode} homepage_rows_source=${homepageRowsSource} homepage_rows_count=${paginatedFunds.length}`
+    );
+  }, [
+    bootstrapFallbackActive,
+    initialMode,
+    lastGoodPayload,
+    lastScoresMeta.source,
+    paginatedFunds.length,
+    payloadForCurrentMode,
+    rankingMode,
+    seededInitialData,
+  ]);
   const activeIntentDef = useMemo(() => getFundIntent(activeIntent), [activeIntent]);
   const activeThemeDef = useMemo(() => getFundTheme(activeTheme), [activeTheme]);
   const activeCategoryLabel = useMemo(
@@ -473,43 +1138,50 @@ export default function ScoredFundsTable({
     if (!quickStartActive || !quickStartLabel) return null;
     const shown = filteredFunds.length;
     const shownStr = shown.toLocaleString("tr-TR");
-    const payload = payloadForCurrentMode;
-    const registeredTotal = referenceUniverseTotal ?? payload?.total ?? payload?.funds.length ?? shown;
+    const payload = displayPayload;
+    const scopedTotal =
+      payloadForCurrentScope?.total ??
+      payloadForCurrentScope?.funds.length ??
+      (payload ? payload.total ?? payload.funds.length : null);
+    const registeredTotal =
+      scopedTotal ?? (routeScopedMatchCount > 0 ? routeScopedMatchCount : referenceUniverseTotal ?? shown);
     const regStr = registeredTotal.toLocaleString("tr-TR");
     return { shownStr, contextLabel: quickStartLabel, universeStr: regStr };
   }, [
     filteredFunds.length,
-    payloadForCurrentMode,
+    displayPayload,
+    payloadForCurrentScope,
     quickStartActive,
     quickStartLabel,
     referenceUniverseTotal,
+    routeScopedMatchCount,
   ]);
 
   const resultCountCaption = useMemo(() => {
     const shown = filteredFunds.length;
-    const shownStr = shown.toLocaleString("tr-TR");
-    const payload = payloadForCurrentMode;
+    const payload = displayPayload;
     const loadedCount = payload?.funds.length ?? shown;
-    const registeredTotal = referenceUniverseTotal ?? payload?.total ?? loadedCount;
-    const regStr = registeredTotal.toLocaleString("tr-TR");
-    const fullUniverse = shown === registeredTotal;
-
+    const scopeTotal = payloadForCurrentScope?.total ?? payload?.total ?? loadedCount;
+    const registeredTotal = hasFilters ? scopeTotal : referenceUniverseTotal ?? scopeTotal;
     if (quickStartActive && quickStartLabel) {
       return null;
     }
-    if (hasFilters) {
+    const filteredHint = (() => {
+      if (!hasFilters) return null;
       const parts: string[] = [];
       if (deferredSearch) parts.push("arama");
       if (enableCategoryFilter && category) parts.push("kategori");
       if (activeIntentDef) parts.push("görünüm");
       if (activeThemeDef) parts.push("tema");
-      const hint = parts.length ? parts.join(", ") : "filtre";
-      if (fullUniverse) return `${shownStr} fon · ${hint}`;
-      return `${shownStr} fon · ${hint} (evren ${regStr})`;
-    }
-    if (fullUniverse) return `${shownStr} fon · tam evren`;
-    if (registeredTotal > shown || loadedCount < registeredTotal) return `${shownStr} / ${regStr} fon`;
-    return `${shownStr} fon listeleniyor`;
+      return parts.length ? parts.join(", ") : "filtre";
+    })();
+    return formatHomepageCountCaption({
+      shown,
+      registeredTotal,
+      loadedCount,
+      hasFilters,
+      filteredHint,
+    });
   }, [
     activeIntentDef,
     activeThemeDef,
@@ -518,7 +1190,8 @@ export default function ScoredFundsTable({
     enableCategoryFilter,
     filteredFunds.length,
     hasFilters,
-    payloadForCurrentMode,
+    displayPayload,
+    payloadForCurrentScope,
     quickStartActive,
     quickStartLabel,
     referenceUniverseTotal,
@@ -578,6 +1251,15 @@ export default function ScoredFundsTable({
                   aria-live="polite"
                 >
                   {resultCountCaption}
+                </span>
+              ) : null}
+              {!loading && !error && degradedNotice ? (
+                <span
+                  className="mt-0.5 block w-full text-[10.5px] font-medium leading-snug sm:text-[11px]"
+                  style={{ color: "var(--text-tertiary)" }}
+                  aria-live="polite"
+                >
+                  {degradedNotice}
                 </span>
               ) : null}
             </div>
@@ -813,7 +1495,7 @@ export default function ScoredFundsTable({
       </div>
 
       <div className="md:hidden space-y-1.5 px-3 py-1.5">
-        {loading ? (
+        {(loading || bootstrapFallbackActive) && paginatedFunds.length === 0 ? (
           [...Array(8)].map((_, i) => (
             <div key={i} className="mobile-fund-card mobile-fund-card--scan min-h-[4.5rem] animate-pulse">
               <div className="flex items-start gap-2.5 px-0 py-0">
@@ -826,7 +1508,7 @@ export default function ScoredFundsTable({
               </div>
             </div>
           ))
-        ) : error ? (
+        ) : error && paginatedFunds.length === 0 ? (
           <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
             {error}
           </p>
@@ -891,7 +1573,7 @@ export default function ScoredFundsTable({
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {(loading || bootstrapFallbackActive) && paginatedFunds.length === 0 ? (
               [...Array(10)].map((_, i) => (
                 <tr key={i} className="table-row">
                   <td colSpan={8} className="px-6 py-3">
@@ -899,7 +1581,7 @@ export default function ScoredFundsTable({
                   </td>
                 </tr>
               ))
-            ) : error ? (
+            ) : error && paginatedFunds.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
                   {error}
@@ -934,7 +1616,7 @@ export default function ScoredFundsTable({
               type="button"
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className="btn btn-secondary flex h-11 w-11 items-center justify-center rounded-lg p-0 disabled:opacity-40 md:h-9 md:w-9"
+              className="btn btn-secondary touch-manipulation flex h-11 w-11 items-center justify-center rounded-lg p-0 disabled:opacity-40 md:h-9 md:w-9"
             >
               <ChevronLeft className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
             </button>
@@ -945,7 +1627,7 @@ export default function ScoredFundsTable({
               type="button"
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className="btn btn-secondary flex h-11 w-11 items-center justify-center rounded-lg p-0 disabled:opacity-40 md:h-9 md:w-9"
+              className="btn btn-secondary touch-manipulation flex h-11 w-11 items-center justify-center rounded-lg p-0 disabled:opacity-40 md:h-9 md:w-9"
             >
               <ChevronRight className="h-4 w-4" style={{ color: "var(--text-secondary)" }} />
             </button>

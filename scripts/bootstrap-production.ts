@@ -3,6 +3,7 @@ import { prisma } from "../src/lib/prisma";
 import { refreshMacroSyncState, recoverStaleMacroSyncState, syncMacroSeriesRange } from "../src/lib/services/macro-series.service";
 import { rebuildFundDailySnapshots } from "../src/lib/services/fund-daily-snapshot.service";
 import { rebuildFundDerivedMetrics } from "../src/lib/services/fund-derived-metrics.service";
+import { rebuildFundDetailCoreServingCache } from "../src/lib/services/fund-detail-core-serving.service";
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import {
   backfillFundHistoryDays,
@@ -80,6 +81,7 @@ async function main() {
   await rebuildMarketSnapshot(snapshotDate);
   const serving = await rebuildFundDailySnapshots(snapshotDate);
   const derived = await rebuildFundDerivedMetrics();
+  const detailCore = await rebuildFundDetailCoreServingCache({ sourceDate: snapshotDate });
   const warm = skipWarm ? { written: 0, skipped: true } : await warmAllScoresApiCaches();
 
   await refreshFundHistorySyncState({
@@ -92,6 +94,7 @@ async function main() {
       returnsUpdatedFunds: returns.updatedFunds,
       servingWritten: serving.written,
       derivedWritten: derived.written,
+      detailCoreWritten: detailCore.written,
       warmWritten: "written" in warm ? warm.written : 0,
       completedAt: new Date().toISOString(),
     },
@@ -126,6 +129,7 @@ async function main() {
         returns,
         serving,
         derived,
+        detailCore,
         warm,
       },
       null,

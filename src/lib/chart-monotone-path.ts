@@ -6,6 +6,25 @@
 
 export type ChartPathPoint = { x: number; y: number };
 
+/** Aynı x üzerinde tekrarlayan noktalar monotone eğimi bozabilir; son y değeri tutulur. */
+export function dedupeChartPointsByX(points: ChartPathPoint[], eps = 1e-6): ChartPathPoint[] {
+  const out: ChartPathPoint[] = [];
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    if (out.length === 0) {
+      out.push({ x: p.x, y: p.y });
+      continue;
+    }
+    const last = out[out.length - 1]!;
+    if (Math.abs(p.x - last.x) <= eps) {
+      out[out.length - 1] = { x: last.x, y: p.y };
+    } else if (p.x > last.x + eps) {
+      out.push({ x: p.x, y: p.y });
+    }
+  }
+  return out;
+}
+
 function sign(x: number): number {
   return x < 0 ? -1 : 1;
 }
@@ -35,8 +54,24 @@ function appendBezier(
   t1: number
 ): void {
   const dx = (x1 - x0) / 3;
+  const c1x = x0 + dx;
+  const c1y = y0 + dx * t0;
+  const c2x = x1 - dx;
+  const c2y = y1 - dx * t1;
+  if (
+    !Number.isFinite(c1x) ||
+    !Number.isFinite(c1y) ||
+    !Number.isFinite(c2x) ||
+    !Number.isFinite(c2y) ||
+    !Number.isFinite(x1) ||
+    !Number.isFinite(y1)
+  ) {
+    // Monotone eğim üretimi NaN/Inf dönerse güvenli lineer segmente düş.
+    parts.push(`L ${x1.toFixed(2)} ${y1.toFixed(2)}`);
+    return;
+  }
   parts.push(
-    `C ${(x0 + dx).toFixed(2)} ${(y0 + dx * t0).toFixed(2)} ${(x1 - dx).toFixed(2)} ${(y1 - dx * t1).toFixed(2)} ${x1.toFixed(2)} ${y1.toFixed(2)}`
+    `C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${x1.toFixed(2)} ${y1.toFixed(2)}`
   );
 }
 
@@ -53,7 +88,7 @@ export function buildMonotoneClosedAreaPathD(points: ChartPathPoint[], bottomY: 
 
 export function buildMonotoneXPathD(points: ChartPathPoint[]): string | null {
   if (points.length < 2) return null;
-  const pts = points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  const pts = dedupeChartPointsByX(points.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
   if (pts.length < 2) return null;
 
   const parts: string[] = [];

@@ -25,7 +25,7 @@ export function MobileDetailAccordion({ title, hint, defaultOpen = false, childr
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-start justify-between gap-3 px-4 py-3.5 text-left"
+        className="flex min-h-[3.25rem] w-full items-start justify-between gap-3 px-4 py-3.5 text-left"
         aria-expanded={open}
       >
         <div className="min-w-0">
@@ -39,7 +39,7 @@ export function MobileDetailAccordion({ title, hint, defaultOpen = false, childr
           ) : null}
         </div>
         <span
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border"
           style={{
             borderColor: "color-mix(in srgb, var(--border-subtle) 86%, transparent)",
             background: "color-mix(in srgb, var(--card-bg) 95%, var(--bg-muted))",

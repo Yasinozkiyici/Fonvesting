@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl, readCompareDataVersion } from "@/lib/data-freshness";
-import { prisma } from "@/lib/prisma";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchKiyasMacroBuckets } from "@/lib/services/fund-detail-kiyas.service";
+import {
+  getFundDetailCoreServingCached,
+  getFundDetailCoreServingUniversePayloads,
+  type FundDetailCoreServingPayload,
+} from "@/lib/services/fund-detail-core-serving.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,6 +14,7 @@ export const runtime = "nodejs";
 const LOOKBACK_DAYS = 1125;
 const MAX_CODES = 3;
 const DAY_MS = 86_400_000;
+const MAX_REF_SNAPSHOT_LAG_DAYS = 1;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 
 type Point = { t: number; v: number };
@@ -53,88 +58,118 @@ function buildCategorySeries(rows: Array<{ date: Date; _avg: { dailyReturn: numb
   return out;
 }
 
+function pointsFromServingPayload(payload: FundDetailCoreServingPayload): Point[] {
+  const rows = payload.chartHistory?.points ?? [];
+  const map = new Map<number, number>();
+  for (const row of rows) {
+    if (!Number.isFinite(row?.t) || !Number.isFinite(row?.p) || row.p <= 0) continue;
+    map.set(normalizeHistoryDate(new Date(row.t)).getTime(), row.p);
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, v]) => ({ t, v }));
+}
+
+function buildCategorySeriesFromServingPayloads(
+  base: FundDetailCoreServingPayload,
+  universe: FundDetailCoreServingPayload[]
+): Point[] {
+  const categoryCode = base.fund.categoryCode;
+  if (!categoryCode) return [];
+  const baseCode = base.fund.code.trim().toUpperCase();
+  const byDate = new Map<number, { sum: number; count: number }>();
+  let contributors = 0;
+  for (const payload of universe) {
+    if (payload.fund.code.trim().toUpperCase() === baseCode) continue;
+    if (payload.fund.categoryCode !== categoryCode) continue;
+    const series = pointsFromServingPayload(payload);
+    if (series.length < 2) continue;
+    contributors += 1;
+    for (let index = 1; index < series.length; index += 1) {
+      const prev = series[index - 1]!;
+      const curr = series[index]!;
+      if (!(prev.v > 0)) continue;
+      const dailyReturnPct = ((curr.v - prev.v) / prev.v) * 100;
+      if (!Number.isFinite(dailyReturnPct)) continue;
+      const slot = byDate.get(curr.t) ?? { sum: 0, count: 0 };
+      slot.sum += dailyReturnPct;
+      slot.count += 1;
+      byDate.set(curr.t, slot);
+    }
+  }
+  if (contributors === 0 || byDate.size === 0) return [];
+  const sorted = [...byDate.entries()].sort((a, b) => a[0] - b[0]);
+  let index = 100;
+  const out: Point[] = [];
+  for (const [t, agg] of sorted) {
+    if (agg.count <= 0) continue;
+    index *= 1 + agg.sum / agg.count / 100;
+    out.push({ t, v: index });
+  }
+  return out;
+}
+
 async function getCompareSeriesPayload(baseCode: string, compareCodes: string[]) {
-  const baseFund = await prisma.fund.findFirst({
-    where: { code: baseCode },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      categoryId: true,
-      category: { select: { code: true } },
-    },
-  });
-  if (!baseFund) {
+  const baseRead = await getFundDetailCoreServingCached(baseCode, { preferFileOnly: true });
+  if (!baseRead.payload) {
     return { error: "base_not_found" as const };
   }
-
-  const selectedFunds = compareCodes.length
-    ? await prisma.fund.findMany({
-        where: {
-          isActive: true,
-          code: { in: compareCodes },
-        },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-        },
-      })
-    : [];
-  const byCode = new Map(selectedFunds.map((fund) => [fund.code.trim().toUpperCase(), fund]));
-  const orderedSelected = compareCodes.map((code) => byCode.get(code)).filter(Boolean) as typeof selectedFunds;
+  const baseFund = baseRead.payload;
+  const baseSnapshotMs = Date.parse(baseFund.latestSnapshotDate ?? "");
+  const selectedReads = await Promise.all(
+    compareCodes.map((code) => getFundDetailCoreServingCached(code, { preferFileOnly: true }))
+  );
+  const orderedSelected = selectedReads
+    .map((read) => read.payload)
+    .filter((payload): payload is FundDetailCoreServingPayload => payload != null)
+    .filter((payload) => {
+      if (!Number.isFinite(baseSnapshotMs)) return true;
+      const refMs = Date.parse(payload.latestSnapshotDate ?? "");
+      if (!Number.isFinite(refMs)) return false;
+      const lagDays = Math.floor((baseSnapshotMs - refMs) / DAY_MS);
+      const keep = lagDays <= MAX_REF_SNAPSHOT_LAG_DAYS;
+      if (!keep) {
+        console.info(
+          `[compare-series-stale-guard] base=${baseFund.fund.code} ref=${payload.fund.code} base_snapshot=${baseFund.latestSnapshotDate ?? "none"} ` +
+            `ref_snapshot=${payload.latestSnapshotDate ?? "none"} lag_days=${lagDays} decision=drop`
+        );
+      }
+      return keep;
+    });
 
   const anchor = startOfUtcDay(new Date());
-  const from = new Date(anchor.getTime() - LOOKBACK_DAYS * DAY_MS);
-  const fundIds = [baseFund.id, ...orderedSelected.map((fund) => fund.id)];
-
-  const [historyRows, macroByRef, categoryAggRows] = await Promise.all([
-    prisma.fundPriceHistory.findMany({
-      where: { fundId: { in: fundIds }, date: { gte: from, lte: anchor } },
-      orderBy: { date: "asc" },
-      select: { fundId: true, date: true, price: true },
-    }),
+  const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
+  const [macroByRef, servingUniverse] = await Promise.all([
     fetchKiyasMacroBuckets(anchor),
-    baseFund.category?.code
-      ? prisma.fundDailySnapshot.groupBy({
-          by: ["date"],
-          where: {
-            categoryCode: baseFund.category.code,
-            fundId: { not: baseFund.id },
-            date: { gte: from, lte: anchor },
-          },
-          _avg: { dailyReturn: true },
-          orderBy: { date: "asc" },
-        })
-      : Promise.resolve([]),
+    shouldBuildCategoryFromUniverse ? getFundDetailCoreServingUniversePayloads() : Promise.resolve(null),
   ]);
-
-  const historyByFund = new Map<string, Array<{ date: Date; price: number }>>();
-  for (const row of historyRows) {
-    const arr = historyByFund.get(row.fundId) ?? [];
-    arr.push({ date: row.date, price: row.price });
-    historyByFund.set(row.fundId, arr);
-  }
 
   const fundSeries = [
     {
-      key: `fund:${baseFund.code}`,
-      label: `${baseFund.code} (Fon)`,
-      code: baseFund.code,
-      series: dedupePriceRows(historyByFund.get(baseFund.id) ?? []),
+      key: `fund:${baseFund.fund.code}`,
+      label: `${baseFund.fund.code} (Fon)`,
+      code: baseFund.fund.code,
+      series: pointsFromServingPayload(baseFund),
     },
     ...orderedSelected.map((fund) => ({
-      key: `fund:${fund.code}`,
-      label: `${fund.code}`,
-      code: fund.code,
-      series: dedupePriceRows(historyByFund.get(fund.id) ?? []),
+      key: `fund:${fund.fund.code}`,
+      label: `${fund.fund.code}`,
+      code: fund.fund.code,
+      series: pointsFromServingPayload(fund),
     })),
   ];
+  console.info(
+    `[compare-series-stale-guard] base=${baseFund.fund.code} base_snapshot=${baseFund.latestSnapshotDate ?? "none"} ` +
+      `requested_refs=${compareCodes.length} accepted_refs=${Math.max(0, fundSeries.length - 1)} lag_threshold_days=${MAX_REF_SNAPSHOT_LAG_DAYS}`
+  );
 
   return {
     fundSeries,
     macroSeries: {
-      category: buildCategorySeries(categoryAggRows),
+      category:
+        shouldBuildCategoryFromUniverse && servingUniverse
+          ? buildCategorySeriesFromServingPayloads(baseFund, servingUniverse.records)
+          : [],
       bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
       usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
       eurtry: (macroByRef.eurtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),

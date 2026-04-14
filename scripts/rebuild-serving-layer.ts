@@ -2,6 +2,7 @@ import "./load-env";
 import { prisma } from "../src/lib/prisma";
 import { rebuildFundDailySnapshots } from "../src/lib/services/fund-daily-snapshot.service";
 import { rebuildFundDerivedMetrics } from "../src/lib/services/fund-derived-metrics.service";
+import { rebuildFundDetailCoreServingCache } from "../src/lib/services/fund-detail-core-serving.service";
 import { warmAllScoresApiCaches } from "../src/lib/services/fund-scores-cache.service";
 import { recomputeFundReturnsFromHistory, rebuildMarketSnapshot } from "../src/lib/services/tefas-sync.service";
 
@@ -29,6 +30,11 @@ async function main() {
 
   const derived = await rebuildFundDerivedMetrics();
   console.log(`[rebuild-serving] derived metrics written=${derived.written}`);
+
+  const detailCore = await rebuildFundDetailCoreServingCache({ sourceDate: snapshotDate });
+  console.log(
+    `[rebuild-serving] detail core serving written=${detailCore.written} scannedRows=${detailCore.scannedRows}`
+  );
 
   const warm = await warmAllScoresApiCaches();
   console.log(`[rebuild-serving] scores cache written=${warm.written}`);

@@ -8,6 +8,7 @@ import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.servic
 import { runTefasMetadataPass } from "@/lib/services/tefas-metadata.service";
 import { rebuildFundDailySnapshots } from "@/lib/services/fund-daily-snapshot.service";
 import { rebuildFundDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
+import { rebuildFundDetailCoreServingCache } from "@/lib/services/fund-detail-core-serving.service";
 import { warmAllScoresApiCaches } from "@/lib/services/fund-scores-cache.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchUsdTryEurTryLive } from "@/lib/services/exchange-rates.service";
@@ -636,6 +637,12 @@ export async function runTefasSync(options?: {
     await rebuildMarketSnapshot(sessionDayStart);
     await rebuildFundDailySnapshots(sessionDayStart);
     try {
+      const detailCore = await rebuildFundDetailCoreServingCache({ sourceDate: sessionDayStart });
+      console.log("[tefas-sync] fund detail core serving rebuilt:", detailCore);
+    } catch (e) {
+      console.error("[tefas-sync] fund detail core serving rebuild failed:", e);
+    }
+    try {
       const derived = await rebuildFundDerivedMetrics();
       console.log("[tefas-sync] fund derived metrics:", derived);
     } catch (e) {
@@ -726,6 +733,12 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
       await rebuildMarketSnapshot(snapshotDate);
       const snapshot = await rebuildFundDailySnapshots(snapshotDate);
       console.log("[tefas-sync] daily snapshot rebuilt:", snapshot);
+      try {
+        const detailCore = await rebuildFundDetailCoreServingCache({ sourceDate: snapshotDate });
+        console.log("[tefas-sync] fund detail core serving rebuilt:", detailCore);
+      } catch (e) {
+        console.error("[tefas-sync] fund detail core serving rebuild failed:", e);
+      }
     }
   } catch (e) {
     console.error("[tefas-sync] daily snapshot rebuild failed:", e);

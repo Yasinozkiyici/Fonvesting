@@ -48,6 +48,9 @@
     "download:fund-logos": "tsx scripts/download-fund-logos.ts",
     "warm:scores": "tsx scripts/warm-scores-cache.ts",
     "rebuild:derived": "tsx scripts/rebuild-derived-metrics.ts",
+    "rebuild:detail-core": "tsx scripts/rebuild-fund-detail-core-serving.ts",
+    "check:detail-core": "tsx scripts/check-fund-detail-core-serving.ts",
+    "audit:detail-serving-quality": "tsx scripts/audit-fund-detail-serving-quality.ts",
     "setup:venv": "python3 -m venv scripts/.venv && scripts/.venv/bin/pip install -r scripts/requirements.txt",
     "postinstall": "prisma generate"
   },

@@ -207,12 +207,12 @@ export async function computeScoresPayload(
   categoryKey: string,
   queryTrim = ""
 ): Promise<ScoresApiPayload> {
-  const derivedPayload = await getScoresPayloadFromDerivedMetrics(mode, categoryKey, queryTrim);
-  if (derivedPayload) return derivedPayload;
   const snapshotPayload = await getScoresPayloadFromDailySnapshot(mode, categoryKey);
   if (snapshotPayload) {
     return queryTrim ? filterScoresPayloadByQuery(snapshotPayload, queryTrim) : snapshotPayload;
   }
+  const derivedPayload = await getScoresPayloadFromDerivedMetrics(mode, categoryKey, queryTrim);
+  if (derivedPayload) return derivedPayload;
   const raw = await computeScoresPayloadFromRawData(mode, categoryKey);
   return queryTrim ? filterScoresPayloadByQuery(raw, queryTrim) : raw;
 }

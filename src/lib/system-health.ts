@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import dns from "node:dns/promises";
 import net from "node:net";
+import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { DAILY_JOB_SLA_MINUTES, getIstanbulWallClock, toIstanbulDateKey } from "@/lib/daily-sync-policy";
 import {
   areRuntimeTargetsIdentical,
@@ -8,10 +9,23 @@ import {
   type DbRuntimeTargetDiagnostics,
 } from "@/lib/db-runtime-diagnostics";
 import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
+import { getFundDetailCoreServingReadiness } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 
 export type SystemHealthStatus = "ok" | "degraded" | "error";
 export type SystemHealthIssueSeverity = "warning" | "error";
+type HealthDbPingSource =
+  | "query"
+  | "cache_hit"
+  | "cache_inflight"
+  | "query_failed"
+  | "cache_failed";
+
+const HEALTH_DB_PING_CACHE_TTL_MS = Number(process.env.HEALTH_DB_PING_CACHE_TTL_MS ?? "25000");
+const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_TTL_MS ?? "7000");
+const HEALTH_DB_PING_MAX_WAIT_MS = Number(process.env.HEALTH_DB_PING_MAX_WAIT_MS ?? "900");
+const HEALTH_DB_PING_TX_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_TX_TIMEOUT_MS ?? "1800");
+const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "1500");
 
 export interface SystemHealthIssue {
   code: string;
@@ -39,6 +53,9 @@ export interface SystemHealthSnapshot {
       identicalAcrossPaths: boolean;
       failureCategory: string | null;
       failureDetail: string | null;
+      queryFailureSummary: Record<string, number>;
+      pingSource: HealthDbPingSource;
+      pingMs: number | null;
     };
   };
   supabaseRest: {
@@ -50,6 +67,24 @@ export interface SystemHealthSnapshot {
     error: string | null;
     dnsMs: number | null;
     tcpMs: number | null;
+  };
+  serving: {
+    detailCore: {
+      filePath: string;
+      fileExists: boolean;
+      fileRecordCount: number;
+      fileMissReason: "file_missing" | "file_empty" | "file_parse_error" | null;
+      dbCacheCount: number | null;
+      dbMissReason: "cache_empty" | "build_failed" | null;
+      bootstrap: {
+        inFlight: boolean;
+        status: "idle" | "running" | "ok" | "failed";
+        lastStartedAt: string | null;
+        lastCompletedAt: string | null;
+        lastReason: string | null;
+        lastError: string | null;
+      };
+    };
   };
   counts: {
     funds: number;
@@ -92,32 +127,6 @@ export interface SystemHealthSnapshot {
   errors: string[];
 }
 
-function classifyDatabaseFailure(errorMessage: string): string {
-  const msg = errorMessage.toLowerCase();
-  if (msg.includes("timed out fetching a new connection") || msg.includes("unable to check out connection")) {
-    return "pool_exhausted";
-  }
-  if (msg.includes("connect_timeout") || msg.includes("timeout")) {
-    return "connect_timeout";
-  }
-  if (msg.includes("password authentication failed") || msg.includes("authentication failed")) {
-    return "auth_failed";
-  }
-  if (msg.includes("ssl") && (msg.includes("required") || msg.includes("handshake") || msg.includes("self signed"))) {
-    return "ssl_required_missing";
-  }
-  if (msg.includes("could not translate host name") || msg.includes("enotfound") || msg.includes("eai_again")) {
-    return "host_unreachable";
-  }
-  if (msg.includes("database") && msg.includes("does not exist")) {
-    return "wrong_database";
-  }
-  if (msg.includes("query engine") || msg.includes("invalid `prisma")) {
-    return "query_failed_after_connect";
-  }
-  return "connect_failed_unknown";
-}
-
 export interface SystemHealthJobSnapshot {
   syncType: string;
   status: string;
@@ -134,6 +143,140 @@ function isRelationMissingError(error: unknown): boolean {
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+type HealthPingResult = {
+  ok: boolean;
+  ms: number;
+  source: HealthDbPingSource;
+  failureCategory: string | null;
+  failureDetail: string | null;
+};
+
+type HealthPingState = {
+  cached: { at: number; result: HealthPingResult } | null;
+  inFlight: { promise: Promise<HealthPingResult>; startedAt: number } | null;
+};
+
+function getHealthPingState(): HealthPingState {
+  const g = global as unknown as { __healthDbPingState?: HealthPingState };
+  if (!g.__healthDbPingState) {
+    g.__healthDbPingState = { cached: null, inFlight: null };
+  }
+  return g.__healthDbPingState;
+}
+
+async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPingResult> {
+  const state = getHealthPingState();
+  const now = Date.now();
+  const cached = state.cached;
+  if (cached) {
+    const ttl = cached.result.ok
+      ? Math.max(5_000, HEALTH_DB_PING_CACHE_TTL_MS)
+      : Math.max(2_000, HEALTH_DB_PING_FAILURE_TTL_MS);
+    if (now - cached.at <= ttl) {
+      return {
+        ...cached.result,
+        source: cached.result.ok ? "cache_hit" : "cache_failed",
+      };
+    }
+  }
+
+  if (state.inFlight) {
+    const inflightElapsedMs = now - state.inFlight.startedAt;
+    const inflightBudgetMs = Math.max(250, HEALTH_DB_PING_SOFT_TIMEOUT_MS - inflightElapsedMs);
+    if (inflightBudgetMs <= 0) {
+      return {
+        ok: false,
+        ms: inflightElapsedMs,
+        source: "cache_failed",
+        failureCategory: "health_probe_soft_timeout",
+        failureDetail: `health_db_ping_inflight_timeout_${HEALTH_DB_PING_SOFT_TIMEOUT_MS}ms`,
+      };
+    }
+    const inflight = await Promise.race<HealthPingResult>([
+      state.inFlight.promise,
+      new Promise<HealthPingResult>((resolve) => {
+        setTimeout(() => {
+          resolve({
+            ok: false,
+            ms: inflightElapsedMs + inflightBudgetMs,
+            source: "cache_failed",
+            failureCategory: "health_probe_soft_timeout",
+            failureDetail: `health_db_ping_inflight_timeout_${HEALTH_DB_PING_SOFT_TIMEOUT_MS}ms`,
+          });
+        }, inflightBudgetMs);
+      }),
+    ]);
+    return {
+      ...inflight,
+      source: inflight.ok ? "cache_inflight" : "cache_failed",
+    };
+  }
+
+  const probeStartedAt = Date.now();
+  const task = (async (): Promise<HealthPingResult> => {
+    const startedAt = probeStartedAt;
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1`;
+        },
+        {
+          maxWait: Math.max(250, HEALTH_DB_PING_MAX_WAIT_MS),
+          timeout: Math.max(500, HEALTH_DB_PING_TX_TIMEOUT_MS),
+        }
+      );
+      return {
+        ok: true,
+        ms: Date.now() - startedAt,
+        source: "query",
+        failureCategory: null,
+        failureDetail: null,
+      };
+    } catch (error) {
+      const classified = classifyDatabaseError(error);
+      return {
+        ok: false,
+        ms: Date.now() - startedAt,
+        source: "query_failed",
+        failureCategory: classified.category,
+        failureDetail: formatError(error),
+      };
+    }
+  })();
+
+  const inFlightState = { promise: task, startedAt: now };
+  state.inFlight = inFlightState;
+  task
+    .then((result) => {
+      state.cached = { at: Date.now(), result };
+    })
+    .finally(() => {
+      if (state.inFlight === inFlightState || !lightweight) {
+        state.inFlight = null;
+      }
+    });
+
+  const softBudgetMs = Math.max(300, HEALTH_DB_PING_SOFT_TIMEOUT_MS);
+  const result = await Promise.race<HealthPingResult>([
+    task,
+    new Promise<HealthPingResult>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          ok: false,
+          ms: Date.now() - probeStartedAt,
+          source: "query_failed",
+          failureCategory: "health_probe_soft_timeout",
+          failureDetail: `health_db_ping_soft_timeout_${softBudgetMs}ms`,
+        });
+      }, softBudgetMs);
+    }),
+  ]);
+  if (result.failureCategory === "health_probe_soft_timeout") {
+    state.cached = { at: Date.now(), result };
+  }
+  return result;
 }
 
 function redactDatabaseUrl(urlStr: string): string {
@@ -226,20 +369,25 @@ async function safeQuery<T>(label: string, fallback: T, query: () => Promise<T>)
   try {
     return { value: await query(), error: null };
   } catch (error) {
+    const classified = classifyDatabaseError(error);
     if (isRelationMissingError(error)) {
-      return { value: fallback, error: `${label}: relation_missing` };
+      return { value: fallback, error: `${label}: relation_missing [class=${classified.category}]` };
     }
-    return { value: fallback, error: `${label}: ${formatError(error)}` };
+    return { value: fallback, error: `${label}: ${formatError(error)} [class=${classified.category}]` };
   }
 }
 
-export async function getSystemHealthSnapshot(options?: { includeExternalProbes?: boolean }): Promise<SystemHealthSnapshot> {
+export async function getSystemHealthSnapshot(options?: {
+  includeExternalProbes?: boolean;
+  lightweight?: boolean;
+}): Promise<SystemHealthSnapshot> {
   const checkedAt = new Date().toISOString();
   const rawDbUrl = (process.env.DATABASE_URL ?? "").trim();
   const isProduction = process.env.NODE_ENV === "production";
   const errors: string[] = [];
   const issues: SystemHealthIssue[] = [];
   const includeExternalProbes = options?.includeExternalProbes === true;
+  const lightweight = options?.lightweight === true;
   const runtimeTargets = [
     getDbRuntimeTargetDiagnostics("homepage"),
     getDbRuntimeTargetDiagnostics("health"),
@@ -323,24 +471,44 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
     }
   }
 
-  // Health endpoint spam'ini azalt: kısa süre içinde aynı process'te tekrar ping atma.
-  const globalForHealth = global as unknown as {
-    __healthPing?: { at: number; ok: boolean };
+  let detailCoreServingReadiness: SystemHealthSnapshot["serving"]["detailCore"] = {
+    filePath: ".cache/fund-detail-core-serving.v1.json",
+    fileExists: false,
+    fileRecordCount: 0,
+    fileMissReason: "file_missing",
+    dbCacheCount: null,
+    dbMissReason: null,
+    bootstrap: {
+      inFlight: false,
+      status: "idle",
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastReason: null,
+      lastError: null,
+    },
   };
-  const cachedPing = globalForHealth.__healthPing;
+  if (!lightweight) {
+    try {
+      detailCoreServingReadiness = await getFundDetailCoreServingReadiness({
+        includeDbCacheCount: true,
+      });
+    } catch (error) {
+      errors.push(`detail_core_serving_readiness: ${formatError(error)}`);
+    }
+  }
+
+  let dbPing: HealthPingResult = {
+    ok: false,
+    ms: 0,
+    source: "query_failed",
+    failureCategory: null,
+    failureDetail: null,
+  };
 
   try {
-    if (cachedPing && Date.now() - cachedPing.at < 20_000) {
-      if (!cachedPing.ok) throw new Error("database_ping_cached_failed");
-    } else {
-      // Prisma sorgularını Promise.race ile "timeout" etmek iptal etmediği için
-      // serverless ortamda açık handle bırakarak health endpoint'ini kilitleyebilir.
-      // Burada URL parametreleri (`connect_timeout`, `pool_timeout`) ile fail-fast davranışa güveniyoruz.
-      await prisma.$queryRaw`SELECT 1`;
-      globalForHealth.__healthPing = { at: Date.now(), ok: true };
-    }
+    dbPing = await probeDatabaseConnectivity(lightweight);
+    if (!dbPing.ok) throw new Error(dbPing.failureDetail ?? "database_ping_failed");
   } catch (error) {
-    globalForHealth.__healthPing = { at: Date.now(), ok: false };
     errors.push(`database_ping: ${formatError(error)}`);
     if (!includeExternalProbes && effectiveHost && effectivePort) {
       dnsProbe = await probeDns(effectiveHost, 1200);
@@ -365,7 +533,7 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
     }
 
     // Prisma ping başarısızsa, external probe'ları da ekle (root cause izolasyonu için).
-    if (!includeExternalProbes && hasSupabaseRestConfig()) {
+    if (!includeExternalProbes && hasSupabaseRestConfig() && !lightweight) {
       const startedAt = Date.now();
       try {
         await fetchSupabaseRestJson<RestDateRow[]>(
@@ -395,11 +563,13 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
       });
     }
 
-    const failureDetail = formatError(error);
-    const failureCategory = classifyDatabaseFailure(failureDetail);
+    const failureDetail = dbPing.failureDetail ?? formatError(error);
+    const failureCategory = dbPing.failureCategory ?? classifyDatabaseError(error).category;
     console.error("[health][database_ping_failed]", {
       failureCategory,
       failureDetail,
+      pingSource: dbPing.source,
+      pingMs: dbPing.ms,
       targetIdentity,
     });
     return {
@@ -425,9 +595,15 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
           identicalAcrossPaths: targetIdentity.identical,
           failureCategory,
           failureDetail,
+          queryFailureSummary: {},
+          pingSource: dbPing.source,
+          pingMs: dbPing.ms,
         },
       },
       supabaseRest: supabaseProbe,
+      serving: {
+        detailCore: detailCoreServingReadiness,
+      },
       counts: {
         funds: 0,
         activeFunds: 0,
@@ -472,6 +648,81 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
 
   // DB bağlantısı düşük connection_limit ile çalışırken health endpoint'inin tek çağrıda
   // çok sayıda paralel sorgu ile pool'u kilitlemesini önlemek için sorguları sırayla çalıştırıyoruz.
+  if (lightweight) {
+    return {
+      checkedAt,
+      ok: true,
+      status: "ok",
+      database: {
+        configured: Boolean(rawDbUrl || process.env.NODE_ENV === "development"),
+        engine:
+          effectiveDbUrl.startsWith("postgresql:") || effectiveDbUrl.startsWith("postgres:")
+            ? "postgresql"
+            : "unknown",
+        canConnect: true,
+        dbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(rawDbUrl).slice(0, 96),
+        effectiveDbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(effectiveDbUrl).slice(0, 96),
+        effectiveHost,
+        effectivePort,
+        effectiveParams,
+        dnsMs: dnsProbe.ms,
+        tcpMs: tcpProbe.ms,
+        diagnostics: {
+          targets: runtimeTargets,
+          identicalAcrossPaths: targetIdentity.identical,
+          failureCategory: null,
+          failureDetail: null,
+          queryFailureSummary: {},
+          pingSource: dbPing.source,
+          pingMs: dbPing.ms,
+        },
+      },
+      supabaseRest: supabaseProbe,
+      serving: {
+        detailCore: detailCoreServingReadiness,
+      },
+      counts: {
+        funds: 0,
+        activeFunds: 0,
+        categories: 0,
+        fundTypes: 0,
+        derivedMetrics: 0,
+        dailySnapshots: 0,
+        marketSnapshots: 0,
+        macroSeries: 0,
+        macroObservations: 0,
+      },
+      freshness: {
+        latestFundSnapshotDate: null,
+        latestMarketSnapshotDate: null,
+        latestMacroObservationDate: null,
+        latestFundUpdateAt: null,
+        latestSnapshotCoverageDate: null,
+        daysSinceLatestFundSnapshot: null,
+        daysSinceLatestMarketSnapshot: null,
+        daysSinceLatestMacroObservation: null,
+      },
+      integrity: {
+        activeFundsMissingCategory: 0,
+        activeFundsMissingFundType: 0,
+        activeFundsInvalidLastPrice: 0,
+        activeFundsWithoutDailySnapshotOnLatestDate: 0,
+        activeFundsWithoutDerivedMetrics: 0,
+        latestSnapshotCoverage: null,
+        latestSnapshotCoverageGap: null,
+        macroSyncStatus: null,
+      },
+      jobs: {
+        sourceRefresh: null,
+        servingRebuild: null,
+        warmScores: null,
+        dailySync: null,
+      },
+      issues,
+      errors,
+    };
+  }
+
   const fundCountResult = await safeQuery("fund_count", 0, () => prisma.fund.count());
   const activeFundCountResult = await safeQuery("active_fund_count", 0, () =>
     prisma.fund.count({ where: { isActive: true } })
@@ -584,6 +835,11 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
     .map((result) => result.error)
     .filter((value): value is string => Boolean(value));
   errors.push(...queryErrors);
+  const queryFailureSummary = queryErrors.reduce<Record<string, number>>((acc, entry) => {
+    const marker = entry.match(/\[class=([^\]]+)\]/)?.[1] ?? "unknown";
+    acc[marker] = (acc[marker] ?? 0) + 1;
+    return acc;
+  }, {});
 
   const latestFundSnapshotDate = latestFundSnapshotResult.value?.date ?? null;
   const latestMarketSnapshotDate = latestMarketSnapshotResult.value?.date ?? null;
@@ -776,6 +1032,34 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
     }
   }
 
+  if (!detailCoreServingReadiness.fileExists) {
+    issues.push({
+      code: "detail_core_serving_file_missing",
+      severity: "warning",
+      message: "Fund detail core serving dosyası bulunamadı (file_missing).",
+    });
+  } else if (detailCoreServingReadiness.fileRecordCount === 0) {
+    issues.push({
+      code: "detail_core_serving_file_empty",
+      severity: "warning",
+      message: "Fund detail core serving dosyası boş görünüyor (cache_empty).",
+    });
+  }
+  if (detailCoreServingReadiness.dbCacheCount === 0) {
+    issues.push({
+      code: "detail_core_serving_cache_empty",
+      severity: "warning",
+      message: "ScoresApiCache içinde fund_detail_core:v1 kayıtları boş.",
+    });
+  }
+  if (detailCoreServingReadiness.bootstrap.status === "failed") {
+    issues.push({
+      code: "detail_core_serving_bootstrap_failed",
+      severity: "warning",
+      message: `Detail core bootstrap başarısız: ${detailCoreServingReadiness.bootstrap.lastError ?? "unknown"}`,
+    });
+  }
+
   const hasErrorIssue = issues.some((issue) => issue.severity === "error");
   const status: SystemHealthStatus = hasErrorIssue || errors.some((item) => item.startsWith("database_ping"))
     ? "error"
@@ -806,9 +1090,15 @@ export async function getSystemHealthSnapshot(options?: { includeExternalProbes?
         identicalAcrossPaths: targetIdentity.identical,
         failureCategory: null,
         failureDetail: null,
+        queryFailureSummary,
+        pingSource: dbPing.source,
+        pingMs: dbPing.ms,
       },
     },
     supabaseRest: supabaseProbe,
+    serving: {
+      detailCore: detailCoreServingReadiness,
+    },
     counts: {
       funds: fundCountResult.value,
       activeFunds,

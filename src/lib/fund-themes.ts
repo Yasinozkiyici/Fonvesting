@@ -129,7 +129,9 @@ export function fundMatchesTheme(fund: ScoredFund, themeId: FundThemeId | null):
   const theme = getFundTheme(themeId);
   if (!theme) return true;
 
-  const searchText = stripInstitutionPrefix(fund.name);
+  const nameText = stripInstitutionPrefix(fund.name);
+  const shortText = fund.shortName ? stripInstitutionPrefix(fund.shortName) : "";
+  const searchText = [nameText, shortText].filter(Boolean).join(" ").trim();
   if (!searchText) return false;
 
   return theme.matchTokens.some((token) => tokenMatchesText(searchText, token));

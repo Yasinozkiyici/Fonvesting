@@ -111,12 +111,17 @@ export function FundDetailSimilar({ funds, categoryName, sectionId }: Props) {
   );
 
   return (
-    <section id={sectionId} aria-labelledby="fund-detail-alternatives-heading">
+    <section
+      id={sectionId}
+      aria-labelledby="fund-detail-alternatives-heading"
+      data-detail-section="compare"
+      className="scroll-mt-28 md:scroll-mt-0"
+    >
       <div className="md:hidden">
         <MobileDetailAccordion
-          title="Alternatifler"
+          title="Karşılaştırma"
           hint={subtitle}
-          defaultOpen
+          defaultOpen={false}
         >
           {content}
         </MobileDetailAccordion>

@@ -200,8 +200,9 @@ const CompareSummaryCard = memo(function CompareSummaryCard({
           {code}
         </span>
         <span
-          className="min-w-0 break-words text-[11px] leading-snug sm:text-[12px]"
+          className="min-w-0 break-words text-[11px] leading-snug sm:text-[12px] max-md:line-clamp-3"
           style={{ color: "var(--text-secondary)" }}
+          title={detail}
         >
           {detail}
         </span>
@@ -493,7 +494,7 @@ const CompareMobileDetailCard = memo(function CompareMobileDetailCard({
         <button
           type="button"
           onClick={() => onDrop(item.row.code)}
-          className="rounded-full border px-2 py-[0.32rem] text-[9.5px] font-medium transition-colors hover:text-[var(--text-primary)]"
+          className="touch-manipulation min-h-11 rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors hover:text-[var(--text-primary)]"
           style={{
             color: "var(--text-secondary)",
             borderColor: "color-mix(in srgb, var(--border-subtle) 84%, transparent)",
@@ -779,9 +780,11 @@ export function ComparePageClient() {
       ) : null}
 
       {loading && codes.length > 0 ? (
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-          Karşılaştırma hazırlanıyor…
-        </p>
+        <div className="min-h-[3.5rem] rounded-[18px] border border-dashed px-3 py-3 sm:min-h-[4rem]" style={{ borderColor: "var(--border-subtle)", background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))" }}>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Karşılaştırma hazırlanıyor…
+          </p>
+        </div>
       ) : null}
 
       {rows.length > 0 && compare && activeRef ? (
@@ -896,7 +899,10 @@ export function ComparePageClient() {
 
             {activeRef === "policy" ? (
               <p className="text-[10px] leading-snug sm:text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                Faiz referansı yıllık politika oranından seçili vadeye ölçeklenmiş yüzde getiriyi gösterir.
+                <span className="md:hidden">Politika faizi seçili vadeye ölçeklenir.</span>
+                <span className="hidden md:inline">
+                  Faiz referansı yıllık politika oranından seçili vadeye ölçeklenmiş yüzde getiriyi gösterir.
+                </span>
               </p>
             ) : null}
           </div>
@@ -904,8 +910,11 @@ export function ComparePageClient() {
       ) : null}
 
       {rows.length > 0 && !compare ? (
-        <p className="text-[11px] leading-snug" style={{ color: "var(--text-tertiary)" }}>
-          Referans katmanı şu an okunamıyor; temel karşılaştırma alanları yine de aşağıda görünür.
+        <p className="text-[11px] leading-snug max-md:line-clamp-2" style={{ color: "var(--text-tertiary)" }} title="Referans katmanı okunamıyor; tablo yine görünür.">
+          <span className="md:hidden">Referans katmanı yüklenemedi; tablo aşağıda.</span>
+          <span className="hidden md:inline">
+            Referans katmanı şu an okunamıyor; temel karşılaştırma alanları yine de aşağıda görünür.
+          </span>
         </p>
       ) : null}
 
@@ -1005,7 +1014,7 @@ export function ComparePageClient() {
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
               <Link
                 href="/"
-                className="rounded-full border px-2.5 py-1 font-medium transition-colors hover:text-[var(--text-primary)]"
+                className="touch-manipulation inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors hover:text-[var(--text-primary)] md:min-h-0 md:px-2.5 md:py-1 md:text-sm md:font-medium"
                 style={{
                   color: "var(--text-secondary)",
                   borderColor: "color-mix(in srgb, var(--border-subtle) 84%, transparent)",
@@ -1018,7 +1027,7 @@ export function ComparePageClient() {
                 <button
                   type="button"
                   onClick={clear}
-                  className="rounded-full border px-2.5 py-1 font-medium transition-colors hover:text-[var(--text-primary)]"
+                  className="touch-manipulation inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-2 text-[11px] font-semibold transition-colors hover:text-[var(--text-primary)] md:min-h-0 md:px-2.5 md:py-1 md:text-sm md:font-medium"
                   style={{
                     color: "var(--text-secondary)",
                     borderColor: "color-mix(in srgb, var(--border-subtle) 84%, transparent)",

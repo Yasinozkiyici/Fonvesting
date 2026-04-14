@@ -66,7 +66,7 @@ export default function Header() {
       }}
     >
       <div className="mx-auto max-w-[1320px] px-3 pt-[env(safe-area-inset-top,0px)] sm:px-6 lg:px-8">
-        <div className="flex h-[3.375rem] items-stretch gap-0 sm:h-[3.5rem] sm:gap-1 md:items-center md:gap-0">
+        <div className="flex min-h-[3.375rem] items-stretch gap-0 sm:min-h-[3.5rem] sm:gap-1 md:h-[3.5rem] md:items-center md:gap-0">
           <div className="header-brand flex min-w-0 shrink-0 items-center">
             <SiteLogoLink />
           </div>
@@ -125,7 +125,7 @@ export default function Header() {
               <button
                 type="button"
                 onClick={toggleTheme}
-                className="header-mobile-cluster__btn"
+                className="header-mobile-cluster__btn touch-manipulation"
                 aria-label={theme === "light" ? "Karanlık temaya geç" : "Aydınlık temaya geç"}
               >
                 <ThemeToggleIcon theme={theme} mounted={mounted} />
@@ -134,7 +134,7 @@ export default function Header() {
               <button
                 type="button"
                 onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="header-mobile-cluster__btn"
+                className="header-mobile-cluster__btn touch-manipulation"
                 aria-expanded={isMenuOpen}
                 aria-label={isMenuOpen ? "Menüyü kapat" : "Menüyü aç"}
               >

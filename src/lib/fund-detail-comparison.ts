@@ -2,6 +2,7 @@ import { kiyasPolicyReturnPctForWindow } from "@/lib/kiyas-policy-return-window"
 import type { FundKiyasViewPayload, KiyasPeriodId, KiyasPeriodRow, KiyasRefKey } from "@/lib/services/fund-detail-kiyas.service";
 
 const DAY_MS = 86_400_000;
+const ALIGN_NEAREST_TOLERANCE_MS = 5 * DAY_MS;
 
 /**
  * Yüzde puanı cinsinden “başa baş” eşiği: |fon − referans| ≤ bu değer ise durum nötr.
@@ -63,6 +64,16 @@ function comparisonRefType(key: KiyasRefKey): string {
   if (key === "usdtry" || key === "eurtry") return "Kur";
   if (key === "gold") return "Emtia";
   if (key === "policy") return "Faiz";
+  return "Referans";
+}
+
+function fallbackComparisonLabel(key: KiyasRefKey): string {
+  if (key === "category") return "Kategori Ortalaması";
+  if (key === "bist100") return "BIST 100";
+  if (key === "usdtry") return "USD/TRY";
+  if (key === "eurtry") return "EUR/TRY";
+  if (key === "gold") return "Altın";
+  if (key === "policy") return "Politika Faizi";
   return "Referans";
 }
 
@@ -131,16 +142,44 @@ function normalizeSeriesForRange(
   const sorted = sortPointsAsc(series);
   if (sorted.length < 2) return null;
 
-  const startIndex = valueOnOrBeforeIndex(sorted, startT);
-  const endIndex = valueOnOrBeforeIndex(sorted, endT);
+  const nearestIndex = (targetT: number): number => {
+    const atOrBefore = valueOnOrBeforeIndex(sorted, targetT);
+    const next = atOrBefore >= 0 && atOrBefore + 1 < sorted.length ? atOrBefore + 1 : atOrBefore;
+    const candidates = [atOrBefore, next].filter((idx): idx is number => idx >= 0);
+    if (candidates.length === 0) return -1;
+    let best = candidates[0]!;
+    let bestDelta = Math.abs(sorted[best]!.t - targetT);
+    for (const idx of candidates.slice(1)) {
+      const delta = Math.abs(sorted[idx]!.t - targetT);
+      if (delta < bestDelta) {
+        best = idx;
+        bestDelta = delta;
+      }
+    }
+    return bestDelta <= ALIGN_NEAREST_TOLERANCE_MS ? best : atOrBefore;
+  };
+  const startIndex = nearestIndex(startT);
+  const endIndex = nearestIndex(endT);
   if (startIndex < 0 || endIndex < 0) return null;
-  if (requireWindowProgress && startIndex === endIndex) return null;
+  let effectiveStartIndex = startIndex;
+  let effectiveEndIndex = endIndex;
+  if (requireWindowProgress && effectiveStartIndex === effectiveEndIndex) {
+    const collapsedPoint = sorted[effectiveStartIndex]!;
+    if (collapsedPoint.t < startT) return null;
+    if (effectiveStartIndex > 0) {
+      effectiveStartIndex -= 1;
+    } else if (effectiveEndIndex < sorted.length - 1) {
+      effectiveEndIndex += 1;
+    } else {
+      return null;
+    }
+  }
 
-  const startValue = sorted[startIndex]!.v;
-  const endValue = sorted[endIndex]!.v;
+  const startValue = sorted[effectiveStartIndex]!.v;
+  const endValue = sorted[effectiveEndIndex]!.v;
   if (!finite(startValue) || !finite(endValue) || startValue <= 0) return null;
 
-  const sliced = sorted.slice(startIndex, endIndex + 1);
+  const sliced = sorted.slice(effectiveStartIndex, effectiveEndIndex + 1);
   if (sliced.length < 2) return null;
 
   const returnPct = ((endValue / startValue) - 1) * 100;
@@ -156,6 +195,19 @@ function normalizeSeriesForRange(
     endValue,
     returnPct,
     normalized,
+  };
+}
+
+function countAlignedDates(a: RangeSlice, b: RangeSlice): { aligned: number; droppedLeft: number; droppedRight: number } {
+  const left = new Set(a.sliced.map((point) => point.t));
+  let aligned = 0;
+  for (const point of b.sliced) {
+    if (left.has(point.t)) aligned += 1;
+  }
+  return {
+    aligned,
+    droppedLeft: Math.max(0, a.sliced.length - aligned),
+    droppedRight: Math.max(0, b.sliced.length - aligned),
   };
 }
 
@@ -216,6 +268,14 @@ function buildRowsFromSeriesWindow(input: {
 }): BenchmarkComparisonView {
   const rows: BenchmarkComparisonRow[] = [];
   const unavailableRefs: Array<{ key: KiyasRefKey; label: string; typeLabel: string }> = [];
+  let alignedDatesTotal = 0;
+  let droppedFundDatesTotal = 0;
+  let droppedRefDatesTotal = 0;
+  const invalidationReasons = new Map<string, number>();
+  const survivedRefs: string[] = [];
+  const bumpInvalidation = (reason: string) => {
+    invalidationReasons.set(reason, (invalidationReasons.get(reason) ?? 0) + 1);
+  };
 
   const { fundSeries, refSeriesByKey, startT, endT } = input.seriesWindow;
   const fundRange = normalizeSeriesForRange(fundSeries, startT, endT, true);
@@ -226,22 +286,38 @@ function buildRowsFromSeriesWindow(input: {
     const label =
       input.block?.refs.find((item) => item.key === key)?.label ??
       input.labels?.[key] ??
-      key.toUpperCase();
+      fallbackComparisonLabel(key);
     const refSeries = refSeriesByKey[key] ?? [];
 
     if (!fundOk) {
       unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
+      bumpInvalidation("fund_window_unavailable");
       continue;
     }
 
     let referenceReturnPct: number | null = null;
+    let invalidReason: string | null = null;
     if (key === "policy") {
       const sorted = sortPointsAsc(refSeries);
       if (sorted.length >= 2) {
         referenceReturnPct = kiyasPolicyReturnPctForWindow(sorted, startT, endT);
+        if (!finite(referenceReturnPct)) {
+          invalidReason = "policy_window_unavailable";
+        }
+      } else {
+        invalidReason = "policy_series_too_short";
       }
     } else {
       const refRange = normalizeSeriesForRange(refSeries, startT, endT, true);
+      if (!refRange) {
+        invalidReason = key === "category" ? "category_window_unavailable" : "macro_window_unavailable";
+      }
+      if (fundRange && refRange) {
+        const align = countAlignedDates(fundRange, refRange);
+        alignedDatesTotal += align.aligned;
+        droppedFundDatesTotal += align.droppedLeft;
+        droppedRefDatesTotal += align.droppedRight;
+      }
       referenceReturnPct = refRange?.returnPct ?? null;
     }
 
@@ -266,7 +342,13 @@ function buildRowsFromSeriesWindow(input: {
           });
           continue;
         }
+        if (!blockRow) {
+          invalidReason = invalidReason ?? "category_block_missing";
+        } else {
+          invalidReason = invalidReason ?? "category_block_invalid";
+        }
       }
+      bumpInvalidation(invalidReason ?? "reference_return_unavailable");
       rows.push({
         key,
         label,
@@ -284,6 +366,7 @@ function buildRowsFromSeriesWindow(input: {
     }
 
     const comparisonDeltaPct = fundR - (referenceReturnPct as number);
+    survivedRefs.push(key);
     rows.push({
       key,
       label,
@@ -312,7 +395,7 @@ function buildRowsFromSeriesWindow(input: {
     pickPrimary(rows) ??
     null;
 
-  return {
+  const view: BenchmarkComparisonView = {
     rows,
     unavailableRefs,
     passedCount: summary.passedCount,
@@ -324,6 +407,20 @@ function buildRowsFromSeriesWindow(input: {
     strongestUnderperformRow: summary.strongestUnderperformRow,
     primaryRow,
   };
+  if (process.env.NODE_ENV !== "production") {
+    const validRefs = rows.filter((row) => row.hasEnoughData).length;
+    const invalidationSummary = [...invalidationReasons.entries()]
+      .map(([reason, count]) => `${reason}:${count}`)
+      .join(",");
+    console.info(
+      `[fund-detail-comparison] mode=window period=${input.periodId} window=${new Date(startT).toISOString()}..${new Date(endT).toISOString()} ` +
+        `valid_refs=${validRefs}/${rows.length} aligned_dates=${alignedDatesTotal} dropped_fund_dates=${droppedFundDatesTotal} ` +
+        `dropped_ref_dates=${droppedRefDatesTotal} unavailable_refs=${unavailableRefs.length} ` +
+        `nearest_tolerance_days=${Math.round(ALIGN_NEAREST_TOLERANCE_MS / DAY_MS)} ` +
+        `survived_refs=${survivedRefs.join(",") || "none"} invalid_reasons=${invalidationSummary || "none"}`
+    );
+  }
+  return view;
 }
 
 export function buildBenchmarkComparisonView(input: {
@@ -386,7 +483,7 @@ export function buildBenchmarkComparisonView(input: {
       const label =
         block.refs.find((item) => item.key === key)?.label ??
         labels?.[key] ??
-        key.toUpperCase();
+        fallbackComparisonLabel(key);
 
       if (!row) {
         unavailableRefs.push({ key, label, typeLabel: comparisonRefType(key) });
@@ -416,7 +513,7 @@ export function buildBenchmarkComparisonView(input: {
     pickPrimary(rows) ??
     null;
 
-  return {
+  const view: BenchmarkComparisonView = {
     rows,
     unavailableRefs,
     passedCount: summary.passedCount,
@@ -428,6 +525,13 @@ export function buildBenchmarkComparisonView(input: {
     strongestUnderperformRow: summary.strongestUnderperformRow,
     primaryRow,
   };
+  if (process.env.NODE_ENV !== "production") {
+    const validRefs = rows.filter((row) => row.hasEnoughData).length;
+    console.info(
+      `[fund-detail-comparison] mode=block period=${periodId} valid_refs=${validRefs}/${rows.length} unavailable_refs=${unavailableRefs.length}`
+    );
+  }
+  return view;
 }
 
 /** Yalnızca geliştirme / konsol incelemesi için — üretim UI’da kullanılmaz. */

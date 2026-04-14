@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { classifyDatabaseError } from "@/lib/database-error-classifier";
 
 // Ortam değişkenleri: `next dev` / `next start` .env ve .env.local dosyalarını yükler.
 // tsx ile çalışan scriptlerde önce `scripts/load-env` içe aktarılmalı (bkz. scripts/*.ts).
@@ -37,10 +38,13 @@ export function getEffectiveDatabaseUrl(): string {
       url.searchParams.set("sslmode", "require");
     }
 
-    // Serverless ortamda bağlantı fırtınası yaşamamak için düşük bir connection_limit varsayılanı.
-    // Not: Supabase pooler ile önerilir, ancak direct bağlantıda da "too many clients" riskini azaltır.
+    // Varsayılan connection_limit:
+    // - geliştirmede daha yüksek (eşzamanlı route + API çağrılarında pool timeout yaşamamak için)
+    // - üretimde kontrollü (serverless connection storm riskini azaltmak için)
     const limit = (process.env.DATABASE_CONNECTION_LIMIT ?? "").trim();
-    const desired = limit || "2";
+    const desiredDefault =
+      process.env.NODE_ENV === "development" ? "12" : isSupabasePooler ? "10" : "6";
+    const desired = limit || desiredDefault;
     const current = url.searchParams.get("connection_limit")?.trim();
     if (!current) {
       url.searchParams.set("connection_limit", desired);
@@ -49,8 +53,8 @@ export function getEffectiveDatabaseUrl(): string {
     // Fail-fast: health/jobs endpoint'leri event-loop'u kilitlemesin.
     // URL'de daha uzun süre tanımlıysa override ederiz.
     const connectTimeout = Number(url.searchParams.get("connect_timeout") ?? "");
-    if (!Number.isFinite(connectTimeout) || connectTimeout <= 0 || connectTimeout > 8) {
-      url.searchParams.set("connect_timeout", "8");
+    if (!Number.isFinite(connectTimeout) || connectTimeout <= 0 || connectTimeout > 6) {
+      url.searchParams.set("connect_timeout", "6");
     }
     const poolTimeout = Number(url.searchParams.get("pool_timeout") ?? "");
     if (!Number.isFinite(poolTimeout) || poolTimeout <= 0 || poolTimeout > 8) {
@@ -66,7 +70,7 @@ export function getEffectiveDatabaseUrl(): string {
 const globalForPrisma = global as unknown as { prisma?: PrismaClient };
 
 function createPrismaClient(): PrismaClient {
-  return new PrismaClient({
+  const client = new PrismaClient({
     datasources: {
       db: {
         url: getEffectiveDatabaseUrl(),
@@ -74,6 +78,22 @@ function createPrismaClient(): PrismaClient {
     },
     log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
   });
+  const globalForPrismaLogs = global as unknown as {
+    __dbRuntimeLastErrorLog?: { key: string; at: number };
+  };
+  client.$on("error", (event) => {
+    const classified = classifyDatabaseError(event.message);
+    const now = Date.now();
+    const dedupeKey = `${classified.category}|${classified.prismaCode ?? "none"}|${classified.message.slice(0, 120)}`;
+    const last = globalForPrismaLogs.__dbRuntimeLastErrorLog;
+    if (last && last.key === dedupeKey && now - last.at < 5_000) return;
+    globalForPrismaLogs.__dbRuntimeLastErrorLog = { key: dedupeKey, at: now };
+    console.error(
+      `[db-runtime-error] category=${classified.category} prisma_code=${classified.prismaCode ?? "none"} ` +
+        `retryable=${classified.retryable ? 1 : 0} message=${classified.message}`
+    );
+  });
+  return client;
 }
 
 function clientHasFundDelegate(client: PrismaClient): boolean {

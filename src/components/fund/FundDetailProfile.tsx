@@ -10,7 +10,7 @@ type RowProps = { label: string; hint?: string; children: React.ReactNode };
 function ProfileRow({ label, hint, children }: RowProps) {
   return (
     <div
-      className="fund-detail-profile-row-sep flex flex-col gap-1 border-b border-[color-mix(in_srgb,var(--border-subtle)_48%,transparent)] py-2.5 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,9.25rem)_minmax(0,1fr)] lg:items-start lg:gap-5 lg:py-3"
+      className="fund-detail-profile-row-sep flex flex-col gap-1 border-b border-[color-mix(in_srgb,var(--border-subtle)_48%,transparent)] py-2 last:border-b-0 lg:grid lg:grid-cols-[minmax(0,9.25rem)_minmax(0,1fr)] lg:items-start lg:gap-5 lg:py-2.5"
     >
       <div className="min-w-0 lg:pt-0.5">
         <div className="text-[10px] font-semibold uppercase sm:text-[10.5px]" style={{ color: "var(--text-muted)", letterSpacing: "0.07em" }}>
@@ -90,11 +90,13 @@ export function FundDetailProfile({ data }: Props) {
       <div>
         {typeLabel !== "—" ? <ProfileRow label="Fon türü">{typeLabel}</ProfileRow> : null}
         {fund.category ? <ProfileRow label="Kategori">{fund.category.name}</ProfileRow> : null}
-        {fund.portfolioManagerInferred ? (
-          <ProfileRow label="Portföy yöneticisi" hint="Fon unvanından türetilmiş özet.">
+        <ProfileRow label="Portföy yöneticisi">
+          {fund.portfolioManagerInferred ? (
             <span className="line-clamp-2 break-words">{fund.portfolioManagerInferred}</span>
-          </ProfileRow>
-        ) : null}
+          ) : (
+            <span style={{ color: "var(--text-tertiary)" }}>Veri bulunamadı</span>
+          )}
+        </ProfileRow>
         <ProfileRow label="İşlem para birimi">
           {tradingCurrency}
         </ProfileRow>
@@ -149,7 +151,11 @@ export function FundDetailProfile({ data }: Props) {
           <p className="text-[10px] font-medium uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.05em" }}>
             Açıklama
           </p>
-          <p className="mt-2 max-w-[78ch] text-[13px] leading-relaxed sm:text-sm" style={{ color: "var(--text-secondary)" }}>
+          <p
+            className="mt-2 max-w-[78ch] text-[13px] leading-relaxed max-md:line-clamp-6 sm:text-sm"
+            style={{ color: "var(--text-secondary)" }}
+            title={fund.description.trim().length > 280 ? fund.description.trim() : undefined}
+          >
             {fund.description.trim()}
           </p>
         </div>
@@ -158,12 +164,12 @@ export function FundDetailProfile({ data }: Props) {
   );
 
   return (
-    <>
+    <div data-detail-section="allocation" className="scroll-mt-28 md:scroll-mt-0">
       <div className="md:hidden">
         <MobileDetailAccordion
           title="Fon Profili"
           hint="Kimlik, risk sınıfı ve veri kapsamı."
-          defaultOpen
+          defaultOpen={false}
         >
           {content}
         </MobileDetailAccordion>
@@ -178,6 +184,6 @@ export function FundDetailProfile({ data }: Props) {
         </div>
         <div className="mt-2">{content}</div>
       </section>
-    </>
+    </div>
   );
 }

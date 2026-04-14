@@ -1403,10 +1403,10 @@ body {
 /* Fon detay kapanışı: ana sayfa footer’ını değiştirmez */
 .site-footer.site-footer--detail {
   background:
-    linear-gradient(180deg, rgba(248, 250, 252, 0.05) 0%, transparent 20px),
-    linear-gradient(180deg, #505a66 0%, #464e5a 42%, #404752 100%);
-  border-top-color: rgba(148, 163, 184, 0.1);
-  color: #d4dce6;
+    linear-gradient(180deg, rgba(248, 250, 252, 0.04) 0%, transparent 18px),
+    linear-gradient(180deg, #3a4048 0%, #333941 44%, #2e333a 100%);
+  border-top-color: rgba(148, 163, 184, 0.088);
+  color: #c9d2dc;
 }
 .site-footer__lede {
   color: rgba(230, 236, 244, 0.86);
@@ -1470,9 +1470,10 @@ body {
 
 [data-theme="dark"] .site-footer.site-footer--detail {
   background:
-    linear-gradient(180deg, rgba(248, 250, 252, 0.035) 0%, transparent 18px),
-    linear-gradient(180deg, #363b45 0%, #30343d 52%, #2b2f36 100%);
-  border-top-color: rgba(148, 163, 184, 0.085);
+    linear-gradient(180deg, rgba(248, 250, 252, 0.028) 0%, transparent 16px),
+    linear-gradient(180deg, #262a30 0%, #21252b 50%, #1c1f24 100%);
+  border-top-color: rgba(148, 163, 184, 0.078);
+  color: #c5cdd6;
 }
 [data-theme="dark"] .site-footer__iconbtn {
   background: rgba(0, 0, 0, 0.18);
@@ -2265,6 +2266,12 @@ body {
   overflow: hidden;
 }
 
+@media (max-width: 767px) {
+  .header-mobile-cluster {
+    height: var(--m-tap-min, 2.75rem);
+  }
+}
+
 @media (min-width: 768px) {
   .header-mobile-cluster {
     display: none;
@@ -2283,6 +2290,13 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
   transition: color 0.16s ease, background-color 0.16s ease;
+}
+
+@media (max-width: 767px) {
+  .header-mobile-cluster__btn {
+    width: var(--m-tap-min, 2.75rem);
+    min-width: var(--m-tap-min, 2.75rem);
+  }
 }
 
 .header-mobile-cluster__btn:hover {
@@ -3080,6 +3094,17 @@ body {
   margin: -9px -11px;
   padding: 9px 11px;
   border-radius: 12px;
+}
+
+/* Karşılaştırma sütunu varken sağ negatif margin linki aksiyonun üstüne taşırmaz */
+.mobile-fund-card.mobile-fund-card--scan.mobile-fund-card--with-compare .mobile-fund-card__link.mobile-fund-card__link--with-compare {
+  margin-right: 0;
+  padding-right: 6px;
+}
+
+.mobile-fund-card.mobile-fund-card--with-compare:not(.mobile-fund-card--scan) .mobile-fund-card__link.mobile-fund-card__link--with-compare {
+  margin-right: 0;
+  padding-right: 6px;
 }
 
 [data-theme="dark"] .mobile-fund-card {

@@ -4,6 +4,21 @@ import { getSystemHealthSnapshot } from "@/lib/system-health";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const preferredRegion = ["fra1"];
+const HEALTH_LIGHT_CACHE_TTL_MS = Number(process.env.HEALTH_LIGHT_CACHE_TTL_MS ?? "12000");
+
+type HealthRouteState = {
+  lightCache?: {
+    at: number;
+    snapshot: Awaited<ReturnType<typeof getSystemHealthSnapshot>>;
+  };
+  lightInFlight?: Promise<Awaited<ReturnType<typeof getSystemHealthSnapshot>>>;
+};
+
+function getHealthRouteState(): HealthRouteState {
+  const g = global as unknown as { __healthRouteState?: HealthRouteState };
+  if (!g.__healthRouteState) g.__healthRouteState = {};
+  return g.__healthRouteState;
+}
 
 function hasDetailedHealthAccess(headers: Headers): boolean {
   if (process.env.NODE_ENV !== "production") return true;
@@ -22,9 +37,68 @@ function hasDetailedHealthAccess(headers: Headers): boolean {
 export async function GET(request: Request) {
   const isProduction = process.env.NODE_ENV === "production";
   const allowDetails = hasDetailedHealthAccess(request.headers);
-  const snapshot = await getSystemHealthSnapshot({ includeExternalProbes: allowDetails });
-  /** 503 yalnızca doğrudan DB erişimi yoksa; veri uyarıları/degrade durum 200 + gövdede açıklanır. */
-  const statusCode = snapshot.database.canConnect ? 200 : 503;
+  const requestUrl = new URL(request.url);
+  const requestedMode = (requestUrl.searchParams.get("mode") ?? "").trim().toLowerCase();
+  const forceLightMode = requestedMode === "light";
+  const forceFullMode = requestedMode === "full";
+  const fullDetails =
+    allowDetails &&
+    (forceFullMode || (!forceLightMode && requestUrl.searchParams.get("full") === "1"));
+  const includeExternalProbes = fullDetails && requestUrl.searchParams.get("probes") === "1";
+  const healthMode = fullDetails ? "full" : "light";
+  let snapshot: Awaited<ReturnType<typeof getSystemHealthSnapshot>>;
+  if (!fullDetails) {
+    const state = getHealthRouteState();
+    const cached = state.lightCache;
+    if (cached && Date.now() - cached.at <= Math.max(2_000, HEALTH_LIGHT_CACHE_TTL_MS)) {
+      snapshot = cached.snapshot;
+    } else if (state.lightInFlight) {
+      snapshot = await state.lightInFlight;
+    } else {
+      const task = getSystemHealthSnapshot({
+        includeExternalProbes: false,
+        lightweight: true,
+      });
+      state.lightInFlight = task;
+      try {
+        snapshot = await task;
+        state.lightCache = { at: Date.now(), snapshot };
+      } finally {
+        state.lightInFlight = undefined;
+      }
+    }
+  } else {
+    snapshot = await getSystemHealthSnapshot({
+      includeExternalProbes,
+      lightweight: false,
+    });
+  }
+  const strictMode = fullDetails || requestUrl.searchParams.get("strict") === "1";
+  /**
+   * Launch-safety: light health çağrısı fail-soft döner (200 + degraded payload).
+   * Strict/full modda liveness için DB erişimi zorunlu (başarısızsa 503).
+   */
+  const statusCode = snapshot.database.canConnect || !strictMode ? 200 : 503;
+  const dbProbeUsed = snapshot.database.diagnostics.pingSource;
+  const systemCheckDegraded = snapshot.status !== "ok" || snapshot.issues.length > 0 || snapshot.errors.length > 0;
+  const systemCheckReason =
+    snapshot.database.diagnostics.failureCategory ??
+    snapshot.issues[0]?.code ??
+    snapshot.errors[0] ??
+    "none";
+  console.info(
+    `[health-route] health_mode=${healthMode} full=${fullDetails ? 1 : 0} probes=${includeExternalProbes ? 1 : 0} ` +
+      `health_db_probe_used=${dbProbeUsed} health_db_probe_ms=${snapshot.database.diagnostics.pingMs ?? -1} ` +
+      `system_check_degraded=${systemCheckDegraded ? 1 : 0} system_check_reason=${systemCheckReason} strict=${strictMode ? 1 : 0} status=${statusCode}`
+  );
+  const sharedHeaders: Record<string, string> = {
+    "X-Health-Mode": healthMode,
+    "X-Health-Strict": strictMode ? "1" : "0",
+    "X-Health-Db-Probe-Used": dbProbeUsed,
+    "X-Health-Db-Probe-Ms": String(snapshot.database.diagnostics.pingMs ?? -1),
+    "X-System-Check-Degraded": systemCheckDegraded ? "1" : "0",
+    "X-System-Check-Reason": systemCheckReason,
+  };
 
   if (isProduction && !allowDetails) {
     return NextResponse.json(
@@ -46,6 +120,16 @@ export async function GET(request: Request) {
             failureCategory: snapshot.database.diagnostics.failureCategory,
           },
         },
+        serving: {
+          detailCore: {
+            fileExists: snapshot.serving.detailCore.fileExists,
+            fileRecordCount: snapshot.serving.detailCore.fileRecordCount,
+            fileMissReason: snapshot.serving.detailCore.fileMissReason,
+            dbCacheCount: snapshot.serving.detailCore.dbCacheCount,
+            dbMissReason: snapshot.serving.detailCore.dbMissReason,
+            bootstrapStatus: snapshot.serving.detailCore.bootstrap.status,
+          },
+        },
         counts: {
           funds: snapshot.counts.funds,
           activeFunds: snapshot.counts.activeFunds,
@@ -62,7 +146,7 @@ export async function GET(request: Request) {
         jobs: snapshot.jobs,
         issueCount: snapshot.issues.length,
       },
-      { status: statusCode }
+      { status: statusCode, headers: sharedHeaders }
     );
   }
 
@@ -73,6 +157,6 @@ export async function GET(request: Request) {
       timestamp: snapshot.checkedAt,
       hint: "Yerel: docker compose up -d ve .env/.env.local içinde PostgreSQL DATABASE_URL. Üretim: pnpm exec prisma migrate deploy.",
     },
-    { status: statusCode }
+    { status: statusCode, headers: sharedHeaders }
   );
 }

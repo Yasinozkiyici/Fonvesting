@@ -56,6 +56,17 @@ export default function RootLayout({
                   document.documentElement.setAttribute('data-theme', 'light');
                   document.documentElement.style.colorScheme = 'light';
                 }
+                try {
+                  var m = window.matchMedia('(max-width: 767px)');
+                  var syncNarrow = function() {
+                    document.documentElement.setAttribute('data-viewport-narrow', m.matches ? '1' : '0');
+                  };
+                  syncNarrow();
+                  if (m.addEventListener) m.addEventListener('change', syncNarrow);
+                  else if (m.addListener) m.addListener(syncNarrow);
+                } catch (e2) {
+                  document.documentElement.setAttribute('data-viewport-narrow', '0');
+                }
               })();
             `,
           }}

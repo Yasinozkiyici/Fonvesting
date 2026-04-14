@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, X } from "lucide-react";
 import { FundDetailSectionTitle } from "@/components/fund/FundDetailSectionTitle";
 import {
@@ -24,8 +24,15 @@ import {
   buildBenchmarkComparisonView,
   summarizeBenchmarkComparisonViewForDev,
   type BenchmarkComparisonOutcome,
+  type BenchmarkComparisonRow,
 } from "@/lib/fund-detail-comparison";
-import { buildMonotoneClosedAreaPathD, buildMonotoneXPathD, type ChartPathPoint } from "@/lib/chart-monotone-path";
+import { deriveFundDetailBehaviorContract, shouldRenderSectionFromContract } from "@/lib/fund-detail-section-status";
+import {
+  buildLinearClosedAreaPathD,
+  buildLinearPathD,
+  dedupeChartPointsByX,
+  type ChartPathPoint,
+} from "@/lib/chart-monotone-path";
 
 const DAY_MS = 86400000;
 
@@ -159,6 +166,15 @@ function comparisonDeltaTone(delta: number | null | undefined): string {
   return delta > 0 ? "var(--success-muted)" : "var(--danger-muted, #b91c1c)";
 }
 
+function detailHistorySourceFromData(data: FundDetailPageData): "history" | "snapshot_fallback" | "approx" | "serving" | "unknown" {
+  const reasons = data.degraded?.reasons ?? [];
+  if (reasons.includes("core_price_series_source_history")) return "history";
+  if (reasons.includes("core_price_series_source_snapshot_fallback")) return "snapshot_fallback";
+  if (reasons.includes("core_price_series_source_approx")) return "approx";
+  if (reasons.includes("core_price_series_source_serving")) return "serving";
+  return "unknown";
+}
+
 /** Ana özet kartı — öncelikli referans adı (kısa). */
 function primaryComparisonCaption(label: string): string {
   return label;
@@ -243,9 +259,15 @@ function mapSeriesToChartXY(points: Point[], tMin: number, tMax: number, min: nu
   }));
 }
 
-/** Yoğun fiyat / normalize getiri: monotone cubic — düğümler korunur, overshoot spline yok. */
+/** Stabil çizim: doğrusal segmentler + round cap/join; tüm düğümler korunur, spline artefaktı yok. */
 function buildPerformanceLinePath(points: Point[], tMin: number, tMax: number, min: number, max: number): string | null {
-  return buildMonotoneXPathD(mapSeriesToChartXY(points, tMin, tMax, min, max));
+  const xy = dedupeChartPointsByX(mapSeriesToChartXY(points, tMin, tMax, min, max));
+  return buildLinearPathD(xy);
+}
+
+function buildPerformanceAreaPath(points: Point[], tMin: number, tMax: number, min: number, max: number): string | null {
+  const xy = dedupeChartPointsByX(mapSeriesToChartXY(points, tMin, tMax, min, max));
+  return buildLinearClosedAreaPathD(xy, PLOT_BOTTOM);
 }
 
 function yLevelsForScale(min: number, max: number, fmtY: (n: number) => string): Array<{ y: number; label: string }> {
@@ -274,7 +296,7 @@ type Props = {
 export function FundDetailChart({ data }: Props) {
   const fundAreaGradId = useId().replace(/:/g, "");
   const fundSeries = useMemo<Point[]>(
-    () => data.priceSeries.map((x) => ({ t: x.t, v: x.p })),
+    () => sortSeriesAsc(data.priceSeries.map((x) => ({ t: x.t, v: x.p }))),
     [data.priceSeries]
   );
   const [range, setRange] = useState<RangeId>("1y");
@@ -292,6 +314,33 @@ export function FundDetailChart({ data }: Props) {
   const [fundOnCompare, setFundOnCompare] = useState(false);
   const compareRequestRef = useRef<Promise<void> | null>(null);
   const compareAbortRef = useRef<AbortController | null>(null);
+  const compareDataRef = useRef<typeof compareData>(null);
+  const compareFetchSignatureRef = useRef<string>("");
+  const compareFetchAtRef = useRef(0);
+  const compareAutoPrefetchAttemptRef = useRef(0);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(false);
+  const behavior = useMemo(() => deriveFundDetailBehaviorContract(data), [data]);
+  const compareDebugRenderCountRef = useRef(0);
+
+  useEffect(() => {
+    compareDataRef.current = compareData;
+  }, [compareData]);
+
+  useLayoutEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const apply = () => {
+      const next = mq.matches;
+      try {
+        document.documentElement.setAttribute("data-viewport-narrow", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      setIsNarrowViewport(next);
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
 
   const loadCompareData = useCallback(async () => {
     if (compareRequestRef.current) {
@@ -299,6 +348,17 @@ export function FundDetailChart({ data }: Props) {
     }
 
     const codes = readCompareCodes().filter((c) => c !== data.fund.code).slice(0, 3);
+    const signature = `${data.fund.code}|${codes.join(",")}`;
+    const now = Date.now();
+    if (
+      compareFetchSignatureRef.current === signature &&
+      now - compareFetchAtRef.current < 1200
+    ) {
+      // Aynı imza ile milisaniye düzeyinde tekrar fetch etmeyelim (event fırtınası guard).
+      return;
+    }
+    compareFetchSignatureRef.current = signature;
+    compareFetchAtRef.current = now;
     const qs = new URLSearchParams({
       base: data.fund.code,
       codes: codes.join(","),
@@ -308,6 +368,10 @@ export function FundDetailChart({ data }: Props) {
     compareAbortRef.current?.abort();
     const controller = new AbortController();
     compareAbortRef.current = controller;
+    const timeoutMs = 6_000;
+    const timeoutId = setTimeout(() => {
+      controller.abort(new DOMException(`compare_series_timeout_${timeoutMs}ms`, "AbortError"));
+    }, timeoutMs);
     compareRequestRef.current = fetch(`/api/funds/compare-series?${qs.toString()}`, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
@@ -325,6 +389,7 @@ export function FundDetailChart({ data }: Props) {
         }
       })
       .finally(() => {
+        clearTimeout(timeoutId);
         if (compareAbortRef.current === controller) {
           compareAbortRef.current = null;
         }
@@ -344,17 +409,15 @@ export function FundDetailChart({ data }: Props) {
 
     syncFundSelection();
     setCompareData(null);
-    const sync = async () => {
-      await loadCompareData();
-    };
-
-    void sync();
+    compareAutoPrefetchAttemptRef.current = 0;
     const onStorage = (event: StorageEvent) => {
-      if (event.key === COMPARE_STORAGE_KEY) void sync();
+      if (event.key !== COMPARE_STORAGE_KEY) return;
+      syncFundSelection();
+      if (compareDataRef.current) void loadCompareData();
     };
     const onCompareChange = () => {
       syncFundSelection();
-      void sync();
+      if (compareDataRef.current) void loadCompareData();
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener(COMPARE_CODES_CHANGED_EVENT, onCompareChange);
@@ -364,6 +427,18 @@ export function FundDetailChart({ data }: Props) {
       window.removeEventListener(COMPARE_CODES_CHANGED_EVENT, onCompareChange);
     };
   }, [data.fund.code, loadCompareData]);
+
+  useEffect(() => {
+    if (data.kiyasBlock) return;
+    if (compareData || compareLoading) return;
+    if (compareAutoPrefetchAttemptRef.current >= 2) return;
+    compareAutoPrefetchAttemptRef.current += 1;
+    const waitMs = compareAutoPrefetchAttemptRef.current === 1 ? 0 : 1200;
+    const timer = setTimeout(() => {
+      void loadCompareData();
+    }, waitMs);
+    return () => clearTimeout(timer);
+  }, [compareData, compareLoading, data.kiyasBlock, loadCompareData]);
 
   const handleCurrentFundCompareToggle = () => {
     if (fundOnCompare) {
@@ -395,6 +470,24 @@ export function FundDetailChart({ data }: Props) {
   const anchorT = fundSeries[fundSeries.length - 1]?.t;
   const fundWindow = useMemo(() => filterWindow(fundSeries, range), [fundSeries, range]);
   const chartWindow = useMemo(() => filterWindow(fundSeries, range, anchorT), [fundSeries, range, anchorT]);
+  useEffect(() => {
+    const payloadMin = fundSeries[0]?.t ?? null;
+    const payloadMax = fundSeries[fundSeries.length - 1]?.t ?? null;
+    const renderedMin = chartWindow[0]?.t ?? null;
+    const renderedMax = chartWindow[chartWindow.length - 1]?.t ?? null;
+    const historySource = detailHistorySourceFromData(data);
+    const shortFallbackUsed =
+      historySource === "snapshot_fallback" || historySource === "approx" || historySource === "serving";
+    console.info(
+      `[detail-history-render] code=${data.fund.code} range=${range} detail_history_payload_min_date=${
+        payloadMin ? new Date(payloadMin).toISOString() : "none"
+      } detail_history_payload_max_date=${payloadMax ? new Date(payloadMax).toISOString() : "none"} ` +
+        `detail_history_rendered_points=${chartWindow.length} detail_history_rendered_min_date=${
+          renderedMin ? new Date(renderedMin).toISOString() : "none"
+        } detail_history_rendered_max_date=${renderedMax ? new Date(renderedMax).toISOString() : "none"} ` +
+        `detail_history_source=${historySource} detail_history_short_fallback_used=${shortFallbackUsed ? 1 : 0}`
+    );
+  }, [chartWindow, data, fundSeries, range]);
   const comparisonStartT = fundWindow[0]?.t ?? 0;
   const comparisonEndT = fundWindow[fundWindow.length - 1]?.t ?? 0;
   const benchmarkLabels = useMemo<Record<KiyasRefKey, string>>(
@@ -461,11 +554,12 @@ export function FundDetailChart({ data }: Props) {
 
   const chartSeries = useMemo(() => {
     if (!comparisonMode) return [{ key: "fund", label: data.fund.code, points: chartWindow, color: "var(--accent-blue)" }];
+    const fundBaseline = normalizeSeriesInRange(fundSeries, comparisonStartT, comparisonEndT);
     const keys = ["fund", ...activeKeys];
-    return keys
+    const series = keys
       .map((key, index) => {
         const sourceSeries = key === "fund" ? fundSeries : (rawSeriesMap[key] ?? []);
-        const points = normalizeSeriesInRange(sourceSeries, comparisonStartT, comparisonEndT);
+        const points = key === "fund" ? fundBaseline : normalizeSeriesInRange(sourceSeries, comparisonStartT, comparisonEndT);
         if (!points || points.length < 2) return null;
         const palette = ["var(--accent-blue)", "#6d80a6", "#b58b61", "#7ca29a", "#b69a63", "#879387"];
         return {
@@ -476,6 +570,9 @@ export function FundDetailChart({ data }: Props) {
         };
       })
       .filter(Boolean) as Array<{ key: string; label: string; points: Point[]; color: string }>;
+    if (series.length > 0) return series;
+    // Kıyas serileri hizalanamazsa boş grafik yerine fonun kendi çizgisini göster.
+    return [{ key: "fund", label: data.fund.code, points: chartWindow, color: "var(--accent-blue)" }];
   }, [
     comparisonMode,
     data.fund.code,
@@ -488,34 +585,20 @@ export function FundDetailChart({ data }: Props) {
     rawSeriesMap,
   ]);
 
-  const yDomain = useMemo(() => {
-    const vals = chartSeries.flatMap((s) => s.points.map((p) => p.v));
-    if (vals.length < 2) return null;
-    return { min: Math.min(...vals), max: Math.max(...vals) };
-  }, [chartSeries]);
-
   const tMin = chartWindow[0]?.t ?? 0;
   const tMax = chartWindow[chartWindow.length - 1]?.t ?? 0;
-
-  const yLevels = useMemo(() => {
-    if (!yDomain) return [];
-    return yLevelsForScale(
-      yDomain.min,
-      yDomain.max,
-      comparisonMode ? (n) => formatChartAxisPercentTick(n) : (n) => fmtChartAxisPrice(n)
-    );
-  }, [yDomain, comparisonMode]);
 
   const xAxisTicks = useMemo(() => {
     if (chartWindow.length < 2) return [];
     const first = chartWindow[0]!.t;
     const last = chartWindow[chartWindow.length - 1]!.t;
     const mid = Math.round((first + last) / 2);
-    return [first, mid, last].map((t) => {
+    const times = isNarrowViewport && comparisonMode ? [first, last] : [first, mid, last];
+    return times.map((t) => {
       const x = PLOT_LEFT + ((t - first) / Math.max(1, last - first)) * INNER_W;
       return { t, x };
     });
-  }, [chartWindow]);
+  }, [chartWindow, comparisonMode, isNarrowViewport]);
 
   const periodReturnFund = useMemo(() => {
     if (fundWindow.length < 2) return null;
@@ -524,11 +607,6 @@ export function FundDetailChart({ data }: Props) {
     if (p0 <= 0) return null;
     return (p1 / p0 - 1) * 100;
   }, [fundWindow]);
-
-  const hoverPriceLabel = useMemo(() => {
-    if (comparisonMode || !hoverState) return null;
-    return fmtChartAxisPrice(hoverState.point.v);
-  }, [comparisonMode, hoverState]);
 
   const handleChartPointerMove = (clientX: number) => {
     if (!chartSvgRef.current || comparisonMode || chartWindow.length === 0 || tMax <= tMin) return;
@@ -553,6 +631,14 @@ export function FundDetailChart({ data }: Props) {
     });
   };
 
+  const clearChartHover = useCallback(() => {
+    setHoverState(null);
+  }, []);
+
+  useEffect(() => {
+    clearChartHover();
+  }, [range, comparisonMode, anchorT, fundSeries.length, clearChartHover]);
+
   const comparisonPeriodId = useMemo(() => periodIdForRange(range), [range]);
   const comparisonPeriodLabel = useMemo(() => periodLabelForRange(range), [range]);
   const selectedBenchmarkRef = useMemo<KiyasRefKey | null>(() => {
@@ -563,6 +649,32 @@ export function FundDetailChart({ data }: Props) {
     }
     return null;
   }, [activeKeys]);
+
+  const displayChartSeries = useMemo(() => {
+    if (!comparisonMode || !isNarrowViewport) return chartSeries;
+    const fund = chartSeries.find((s) => s.key === "fund");
+    if (!fund) return chartSeries;
+    const prefKey = selectedBenchmarkRef ?? activeKeys[0];
+    const ref = prefKey ? chartSeries.find((s) => s.key === prefKey) : chartSeries.find((s) => s.key !== "fund");
+    if (!ref) return chartSeries;
+    return [fund, ref];
+  }, [activeKeys, chartSeries, comparisonMode, isNarrowViewport, selectedBenchmarkRef]);
+
+  const yDomain = useMemo(() => {
+    const vals = displayChartSeries.flatMap((s) => s.points.map((p) => p.v));
+    if (vals.length < 2) return null;
+    return { min: Math.min(...vals), max: Math.max(...vals) };
+  }, [displayChartSeries]);
+
+  const yLevels = useMemo(() => {
+    if (!yDomain) return [];
+    return yLevelsForScale(
+      yDomain.min,
+      yDomain.max,
+      comparisonMode ? (n) => formatChartAxisPercentTick(n) : (n) => fmtChartAxisPrice(n)
+    );
+  }, [yDomain, comparisonMode]);
+
   const comparisonViewFromWindow = useMemo(
     () =>
       buildBenchmarkComparisonView({
@@ -616,9 +728,12 @@ export function FundDetailChart({ data }: Props) {
   );
 
   const comparisonView = useMemo(() => {
-    // Pencere hesabı satır ürettiyse öncelik her zaman buradadır.
-    // Blok fallback yalnızca pencere tamamen boş kaldığında devreye girer.
-    if (comparisonViewFromWindow.rows.length > 0) return comparisonViewFromWindow;
+    // Pencere hesabı kıyaslanabilir satır ürettiğinde öncelik buradadır.
+    // Tüm satırlar "veri yetersiz" ise blok fallback ile görünür özet korunur.
+    const windowComparableCount = comparisonViewFromWindow.rows.filter(
+      (row) => row.hasEnoughData && row.comparisonDeltaPct != null && Number.isFinite(row.comparisonDeltaPct)
+    ).length;
+    if (windowComparableCount > 0) return comparisonViewFromWindow;
     if (comparisonViewFromBlock && comparisonViewFromBlock.rows.length > 0) return comparisonViewFromBlock;
     return comparisonViewFromWindow;
   }, [comparisonViewFromBlock, comparisonViewFromWindow]);
@@ -630,16 +745,67 @@ export function FundDetailChart({ data }: Props) {
   }, [comparisonView]);
 
   const comparisonRows = comparisonView.rows;
+  const mainChartHasRenderablePayload = fundWindow.length >= 2;
+  const shouldRenderMainChart =
+    shouldRenderSectionFromContract(behavior.canRenderMainChart, mainChartHasRenderablePayload) &&
+    mainChartHasRenderablePayload;
+  const comparisonHasRenderablePayload = comparisonRows.length > 0;
+  const shouldRenderComparisonSection = shouldRenderSectionFromContract(
+    behavior.canRenderComparison,
+    comparisonHasRenderablePayload
+  );
+  const comparableRows = useMemo(
+    () => comparisonRows.filter((row) => row.hasEnoughData && row.comparisonDeltaPct != null && Number.isFinite(row.comparisonDeltaPct)),
+    [comparisonRows]
+  );
+  const comparisonHasMeaningfulData = comparableRows.length > 0;
   const comparisonRowsPrimary = useMemo(() => comparisonRows.slice(0, 3), [comparisonRows]);
-  const comparisonRowsVisible = comparisonExpanded ? comparisonRows : comparisonRowsPrimary;
   const comparisonPrimary = comparisonView.primaryRow;
-  const comparisonPrimaryDelta = comparisonPrimary?.comparisonDeltaPct ?? null;
+  const comparisonTableRows = useMemo(() => {
+    if (comparisonExpanded) return comparisonRows;
+    if (isNarrowViewport) {
+      const fk = selectedBenchmarkRef ?? comparisonPrimary?.key;
+      const hit = fk ? comparisonRows.find((r) => r.key === fk) : null;
+      if (hit) return [hit];
+      return comparisonRows.length > 0 ? [comparisonRows[0]!] : [];
+    }
+    return comparisonRowsPrimary;
+  }, [
+    comparisonExpanded,
+    comparisonRows,
+    comparisonRowsPrimary,
+    comparisonPrimary,
+    isNarrowViewport,
+    selectedBenchmarkRef,
+  ]);
+  const comparisonExpandable = comparisonRows.length > (isNarrowViewport ? 1 : comparisonRowsPrimary.length);
+  const showComparisonDetailTable = !isNarrowViewport || comparisonExpanded;
+  const effectiveComparisonPrimary = comparisonHasMeaningfulData ? comparisonPrimary : null;
+  const comparisonPrimaryDelta = effectiveComparisonPrimary?.comparisonDeltaPct ?? null;
   const passedReferenceCount = comparisonView.passedCount;
   const behindReferenceCount = comparisonView.behindCount;
   const tiedReferenceCount = comparisonView.tiedCount;
   const insufficientDataCount = comparisonView.insufficientDataCount;
   const comparisonBestOutperform = comparisonView.strongestOutperformRow;
   const comparisonBestUnderperform = comparisonView.strongestUnderperformRow;
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    compareDebugRenderCountRef.current += 1;
+    console.info(
+      `[fund-detail-comparison-visibility] code=${data.fund.code} render=${compareDebugRenderCountRef.current} ` +
+        `canRenderComparison=${behavior.canRenderComparison ? 1 : 0} rows=${comparisonRows.length} ` +
+        `meaningful=${comparisonHasMeaningfulData ? 1 : 0} shouldRenderSection=${shouldRenderComparisonSection ? 1 : 0} ` +
+        `compareLoading=${compareLoading ? 1 : 0}`
+    );
+  }, [
+    behavior.canRenderComparison,
+    compareLoading,
+    comparisonHasMeaningfulData,
+    comparisonRows.length,
+    data.fund.code,
+    shouldRenderComparisonSection,
+  ]);
 
   const comparisonDataIssuesTitle = useMemo(() => {
     const u = comparisonView.unavailableRefs.length;
@@ -700,16 +866,18 @@ export function FundDetailChart({ data }: Props) {
       </div>
 
       <div
-        className="mt-2 rounded-[1.05rem] border px-3.5 py-3 sm:mt-2.5 sm:px-4 sm:py-3.5"
+        className="mt-2 rounded-[1.05rem] border px-2.5 py-2.5 sm:mt-2.5 sm:px-4 sm:py-3.5"
         style={{
           borderColor: "var(--border-subtle)",
           background: "var(--card-bg)",
           boxShadow: "var(--shadow-xs)",
         }}
       >
-        {fundWindow.length < 2 ? (
+        {!shouldRenderMainChart ? (
           <p className="py-14 text-center text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            Bu fon için yeterli fiyat geçmişi yok. Veri geldikçe grafik otomatik görünür.
+            {behavior.tier === "NO_USEFUL_DATA"
+              ? behavior.noUsefulDataCopy
+              : "Bu fon için yeterli fiyat geçmişi yok. Veri geldikçe grafik otomatik görünür."}
           </p>
         ) : (
           <>
@@ -717,19 +885,12 @@ export function FundDetailChart({ data }: Props) {
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(10.5rem,14.5rem)] sm:items-start sm:gap-5">
                 <div className="min-w-0">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-muted)" }}>
-                    {hoverPriceLabel ? "Seçili fiyat" : "Seçili dönem getirisi"}
+                    Seçili dönem getirisi
                   </p>
                   <div className="mt-1.5 flex flex-col gap-0.5">
-                    {hoverPriceLabel ? (
+                    {periodReturnFund != null && Number.isFinite(periodReturnFund) ? (
                       <span
-                        className="tabular-nums text-[1.48rem] font-semibold tracking-[-0.035em] sm:text-[1.56rem]"
-                        style={{ color: "var(--text-primary)" }}
-                      >
-                        {hoverPriceLabel}
-                      </span>
-                    ) : periodReturnFund != null && Number.isFinite(periodReturnFund) ? (
-                      <span
-                        className="tabular-nums text-[1.58rem] font-semibold tracking-[-0.035em] sm:text-[1.66rem]"
+                        className="tabular-nums text-[1.32rem] font-semibold tracking-[-0.035em] sm:text-[1.66rem]"
                         style={{
                           color:
                             periodReturnFund > 0
@@ -750,17 +911,11 @@ export function FundDetailChart({ data }: Props) {
                       className="text-[11px] font-medium tabular-nums leading-snug sm:text-[11.5px]"
                       style={{ color: "var(--text-tertiary)" }}
                     >
-                      {hoverState && !comparisonMode ? (
-                        formatLongDate(hoverState.point.t)
-                      ) : (
-                        <>
-                          {new Date(fundWindow[0]!.t).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" })}
-                          <span className="mx-1.5 opacity-35" aria-hidden>
-                            ·
-                          </span>
-                          {new Date(fundWindow[fundWindow.length - 1]!.t).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" })}
-                        </>
-                      )}
+                      {new Date(fundWindow[0]!.t).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" })}
+                      <span className="mx-1.5 opacity-35" aria-hidden>
+                        ·
+                      </span>
+                      {new Date(fundWindow[fundWindow.length - 1]!.t).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" })}
                     </p>
                   </div>
                 </div>
@@ -769,7 +924,9 @@ export function FundDetailChart({ data }: Props) {
                   style={{ color: "var(--text-tertiary)" }}
                 >
                   {comparisonMode
-                    ? "Normalize getiri; net fark tabloda."
+                    ? isNarrowViewport
+                      ? "Normalize edilmiş getiri."
+                      : "Normalize getiri; net fark tabloda."
                     : periodReturnFund != null
                       ? `${periodLabelForRange(range)} · ${periodReturnFund > 0 ? "pozitif" : periodReturnFund < 0 ? "negatif" : "yatay"} seyir`
                       : "Veri geldikçe özet burada görünür."}
@@ -780,9 +937,22 @@ export function FundDetailChart({ data }: Props) {
                   {selectedUnavailableLabels.join(", ")} seçili ama {comparisonPeriodLabel} döneminde veri bulunamadı.
                 </p>
               ) : null}
+              {behavior.hasLimitedCoverage && detailHistorySourceFromData(data) !== "history" ? (
+                <p className="mt-2 text-[10px] leading-snug sm:text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+                  {behavior.limitedCoverageCopy ?? "Grafik mevcut veri penceresiyle gösteriliyor."}
+                </p>
+              ) : null}
             </div>
 
-            <div className="relative mt-2.5 w-full touch-none overflow-visible pb-0.5 sm:mt-3" style={{ aspectRatio: comparisonMode ? `${VB_W} / 196` : `${VB_W} / 206` }}>
+            <div
+              className="relative mt-2.5 w-full touch-none overflow-visible pb-0.5 sm:mt-3"
+              style={{
+                aspectRatio:
+                  comparisonMode && isNarrowViewport ? `${VB_W} / 172` : comparisonMode ? `${VB_W} / 196` : `${VB_W} / 206`,
+              }}
+              onPointerLeave={clearChartHover}
+              onPointerCancel={clearChartHover}
+            >
               <svg
                 ref={chartSvgRef}
                 viewBox={`0 0 ${VB_W} ${VB_H}`}
@@ -791,7 +961,7 @@ export function FundDetailChart({ data }: Props) {
                 role="img"
                 aria-label={comparisonMode ? "Karşılaştırmalı dönem getirisi grafiği" : "Fon birim fiyatı grafiği"}
                 onPointerMove={(event) => handleChartPointerMove(event.clientX)}
-                onPointerLeave={() => setHoverState(null)}
+                onPointerLeave={clearChartHover}
               >
                 <defs>
                   <linearGradient id={`perf-fund-fill-${fundAreaGradId}`} x1="0" x2="0" y1="0" y2="1">
@@ -819,7 +989,7 @@ export function FundDetailChart({ data }: Props) {
                       textAnchor="end"
                       dominantBaseline="middle"
                       fill="var(--text-tertiary)"
-                      fontSize={10}
+                      fontSize={isNarrowViewport && comparisonMode ? 9 : 10}
                       fontWeight={500}
                       opacity={0.88}
                       className="tabular-nums"
@@ -832,10 +1002,7 @@ export function FundDetailChart({ data }: Props) {
 
                 {!comparisonMode && yDomain && chartSeries[0]?.key === "fund"
                   ? (() => {
-                      const areaD = buildMonotoneClosedAreaPathD(
-                        mapSeriesToChartXY(chartSeries[0].points, tMin, tMax, yDomain.min, yDomain.max),
-                        PLOT_BOTTOM
-                      );
+                      const areaD = buildPerformanceAreaPath(chartSeries[0].points, tMin, tMax, yDomain.min, yDomain.max);
                       return areaD ? (
                         <path
                           key="fund-area"
@@ -847,7 +1014,7 @@ export function FundDetailChart({ data }: Props) {
                     })()
                   : null}
 
-                {chartSeries.map((s) => {
+                {displayChartSeries.map((s) => {
                   if (!yDomain) return null;
                   const d = buildPerformanceLinePath(s.points, tMin, tMax, yDomain.min, yDomain.max);
                   if (!d) return null;
@@ -857,11 +1024,11 @@ export function FundDetailChart({ data }: Props) {
                       d={d}
                       fill="none"
                       stroke={s.color}
-                      strokeWidth={s.key === "fund" ? 1.38 : 1.08}
+                      strokeWidth={s.key === "fund" ? 1.45 : 1.12}
                       vectorEffect="non-scaling-stroke"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      opacity={s.key === "fund" ? 0.97 : 0.8}
+                      opacity={s.key === "fund" ? 1 : 0.82}
                     />
                   );
                 })}
@@ -900,7 +1067,7 @@ export function FundDetailChart({ data }: Props) {
                     y={X_LABEL_Y}
                     textAnchor="middle"
                     fill="var(--text-tertiary)"
-                    fontSize={10}
+                    fontSize={isNarrowViewport && comparisonMode ? 9 : 10}
                     fontWeight={500}
                     opacity={0.86}
                     className="tabular-nums"
@@ -1021,7 +1188,7 @@ export function FundDetailChart({ data }: Props) {
               </div>
 
               {activeLabels.length > 0 ? (
-                <div className="mt-1.5 flex flex-wrap gap-1.25">
+                <div className="mt-1.5 flex max-md:-mx-0.5 max-md:gap-1 max-md:overflow-x-auto max-md:px-0.5 max-md:pb-0.5 max-md:flex-nowrap flex-wrap gap-1.25">
                   {activeLabels.map((label) => (
                     <span
                       key={label}
@@ -1104,15 +1271,36 @@ export function FundDetailChart({ data }: Props) {
               className="scroll-mt-24 mt-1 text-[14px] font-semibold tracking-[-0.02em] sm:scroll-mt-28 sm:text-[15px]"
               style={{ color: "var(--text-primary)" }}
             >
-              Seçili dönemde referanslara göre konum
+              <span className="md:hidden">Referansa göre sonuç</span>
+              <span className="hidden md:inline">Seçili dönemde referanslara göre konum</span>
             </h3>
-            <p className="mt-1.5 text-[11px] leading-relaxed sm:text-[11.5px]" style={{ color: "var(--text-tertiary)" }}>
+            <p className="mt-1.5 hidden text-[11px] leading-relaxed md:block md:text-[11.5px]" style={{ color: "var(--text-tertiary)" }}>
               Tablo: <span className="font-semibold" style={{ color: "var(--text-secondary)" }}>fon − referans</span> net farkı (pp). ±
               {BENCHMARK_COMPARISON_TIE_EPS_PP.toFixed(2).replace(".", ",")} pp başa baş.
             </p>
+            <p className="mt-1.5 text-[10px] leading-snug md:hidden" style={{ color: "var(--text-tertiary)" }}>
+              Net fark: fon getirisi eksi referans (yüzde puanı, pp).
+            </p>
           </div>
         </div>
-        {comparisonRows.length === 0 ? (
+        {/* Renderable payload must win over coarse contract flags to avoid silent UI disappearance. */}
+        {!shouldRenderComparisonSection ? (
+          <div
+            className="mt-2.5 rounded-[0.72rem] border px-3 py-2.5 text-[11px] leading-relaxed sm:mt-3 sm:px-3.5 sm:py-3 sm:text-[11.5px]"
+            style={{
+              borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+              background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <p className="font-semibold" style={{ color: "var(--text-primary)" }}>
+              {behavior.comparisonFallbackCopy}
+            </p>
+            <p className="mt-1 text-[10px] sm:text-[10.5px]" style={{ color: "var(--text-muted)" }}>
+              Uygun referans oluştuğunda bu alan otomatik güncellenir.
+            </p>
+          </div>
+        ) : comparisonRows.length === 0 ? (
           <p className="mt-2 text-sm" style={{ color: "var(--text-muted)" }}>
             Seçili dönem için karşılaştırma verisi henüz yeterli değil.
           </p>
@@ -1124,7 +1312,8 @@ export function FundDetailChart({ data }: Props) {
                 style={{ color: "var(--text-muted)" }}
                 title={comparisonDataIssuesTitle}
               >
-                Bazı referanslarda veri veya pencere eksik — ayrıntı için üzerine gelin.
+                <span className="md:hidden">Veri / pencere uyarısı — ayrıntı için basılı tutun.</span>
+                <span className="hidden md:inline">Bazı referanslarda veri veya pencere eksik — ayrıntı için üzerine gelin.</span>
               </p>
             ) : null}
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)] sm:items-stretch sm:gap-2.5" aria-label="Karşılaştırma özeti">
@@ -1136,45 +1325,54 @@ export function FundDetailChart({ data }: Props) {
                 }}
               >
                 <span className="text-[9px] font-semibold uppercase tracking-[0.11em]" style={{ color: "var(--text-muted)" }}>
-                  Öncelikli net fark
+                  <span className="md:hidden">Net fark (fon − ref.)</span>
+                  <span className="hidden md:inline">Öncelikli net fark</span>
                 </span>
+                {effectiveComparisonPrimary ? (
+                  <p className="mt-1 truncate text-[10px] font-semibold leading-snug md:hidden" style={{ color: "var(--text-secondary)" }}>
+                    <span className="font-medium" style={{ color: "var(--text-muted)" }}>
+                      {comparisonPeriodLabel} ·{" "}
+                    </span>
+                    {effectiveComparisonPrimary.label}
+                  </p>
+                ) : null}
                 <span
-                  className="mt-1 text-[1.28rem] font-semibold tabular-nums tracking-[-0.035em] sm:text-[1.38rem]"
+                  className="mt-1 text-[1.42rem] font-semibold tabular-nums tracking-[-0.035em] max-md:text-[1.62rem] sm:text-[1.38rem]"
                   style={{ color: comparisonDeltaTone(comparisonPrimaryDelta) }}
                 >
                   {comparisonPrimaryDelta != null ? formatDetailDeltaPercent(comparisonPrimaryDelta, DELTA_NEAR_EPS) : "—"}
                 </span>
-                {comparisonPrimary ? (
-                  <span className="mt-1 line-clamp-2 text-[10.5px] leading-snug sm:text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                    {primaryComparisonCaption(comparisonPrimary.label)}
+                {effectiveComparisonPrimary ? (
+                  <span className="mt-1 line-clamp-2 hidden text-[10.5px] leading-snug sm:text-[11px] md:block" style={{ color: "var(--text-tertiary)" }}>
+                    {primaryComparisonCaption(effectiveComparisonPrimary.label)}
                   </span>
                 ) : null}
-                {comparisonPrimary ? (
+                {effectiveComparisonPrimary ? (
                   <span
                     className="mt-1.5 inline-flex w-fit items-center gap-1 rounded-full border px-1.75 py-[0.15rem] text-[8.5px] font-medium sm:text-[9px]"
                     style={{
                       color:
-                        comparisonPrimary.outcome === "insufficient_data"
+                        effectiveComparisonPrimary.outcome === "insufficient_data"
                           ? "var(--text-tertiary)"
-                          : comparisonDeltaTone(comparisonPrimary.comparisonDeltaPct),
+                          : comparisonDeltaTone(effectiveComparisonPrimary.comparisonDeltaPct),
                       borderColor: "color-mix(in srgb, currentColor 12%, var(--border-subtle))",
                       background:
-                        comparisonPrimary.outcome === "insufficient_data"
+                        effectiveComparisonPrimary.outcome === "insufficient_data"
                           ? "color-mix(in srgb, var(--text-tertiary) 8%, var(--card-bg))"
-                          : comparisonPrimary.outcome === "outperform"
+                          : effectiveComparisonPrimary.outcome === "outperform"
                             ? "color-mix(in srgb, var(--success-muted) 14%, var(--card-bg))"
-                            : comparisonPrimary.outcome === "underperform"
+                            : effectiveComparisonPrimary.outcome === "underperform"
                               ? "color-mix(in srgb, var(--danger-muted, #b91c1c) 11%, var(--card-bg))"
                               : "color-mix(in srgb, var(--text-tertiary) 8%, var(--card-bg))",
                     }}
                   >
-                    {comparisonPrimary.outcome === "outperform" ? <Check className="h-2.75 w-2.75" strokeWidth={2.4} /> : null}
-                    {comparisonOutcomeLabel(comparisonPrimary.outcome)}
+                    {effectiveComparisonPrimary.outcome === "outperform" ? <Check className="h-2.75 w-2.75" strokeWidth={2.4} /> : null}
+                    {comparisonOutcomeLabel(effectiveComparisonPrimary.outcome)}
                   </span>
                 ) : null}
               </div>
               <div
-                className="flex flex-col justify-center rounded-[0.72rem] border px-3 py-2.5 text-[11px] sm:px-3.5 sm:py-2.5 sm:text-[11.5px]"
+                className="hidden flex-col justify-center rounded-[0.72rem] border px-3 py-2.5 text-[11px] sm:px-3.5 sm:py-2.5 sm:text-[11.5px] md:flex"
                 style={{
                   borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
                   background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
@@ -1225,8 +1423,40 @@ export function FundDetailChart({ data }: Props) {
                 </div>
               </div>
             </div>
+            <div
+              className="flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[0.65rem] px-2.5 py-1.5 text-[10px] tabular-nums md:hidden"
+              style={{
+                borderWidth: 1,
+                borderStyle: "solid",
+                borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+                background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+                color: "var(--text-secondary)",
+              }}
+            >
+              <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                {passedReferenceCount} geçti
+              </span>
+              <span className="opacity-35" aria-hidden>
+                ·
+              </span>
+              <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                {behindReferenceCount} geride
+              </span>
+              <span className="opacity-35" aria-hidden>
+                ·
+              </span>
+              <span className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                {tiedReferenceCount} başa baş
+              </span>
+              {insufficientDataCount > 0 ? (
+                <span className="w-full text-[9.5px] font-medium" style={{ color: "var(--text-muted)" }}>
+                  {insufficientDataCount} referansta veri yetersiz
+                </span>
+              ) : null}
+            </div>
+            {showComparisonDetailTable ? (
             <div className="overflow-hidden rounded-[0.72rem] border" style={{ borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)" }}>
-              {comparisonRowsVisible.map((item, index) => {
+              {comparisonTableRows.map((item, index) => {
                 const visual = COMPARISON_VISUALS[item.key] ?? {
                   tone: "var(--text-secondary)",
                   surface: "color-mix(in srgb, var(--card-bg) 96%, white)",
@@ -1253,7 +1483,7 @@ export function FundDetailChart({ data }: Props) {
                   <div
                     key={item.key}
                     className={`group relative px-2.5 py-2 transition-[background-color,box-shadow] duration-150 sm:px-3 sm:py-2.5 ${
-                      index === comparisonRowsVisible.length - 1 ? "" : "border-b"
+                      index === comparisonTableRows.length - 1 ? "" : "border-b"
                     }`}
                     style={{
                       borderColor: "color-mix(in srgb, var(--border-subtle) 78%, transparent)",
@@ -1281,7 +1511,7 @@ export function FundDetailChart({ data }: Props) {
                         {item.label}
                       </span>
                       <span
-                        className="w-[4.25rem] shrink-0 text-right tabular-nums text-[11px] font-semibold tracking-[-0.018em] sm:w-[4.5rem] sm:text-[12px]"
+                        className="w-[4.35rem] shrink-0 text-right tabular-nums text-[11px] font-semibold tracking-[-0.018em] sm:w-[4.6rem] sm:text-[12px]"
                         style={{
                           color: hasDelta ? comparisonDeltaTone(delta) : "var(--text-tertiary)",
                         }}
@@ -1306,7 +1536,8 @@ export function FundDetailChart({ data }: Props) {
                 );
               })}
             </div>
-            {comparisonRows.length > comparisonRowsPrimary.length ? (
+            ) : null}
+            {comparisonExpandable ? (
               <button
                 type="button"
                 onClick={() => setComparisonExpanded((prev) => !prev)}
@@ -1318,7 +1549,11 @@ export function FundDetailChart({ data }: Props) {
                 }}
                 aria-expanded={comparisonExpanded}
               >
-                {comparisonExpanded ? "Daha az göster" : "Tüm referansları gör"}
+                {comparisonExpanded
+                  ? "Daha az göster"
+                  : isNarrowViewport
+                    ? `Tüm referanslar (${comparisonRows.length})`
+                    : "Tüm referansları gör"}
               </button>
             ) : null}
           </div>

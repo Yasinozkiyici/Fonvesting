@@ -39,8 +39,26 @@ function stopRunningNextDev() {
   }
 }
 
+function runDetailCoreBootstrapBestEffort() {
+  if (process.env.SKIP_DETAIL_CORE_BOOTSTRAP === "1") {
+    console.warn("[dev:reset] detail-core bootstrap skipped (SKIP_DETAIL_CORE_BOOTSTRAP=1)");
+    return;
+  }
+  try {
+    console.info("[dev:reset] detail-core bootstrap starting");
+    execSync("pnpm -s rebuild:detail-core", {
+      cwd: projectRoot,
+      stdio: "inherit",
+    });
+    console.info("[dev:reset] detail-core bootstrap completed");
+  } catch (error) {
+    console.warn("[dev:reset] detail-core bootstrap failed; continuing with dev start");
+  }
+}
+
 stopRunningNextDev();
 rmSync(path.join(projectRoot, ".next"), { recursive: true, force: true });
+runDetailCoreBootstrapBestEffort();
 
 const child = spawn("pnpm", ["dev"], {
   cwd: projectRoot,

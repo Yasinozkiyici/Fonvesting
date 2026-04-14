@@ -254,26 +254,119 @@ export async function fetchNormalizedJson<T>(
   url: string,
   label: string,
   normalize: (value: unknown) => T | null,
-  init?: RequestInit
+  init?: RequestInit,
+  timeoutMs = 12_000
 ): Promise<T> {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`${label}: HTTP ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+  const externalSignal = init?.signal;
+  const controller = new AbortController();
+  const onExternalAbort = () => {
+    controller.abort(new DOMException("request_aborted", "AbortError"));
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
   }
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException(`request_timeout_${timeoutMs}ms`, "AbortError"));
+  }, timeoutMs);
 
-  let json: unknown;
   try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    throw new Error(`${label}: geçersiz JSON`);
-  }
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`${label}: HTTP ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+    }
 
-  const normalized = normalize(json);
-  if (normalized == null) {
-    throw new Error(`${label}: beklenen formatta değil`);
+    let json: unknown;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`${label}: geçersiz JSON`);
+    }
+
+    const normalized = normalize(json);
+    if (normalized == null) {
+      throw new Error(`${label}: beklenen formatta değil`);
+    }
+    return normalized;
+  } catch (error) {
+    if (controller.signal.aborted && !externalSignal?.aborted) {
+      throw new Error(`${label}: istek zaman aşımına uğradı (${timeoutMs}ms)`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
-  return normalized;
+}
+
+export type NormalizedJsonFetchWithMeta<T> = {
+  data: T;
+  status: number;
+  headers: Headers;
+  rawBytes: number;
+};
+
+export async function fetchNormalizedJsonWithMeta<T>(
+  url: string,
+  label: string,
+  normalize: (value: unknown) => T | null,
+  init?: RequestInit,
+  timeoutMs = 12_000
+): Promise<NormalizedJsonFetchWithMeta<T>> {
+  const externalSignal = init?.signal;
+  const controller = new AbortController();
+  const onExternalAbort = () => {
+    controller.abort(new DOMException("request_aborted", "AbortError"));
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException(`request_timeout_${timeoutMs}ms`, "AbortError"));
+  }, timeoutMs);
+
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`${label}: HTTP ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+    }
+
+    let json: unknown;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`${label}: geçersiz JSON`);
+    }
+
+    const normalized = normalize(json);
+    if (normalized == null) {
+      throw new Error(`${label}: beklenen formatta değil`);
+    }
+
+    return {
+      data: normalized,
+      status: response.status,
+      headers: response.headers,
+      rawBytes: typeof TextEncoder !== "undefined" ? new TextEncoder().encode(text).length : text.length,
+    };
+  } catch (error) {
+    if (controller.signal.aborted && !externalSignal?.aborted) {
+      throw new Error(`${label}: istek zaman aşımına uğradı (${timeoutMs}ms)`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
+  }
 }
 
 export function normalizeCategoryOptions(value: unknown): FundListCategoryOption[] {
