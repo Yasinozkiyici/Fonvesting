@@ -27,7 +27,7 @@ const HEALTH_DB_PING_CACHE_TTL_MS = Number(process.env.HEALTH_DB_PING_CACHE_TTL_
 const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_TTL_MS ?? "7000");
 const HEALTH_DB_PING_MAX_WAIT_MS = Number(process.env.HEALTH_DB_PING_MAX_WAIT_MS ?? "900");
 const HEALTH_DB_PING_TX_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_TX_TIMEOUT_MS ?? "1800");
-const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "1500");
+const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "3000");
 
 export interface SystemHealthIssue {
   code: string;

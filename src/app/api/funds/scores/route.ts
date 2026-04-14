@@ -374,23 +374,34 @@ export async function GET(request: NextRequest) {
         ? `timeout_stale_cache_${classified.category}`
         : `error_stale_cache_${classified.category}`;
     } else if (shouldShortCircuitDbFallback(classified.category) || isTimeoutError(error)) {
-      const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
-      if (servingFallback) {
-        basePayload = servingFallback;
-        cacheState = "light";
-        source = "light";
+      // Pool/timeout dalgalanmasında önce en ucuz güvenli fallback'i dene (persisted cache).
+      const persisted = await readPersistedScoresPayload(mode, categoryCode);
+      if (persisted) {
+        basePayload = persisted;
+        cacheState = "db-cache";
+        source = "db-cache";
         degradedReason = isTimeoutError(error)
-          ? `timeout_core_serving_fallback_${classified.category}`
-          : `error_core_serving_fallback_${classified.category}`;
+          ? `timeout_db_cache_fast_${classified.category}`
+          : `error_db_cache_fast_${classified.category}`;
       } else {
-        // DB pool/connection baskısında ek DB fallback sorguları zincirleme yük üretiyor.
-        // Bu durumda yalnızca file/memory serving fallback de yoksa hızlı-degrade döneriz.
-        basePayload = buildEmptyPayload(mode);
-        cacheState = "empty";
-        source = "empty";
-        degradedReason = isTimeoutError(error)
-          ? `timeout_empty_fast_${classified.category}`
-          : `error_empty_fast_${classified.category}`;
+        const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
+        if (servingFallback) {
+          basePayload = servingFallback;
+          cacheState = "light";
+          source = "light";
+          degradedReason = isTimeoutError(error)
+            ? `timeout_core_serving_fallback_${classified.category}`
+            : `error_core_serving_fallback_${classified.category}`;
+        } else {
+          // DB pool/connection baskısında ek DB fallback sorguları zincirleme yük üretiyor.
+          // Bu durumda yalnızca file/memory serving fallback de yoksa hızlı-degrade döneriz.
+          basePayload = buildEmptyPayload(mode);
+          cacheState = "empty";
+          source = "empty";
+          degradedReason = isTimeoutError(error)
+            ? `timeout_empty_fast_${classified.category}`
+            : `error_empty_fast_${classified.category}`;
+        }
       }
       console.warn(
         `[scores-api][fast-degrade] mode=${mode} category=${categoryCode || "all"} timeout=${isTimeoutError(error) ? 1 : 0} class=${classified.category} retryable=${
