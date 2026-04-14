@@ -222,15 +222,7 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
   const task = (async (): Promise<HealthPingResult> => {
     const startedAt = probeStartedAt;
     try {
-      await prisma.$transaction(
-        async (tx) => {
-          await tx.$queryRaw`SELECT 1`;
-        },
-        {
-          maxWait: Math.max(250, HEALTH_DB_PING_MAX_WAIT_MS),
-          timeout: Math.max(500, HEALTH_DB_PING_TX_TIMEOUT_MS),
-        }
-      );
+      await prisma.$queryRaw`SELECT 1`;
       return {
         ok: true,
         ms: Date.now() - startedAt,

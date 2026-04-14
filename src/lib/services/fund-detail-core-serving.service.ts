@@ -121,6 +121,12 @@ const CORE_SERVING_FILE_REFRESH_MS = parseEnvInt("FUND_DETAIL_CORE_SERVING_FILE_
 const CORE_SERVING_ON_DEMAND_ENABLED = process.env.FUND_DETAIL_CORE_SERVING_ON_DEMAND !== "0";
 const CORE_SERVING_ON_DEMAND_ROWS = parseEnvInt("FUND_DETAIL_CORE_SERVING_ON_DEMAND_ROWS", 120, 20, 360);
 const CORE_SERVING_ON_DEMAND_TIMEOUT_MS = parseEnvInt("FUND_DETAIL_CORE_SERVING_ON_DEMAND_TIMEOUT_MS", 1_400, 400, 6_000);
+const CORE_SERVING_DB_UNIVERSE_TIMEOUT_MS = parseEnvInt(
+  "FUND_DETAIL_CORE_SERVING_DB_UNIVERSE_TIMEOUT_MS",
+  2_500,
+  600,
+  10_000
+);
 const CORE_SERVING_BOOTSTRAP_ON_MISS = process.env.FUND_DETAIL_CORE_SERVING_BOOTSTRAP_ON_MISS !== "0";
 const CORE_SERVING_BOOTSTRAP_COOLDOWN_MS = parseEnvInt(
   "FUND_DETAIL_CORE_SERVING_BOOTSTRAP_COOLDOWN_MS",
@@ -1269,7 +1275,7 @@ export async function listFundDetailCoreServingRows(limit: number): Promise<Fund
 
 export async function getFundDetailCoreServingUniversePayloads(): Promise<{
   records: FundDetailCoreServingPayload[];
-  source: "memory" | "file" | "none";
+  source: "memory" | "file" | "db" | "none";
   missReason: FundDetailCoreServingListResult["missReason"];
 }> {
   const now = Date.now();
@@ -1284,6 +1290,35 @@ export async function getFundDetailCoreServingUniversePayloads(): Promise<{
   if (fileRecords.length > 0) {
     return { records: fileRecords, source: "file", missReason: null };
   }
+
+  try {
+    const rows = await withTimeout(
+      prisma.scoresApiCache.findMany({
+        where: { cacheKey: { startsWith: `${CORE_SERVING_KEY_PREFIX}:` } },
+        select: { payload: true },
+        take: 5000,
+      }),
+      CORE_SERVING_DB_UNIVERSE_TIMEOUT_MS,
+      "fund_detail_core_universe_db"
+    );
+    const records: FundDetailCoreServingPayload[] = [];
+    for (const row of rows) {
+      const payload = parseServingPayload(row.payload);
+      if (!payload) continue;
+      records.push(payload);
+    }
+    if (records.length > 0) {
+      const memory = getCoreServingMemory();
+      const cachedAt = Date.now();
+      for (const payload of records) {
+        memory.set(payload.fund.code.trim().toUpperCase(), { payload, cachedAt });
+      }
+      return { records, source: "db", missReason: null };
+    }
+  } catch {
+    // DB fallback başarısızsa ana akışı bozmayız; çağıran katman mevcut degrade yolunu uygular.
+  }
+
   return {
     records: [],
     source: "none",
