@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getBuildFingerprint } from "@/lib/build-fingerprint";
 import { getSystemHealthSnapshot } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,7 @@ function hasDetailedHealthAccess(headers: Headers): boolean {
 }
 
 export async function GET(request: Request) {
+  const buildFingerprint = getBuildFingerprint();
   const isProduction = process.env.NODE_ENV === "production";
   const allowDetails = hasDetailedHealthAccess(request.headers);
   const requestUrl = new URL(request.url);
@@ -98,6 +100,11 @@ export async function GET(request: Request) {
     "X-Health-Db-Probe-Ms": String(snapshot.database.diagnostics.pingMs ?? -1),
     "X-System-Check-Degraded": systemCheckDegraded ? "1" : "0",
     "X-System-Check-Reason": systemCheckReason,
+    "X-Db-Env-Status": snapshot.database.envStatus.failureCategory ?? "ok",
+    "X-Db-Connection-Mode": snapshot.database.connectionMode,
+    "X-Db-Failure-Class": snapshot.database.diagnostics.failureCategory ?? "none",
+    "X-Build-Commit": buildFingerprint.commitShort ?? "unknown",
+    "X-Build-Env": buildFingerprint.env ?? "unknown",
   };
 
   if (isProduction && !allowDetails) {
@@ -115,6 +122,10 @@ export async function GET(request: Request) {
           configured: snapshot.database.configured,
           engine: snapshot.database.engine,
           canConnect: snapshot.database.canConnect,
+          connectionMode: snapshot.database.connectionMode,
+          failureCategory: snapshot.database.diagnostics.failureCategory,
+          failureDetail: snapshot.database.diagnostics.failureDetail,
+          envStatus: snapshot.database.envStatus,
           diagnostics: {
             identicalAcrossPaths: snapshot.database.diagnostics.identicalAcrossPaths,
             failureCategory: snapshot.database.diagnostics.failureCategory,
@@ -145,6 +156,12 @@ export async function GET(request: Request) {
         },
         jobs: snapshot.jobs,
         issueCount: snapshot.issues.length,
+        build: {
+          commit: buildFingerprint.commitShort,
+          deployment: buildFingerprint.deploymentId,
+          env: buildFingerprint.env,
+          generatedAt: buildFingerprint.generatedAt,
+        },
       },
       { status: statusCode, headers: sharedHeaders }
     );
@@ -155,6 +172,12 @@ export async function GET(request: Request) {
       ...snapshot,
       service: "fonvesting",
       timestamp: snapshot.checkedAt,
+      build: {
+        commit: buildFingerprint.commitShort,
+        deployment: buildFingerprint.deploymentId,
+        env: buildFingerprint.env,
+        generatedAt: buildFingerprint.generatedAt,
+      },
       hint: "Yerel: docker compose up -d ve .env/.env.local içinde PostgreSQL DATABASE_URL. Üretim: pnpm exec prisma migrate deploy.",
     },
     { status: statusCode, headers: sharedHeaders }

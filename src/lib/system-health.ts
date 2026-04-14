@@ -2,12 +2,14 @@ import { Prisma } from "@prisma/client";
 import dns from "node:dns/promises";
 import net from "node:net";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { getDbEnvStatus, sanitizeFailureDetail, type DbConnectionMode } from "@/lib/db-env-validation";
 import { DAILY_JOB_SLA_MINUTES, getIstanbulWallClock, toIstanbulDateKey } from "@/lib/daily-sync-policy";
 import {
   areRuntimeTargetsIdentical,
   getDbRuntimeTargetDiagnostics,
   type DbRuntimeTargetDiagnostics,
 } from "@/lib/db-runtime-diagnostics";
+import { resolveHealthDbFailureCategory } from "@/lib/health-db-diagnostics";
 import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
 import { getFundDetailCoreServingReadiness } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
@@ -41,6 +43,8 @@ export interface SystemHealthSnapshot {
     configured: boolean;
     engine: "postgresql" | "unknown";
     canConnect: boolean;
+    connectionMode: DbConnectionMode;
+    envStatus: ReturnType<typeof getDbEnvStatus>;
     dbUrlPreview: string;
     effectiveDbUrlPreview: string;
     effectiveHost: string | null;
@@ -241,7 +245,7 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
         ms: Date.now() - startedAt,
         source: "query_failed",
         failureCategory: classified.category,
-        failureDetail: formatError(error),
+        failureDetail: sanitizeFailureDetail(formatError(error)),
       };
     }
   })();
@@ -384,6 +388,9 @@ export async function getSystemHealthSnapshot(options?: {
   const checkedAt = new Date().toISOString();
   const rawDbUrl = (process.env.DATABASE_URL ?? "").trim();
   const isProduction = process.env.NODE_ENV === "production";
+  const dbEnvStatus = getDbEnvStatus({
+    requireDirectUrl: (process.env.HEALTH_REQUIRE_DIRECT_URL ?? "").trim() === "1",
+  });
   const errors: string[] = [];
   const issues: SystemHealthIssue[] = [];
   const includeExternalProbes = options?.includeExternalProbes === true;
@@ -563,11 +570,16 @@ export async function getSystemHealthSnapshot(options?: {
       });
     }
 
-    const failureDetail = dbPing.failureDetail ?? formatError(error);
-    const failureCategory = dbPing.failureCategory ?? classifyDatabaseError(error).category;
+    const failureCategory = resolveHealthDbFailureCategory({
+      envFailureCategory: dbEnvStatus.failureCategory,
+      probeFailureCategory: dbPing.failureCategory,
+      classifiedFailureCategory: classifyDatabaseError(error).category,
+    });
+    const failureDetail = sanitizeFailureDetail(dbPing.failureDetail ?? formatError(error));
     console.error("[health][database_ping_failed]", {
       failureCategory,
       failureDetail,
+      envStatus: dbEnvStatus,
       pingSource: dbPing.source,
       pingMs: dbPing.ms,
       targetIdentity,
@@ -577,12 +589,14 @@ export async function getSystemHealthSnapshot(options?: {
       ok: false,
       status: readPathOperational ? "degraded" : "error",
       database: {
-        configured: Boolean(rawDbUrl || process.env.NODE_ENV === "development"),
+        configured: dbEnvStatus.configured,
         engine:
           effectiveDbUrl.startsWith("postgresql:") || effectiveDbUrl.startsWith("postgres:")
             ? "postgresql"
             : "unknown",
         canConnect: false,
+        connectionMode: dbEnvStatus.connectionMode,
+        envStatus: dbEnvStatus,
         dbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(rawDbUrl).slice(0, 96),
         effectiveDbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(effectiveDbUrl).slice(0, 96),
         effectiveHost,
@@ -654,12 +668,14 @@ export async function getSystemHealthSnapshot(options?: {
       ok: true,
       status: "ok",
       database: {
-        configured: Boolean(rawDbUrl || process.env.NODE_ENV === "development"),
+        configured: dbEnvStatus.configured,
         engine:
           effectiveDbUrl.startsWith("postgresql:") || effectiveDbUrl.startsWith("postgres:")
             ? "postgresql"
             : "unknown",
         canConnect: true,
+        connectionMode: dbEnvStatus.connectionMode,
+        envStatus: dbEnvStatus,
         dbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(rawDbUrl).slice(0, 96),
         effectiveDbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(effectiveDbUrl).slice(0, 96),
         effectiveHost,
@@ -1072,12 +1088,14 @@ export async function getSystemHealthSnapshot(options?: {
     ok: status === "ok",
     status,
     database: {
-      configured: Boolean(rawDbUrl || process.env.NODE_ENV === "development"),
+      configured: dbEnvStatus.configured,
       engine:
         effectiveDbUrl.startsWith("postgresql:") || effectiveDbUrl.startsWith("postgres:")
           ? "postgresql"
           : "unknown",
       canConnect: true,
+      connectionMode: dbEnvStatus.connectionMode,
+      envStatus: dbEnvStatus,
       dbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(rawDbUrl).slice(0, 96),
       effectiveDbUrlPreview: isProduction ? "(production-hidden)" : redactDatabaseUrl(effectiveDbUrl).slice(0, 96),
       effectiveHost,

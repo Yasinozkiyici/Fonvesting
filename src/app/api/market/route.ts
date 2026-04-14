@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getMarketSummaryFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 import type { MarketSnapshotSummaryPayload } from "@/lib/services/fund-daily-snapshot.service";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -89,6 +90,11 @@ function buildMarketFallbackPayload(): MarketSnapshotSummaryPayload {
 
 export async function GET() {
   const startedAt = Date.now();
+  const dbEnvStatus = getDbEnvStatus();
+  const dbHeaders = {
+    "X-Db-Env-Status": dbEnvStatus.failureCategory ?? "ok",
+    "X-Db-Connection-Mode": dbEnvStatus.connectionMode,
+  };
   const state = getMarketRouteState();
   const cached = state.cache;
   if (cached && Date.now() - cached.updatedAt <= MARKET_CACHE_TTL_MS) {
@@ -98,6 +104,8 @@ export async function GET() {
         "X-Market-Cache": "hit",
         "X-Market-Failure-Class": "none",
         "X-Market-Fallback-Used": "0",
+        "X-Db-Failure-Class": "none",
+        ...dbHeaders,
       },
     });
   }
@@ -123,6 +131,8 @@ export async function GET() {
         "X-Market-Cache": "miss",
         "X-Market-Failure-Class": "none",
         "X-Market-Fallback-Used": "0",
+        "X-Db-Failure-Class": "none",
+        ...dbHeaders,
       },
     });
   } catch (e) {
@@ -145,6 +155,8 @@ export async function GET() {
           "X-Market-Degraded": marketFailureClass,
           "X-Market-Failure-Class": marketFailureClass,
           "X-Market-Fallback-Used": "1",
+          "X-Db-Failure-Class": marketFailureClass,
+          ...dbHeaders,
         },
       });
     }
@@ -162,13 +174,22 @@ export async function GET() {
           "X-Market-Degraded": marketFailureClass,
           "X-Market-Failure-Class": marketFailureClass,
           "X-Market-Fallback-Used": "1",
+          "X-Db-Failure-Class": marketFailureClass,
+          ...dbHeaders,
         },
       });
     }
-    console.error(
-      `[api/market] market_failure_class=${marketFailureClass} market_fallback_used=0 retryable=${classified.retryable ? 1 : 0}`,
-      e
-    );
+    console.error("[db-route-failure]", {
+      route: "/api/market",
+      marketFailureClass,
+      envConfigured: dbEnvStatus.configured,
+      dbEnvStatus: dbEnvStatus.failureCategory ?? "ok",
+      connectionMode: dbEnvStatus.connectionMode,
+      prismaCode: classified.prismaCode,
+      retryable: classified.retryable,
+      message: sanitizeFailureDetail(classified.message),
+      timestamp: new Date().toISOString(),
+    });
     const devDetail = process.env.NODE_ENV !== "production" && e instanceof Error ? e.message : undefined;
     return NextResponse.json(
       { error: "market_failed", ...(devDetail ? { detail: devDetail } : {}) },
@@ -177,6 +198,8 @@ export async function GET() {
         headers: {
           "X-Market-Failure-Class": marketFailureClass,
           "X-Market-Fallback-Used": "0",
+          "X-Db-Failure-Class": marketFailureClass,
+          ...dbHeaders,
         },
       }
     );

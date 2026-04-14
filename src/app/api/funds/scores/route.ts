@@ -8,6 +8,7 @@ import { scoresApiCacheKey } from "@/lib/services/fund-scores-cache.service";
 import { prisma } from "@/lib/prisma";
 import { getFundsPage } from "@/lib/services/fund-list.service";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { fundMatchesTheme, parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
 import { getFundDetailCoreServingUniversePayloads } from "@/lib/services/fund-detail-core-serving.service";
 
@@ -321,6 +322,11 @@ async function resolveBasePayload(
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now();
+  const dbEnvStatus = getDbEnvStatus();
+  const dbHeaders = {
+    "X-Db-Env-Status": dbEnvStatus.failureCategory ?? "ok",
+    "X-Db-Connection-Mode": dbEnvStatus.connectionMode,
+  };
   const { searchParams } = new URL(request.url);
   const mode = normalizeRankingMode(searchParams);
   const categoryCode = (searchParams.get("category") ?? "").trim().slice(0, MAX_CATEGORY_LENGTH);
@@ -347,6 +353,17 @@ export async function GET(request: NextRequest) {
     cacheState = resolved.cacheState;
   } catch (error) {
     const classified = classifyDatabaseError(error);
+    console.error("[db-route-failure]", {
+      route: "/api/funds/scores",
+      failureClass: classified.category,
+      envConfigured: dbEnvStatus.configured,
+      dbEnvStatus: dbEnvStatus.failureCategory ?? "ok",
+      connectionMode: dbEnvStatus.connectionMode,
+      prismaCode: classified.prismaCode,
+      retryable: classified.retryable,
+      message: sanitizeFailureDetail(classified.message),
+      timestamp: new Date().toISOString(),
+    });
     failureClass = classified.category;
     const stale = pickStaleCache(state, key);
     if (stale) {
@@ -445,6 +462,8 @@ export async function GET(request: NextRequest) {
       "X-Discover-Theme": theme ?? "none",
       "X-Discover-Server-Result-Count": String(payload.funds.length),
       "X-Discover-Universe-Total": String(payload.total),
+      "X-Db-Failure-Class": failureClass ?? "none",
+      ...dbHeaders,
       ...(emptyResultKind ? { "X-Scores-Empty-Result": emptyResultKind } : {}),
       ...(degradedReason ? { "X-Scores-Degraded": degradedReason } : {}),
       ...(failureClass ? { "X-Scores-Failure-Class": failureClass } : {}),

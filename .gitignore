@@ -10,6 +10,8 @@ coverage/
 .env
 .env.local
 .env.*.local
+.env.vercel.production*
+.tmp.vercel.prod.env
 
 # Database
 prisma/*.db

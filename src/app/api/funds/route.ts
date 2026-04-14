@@ -3,6 +3,7 @@ import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/
 import { getFundsPage, type FundListSortField } from "@/lib/services/fund-list.service";
 import { prisma } from "@/lib/prisma";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
 
 export const dynamic = "force-dynamic";
@@ -232,6 +233,11 @@ async function buildServingFundsFallback(page: number, pageSize: number): Promis
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
+  const dbEnvStatus = getDbEnvStatus();
+  const dbHeaders = {
+    "X-Db-Env-Status": dbEnvStatus.failureCategory ?? "ok",
+    "X-Db-Connection-Mode": dbEnvStatus.connectionMode,
+  };
   try {
     const { searchParams } = req.nextUrl;
     const page = Math.min(MAX_PAGE, Math.max(1, Number(searchParams.get("page") ?? "1")));
@@ -255,6 +261,8 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "hit",
+          "X-Db-Failure-Class": "none",
+          ...dbHeaders,
         },
       });
     }
@@ -267,6 +275,8 @@ export async function GET(req: NextRequest) {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "light",
+            "X-Db-Failure-Class": "none",
+            ...dbHeaders,
           },
         });
       }
@@ -275,6 +285,8 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": servingPayload.items.length > 0 ? "serving-light" : "empty",
+          "X-Db-Failure-Class": "none",
+          ...dbHeaders,
         },
       });
     }
@@ -312,6 +324,8 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "miss",
+          "X-Db-Failure-Class": "none",
+          ...dbHeaders,
         },
       }
     );
@@ -338,6 +352,8 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "stale",
+          "X-Db-Failure-Class": "none",
+          ...dbHeaders,
         },
       });
     }
@@ -352,6 +368,8 @@ export async function GET(req: NextRequest) {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "light-fast",
             "X-Funds-Degraded": classified.category,
+            "X-Db-Failure-Class": classified.category,
+            ...dbHeaders,
           },
         });
       }
@@ -363,6 +381,8 @@ export async function GET(req: NextRequest) {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "serving-fast",
             "X-Funds-Degraded": classified.category,
+            "X-Db-Failure-Class": classified.category,
+            ...dbHeaders,
           },
         });
       }
@@ -379,18 +399,33 @@ export async function GET(req: NextRequest) {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "empty-fast",
             "X-Funds-Degraded": classified.category,
+            "X-Db-Failure-Class": classified.category,
+            ...dbHeaders,
           },
         }
       );
     }
 
-    console.error("[api/funds]", e, `ms=${Date.now() - startedAt}`);
+    console.error("[db-route-failure]", {
+      route: "/api/funds",
+      failureClass: classified.category,
+      envConfigured: dbEnvStatus.configured,
+      dbEnvStatus: dbEnvStatus.failureCategory ?? "ok",
+      connectionMode: dbEnvStatus.connectionMode,
+      prismaCode: classified.prismaCode,
+      retryable: classified.retryable,
+      message: sanitizeFailureDetail(classified.message),
+      durationMs: Date.now() - startedAt,
+      timestamp: new Date().toISOString(),
+    });
     const fallback = await buildLightFundsFallback(page, pageSize);
     return NextResponse.json(fallback, {
       status: 200,
       headers: {
         "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
         "X-Funds-Cache": fallback.items.length > 0 ? "light-fallback" : "empty",
+        "X-Db-Failure-Class": classified.category,
+        ...dbHeaders,
       },
     });
   }
