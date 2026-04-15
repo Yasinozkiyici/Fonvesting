@@ -6,7 +6,7 @@ import {
   normalizeBaseCode,
   parseCompareCodes,
   readServingPayloadForCompareSeries,
-  isTransientCompareBaseMissReason,
+  classifyCompareBaseAvailability,
   type CompareServingReaderLike,
 } from "@/lib/services/compare-series-resolution";
 import {
@@ -26,7 +26,8 @@ const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERSION_TIMEOUT_MS ?? "1000");
 const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
-const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "1600");
+const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "2600");
+const COMPARE_SERIES_BASE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_TIMEOUT_MS ?? "3200");
 
 type Point = { t: number; v: number };
 
@@ -61,6 +62,8 @@ type CompareSeriesBaseError = {
   error: "base_not_found" | "base_temporarily_unavailable";
   failureClass: string[];
 };
+
+type CompareUniverseLike = Awaited<ReturnType<typeof getFundDetailCoreServingUniversePayloads>>;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -175,13 +178,45 @@ async function getCompareSeriesPayload(
   const readServing = deps?.readServing ?? getFundDetailCoreServingCached;
   const fetchMacro = deps?.fetchMacro ?? fetchKiyasMacroBuckets;
   const readUniverse = deps?.readUniverse ?? getFundDetailCoreServingUniversePayloads;
-  const baseRead = await readServingPayloadForCompareSeries(baseCode, readServing).catch((error) => ({
+  let servingUniverse: CompareUniverseLike | null = null;
+  const getUniverse = async (): Promise<CompareUniverseLike> => {
+    if (servingUniverse) return servingUniverse;
+    servingUniverse = await withTimeout(readUniverse(), COMPARE_SERIES_UNIVERSE_TIMEOUT_MS, "compare_series_universe");
+    return servingUniverse;
+  };
+  const findFromUniverse = (code: string, universe: CompareUniverseLike | null): FundDetailCoreServingPayload | null => {
+    if (!universe || universe.records.length === 0) return null;
+    const normalized = code.trim().toUpperCase();
+    return (
+      universe.records.find((record) => record.fund.code.trim().toUpperCase() === normalized) ?? null
+    );
+  };
+
+  const baseRead = await withTimeout(
+    readServingPayloadForCompareSeries(baseCode, readServing),
+    COMPARE_SERIES_BASE_TIMEOUT_MS,
+    "compare_series_base_read"
+  ).catch((error) => ({
     payload: null,
     missReason: isTimeoutLike(error) ? "read_timeout" : "read_failed",
   }));
-  if (!baseRead.payload) {
-    const missReason = baseRead.missReason ?? "";
-    if (isTransientCompareBaseMissReason(missReason)) {
+
+  let baseFund: FundDetailCoreServingPayload | null = baseRead.payload;
+  if (!baseFund) {
+    try {
+      baseFund = findFromUniverse(baseCode, await getUniverse());
+    } catch {
+      // universe read failure below transient class branch'inde ele alınır
+    }
+  }
+  if (!baseFund) {
+    const availability = classifyCompareBaseAvailability({
+      hasPayload: Boolean(baseRead.payload),
+      matchedFromUniverse: false,
+      missReason: baseRead.missReason,
+    });
+    if (availability === "temporarily_unavailable") {
+      const missReason = (baseRead.missReason ?? "").trim();
       return {
         error: "base_temporarily_unavailable",
         failureClass: [missReason === "read_timeout" ? "timeout" : "base_read_failed"],
@@ -189,7 +224,6 @@ async function getCompareSeriesPayload(
     }
     return { error: "base_not_found", failureClass: [] };
   }
-  const baseFund = baseRead.payload;
   const failureClass: string[] = [];
   const degradedSources: string[] = [];
   const baseSnapshotMs = Date.parse(baseFund.latestSnapshotDate ?? "");
@@ -228,7 +262,7 @@ async function getCompareSeriesPayload(
 
   const anchor = startOfUtcDay(new Date());
   const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
-  const [macroByRef, servingUniverse] = await Promise.all([
+  const [macroByRef, servingUniverseResult] = await Promise.all([
     withTimeout(fetchMacro(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro").catch((error) => {
       degradedSources.push("macro");
       failureClass.push(isTimeoutLike(error) ? "timeout" : "macro_failed");
@@ -242,15 +276,11 @@ async function getCompareSeriesPayload(
       };
     }),
     shouldBuildCategoryFromUniverse
-      ? withTimeout(
-        readUniverse(),
-        COMPARE_SERIES_UNIVERSE_TIMEOUT_MS,
-        "compare_series_universe"
-      ).catch((error) => {
-        degradedSources.push("category_universe");
-        failureClass.push(isTimeoutLike(error) ? "timeout" : "universe_failed");
-        return null;
-      })
+      ? getUniverse().catch((error) => {
+          degradedSources.push("category_universe");
+          failureClass.push(isTimeoutLike(error) ? "timeout" : "universe_failed");
+          return null;
+        })
       : Promise.resolve(null),
   ]);
 
@@ -277,8 +307,8 @@ async function getCompareSeriesPayload(
     fundSeries,
     macroSeries: {
       category:
-        shouldBuildCategoryFromUniverse && servingUniverse
-          ? buildCategorySeriesFromServingPayloads(baseFund, servingUniverse.records)
+        shouldBuildCategoryFromUniverse && servingUniverseResult
+          ? buildCategorySeriesFromServingPayloads(baseFund, servingUniverseResult.records)
           : [],
       bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
       usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),

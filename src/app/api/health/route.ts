@@ -98,6 +98,7 @@ export async function GET(request: Request) {
     "X-Health-Strict": strictMode ? "1" : "0",
     "X-Health-Db-Probe-Used": dbProbeUsed,
     "X-Health-Db-Probe-Ms": String(snapshot.database.diagnostics.pingMs ?? -1),
+    "X-Health-Read-Path-Operational": snapshot.database.diagnostics.readPathOperational ? "1" : "0",
     "X-System-Check-Degraded": systemCheckDegraded ? "1" : "0",
     "X-System-Check-Reason": systemCheckReason,
     "X-Db-Env-Status": snapshot.database.envStatus.failureCategory ?? "ok",

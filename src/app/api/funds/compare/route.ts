@@ -3,7 +3,10 @@ import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/
 import { prisma } from "@/lib/prisma";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
-import { getFundDetailCoreServingCached } from "@/lib/services/fund-detail-core-serving.service";
+import {
+  getFundDetailCoreServingCached,
+  getFundDetailCoreServingUniversePayloads,
+} from "@/lib/services/fund-detail-core-serving.service";
 import {
   loadCompareContext,
   type CompareContextDto,
@@ -17,6 +20,8 @@ const MAX = 4;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "2500");
 const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "3000");
+const COMPARE_SERVING_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_UNIVERSE_TIMEOUT_MS ?? "2500");
+const COMPARE_SERVING_CODE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_CODE_TIMEOUT_MS ?? "2200");
 
 type CompareFundRow = {
   fundId: string;
@@ -164,10 +169,45 @@ async function loadRowsFromSnapshot(codes: string[]): Promise<CompareFundRow[]> 
 }
 
 async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
+  const requested = new Set(codes.map((code) => code.trim().toUpperCase()));
+  const universe = await withTimeout(
+    getFundDetailCoreServingUniversePayloads(),
+    COMPARE_SERVING_UNIVERSE_TIMEOUT_MS,
+    "compare_serving_universe"
+  ).catch(() => null);
+  const rowsFromUniverse =
+    universe?.records
+      .filter((payload) => requested.has(payload.fund.code.trim().toUpperCase()))
+      .map((payload) => ({
+        fundId: payload.fund.fundId,
+        code: payload.fund.code,
+        name: payload.fund.name,
+        shortName: payload.fund.shortName,
+        logoUrl: payload.fund.logoUrl,
+        lastPrice: payload.latestPrice,
+        dailyReturn: payload.dailyChangePct,
+        monthlyReturn: payload.monthlyReturn,
+        yearlyReturn: payload.yearlyReturn,
+        portfolioSize: payload.portfolioSummary.current,
+        investorCount: payload.investorSummary.current,
+        categoryCode: payload.fund.categoryCode,
+        categoryName: payload.fund.categoryName,
+        fundTypeCode: payload.fund.fundTypeCode,
+        fundTypeName: payload.fund.fundTypeName,
+        categoryId: null,
+        isActive: true,
+        fallbackOnly: true,
+      })) ?? [];
+  if (rowsFromUniverse.length > 0) return rowsFromUniverse;
+
   const reads = await Promise.all(
     codes.map(async (code) => {
       try {
-        return await readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached);
+        return await withTimeout(
+          readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached),
+          COMPARE_SERVING_CODE_TIMEOUT_MS,
+          "compare_serving_code"
+        );
       } catch {
         return { payload: null };
       }

@@ -60,6 +60,7 @@ export interface SystemHealthSnapshot {
       queryFailureSummary: Record<string, number>;
       pingSource: HealthDbPingSource;
       pingMs: number | null;
+      readPathOperational: boolean;
     };
   };
   supabaseRest: {
@@ -586,14 +587,17 @@ export async function getSystemHealthSnapshot(options?: {
       }
     }
 
+    const servingReadPathAvailable = Boolean(
+      detailCoreServingReadiness.fileRecordCount > 0 || (detailCoreServingReadiness.dbCacheCount ?? 0) > 0
+    );
     const readPathOperational = Boolean(
-      latestFundSnapshotDate || latestMarketSnapshotDate || latestMacroObservationDate
+      servingReadPathAvailable || latestFundSnapshotDate || latestMarketSnapshotDate || latestMacroObservationDate
     );
     if (readPathOperational) {
       issues.push({
-        code: "database_direct_unavailable",
+        code: "database_direct_unavailable_read_path_operational",
         severity: "warning",
-        message: "Prisma doğrudan veritabanına bağlanamadı; health yanıtı REST freshness fallback ile üretildi.",
+        message: "Prisma doğrudan veritabanına bağlanamadı; serving/snapshot read-path fallback aktif.",
       });
     }
 
@@ -639,6 +643,7 @@ export async function getSystemHealthSnapshot(options?: {
           queryFailureSummary: {},
           pingSource: dbPing.source,
           pingMs: dbPing.ms,
+          readPathOperational,
         },
       },
       supabaseRest: supabaseProbe,
@@ -721,6 +726,7 @@ export async function getSystemHealthSnapshot(options?: {
           queryFailureSummary: {},
           pingSource: dbPing.source,
           pingMs: dbPing.ms,
+          readPathOperational: true,
         },
       },
       supabaseRest: supabaseProbe,
@@ -1200,6 +1206,7 @@ export async function getSystemHealthSnapshot(options?: {
         queryFailureSummary,
         pingSource: dbPing.source,
         pingMs: dbPing.ms,
+        readPathOperational: true,
       },
     },
     supabaseRest: supabaseProbe,

@@ -5,6 +5,7 @@ import {
   parseCompareCodes,
   readServingPayloadForCompareSeries,
   isTransientCompareBaseMissReason,
+  classifyCompareBaseAvailability,
   type CompareServingReaderLike,
 } from "@/lib/services/compare-series-resolution";
 
@@ -91,4 +92,23 @@ test("transient base miss reason classification is deterministic", () => {
   assert.equal(isTransientCompareBaseMissReason("ondemand_failed"), true);
   assert.equal(isTransientCompareBaseMissReason("db_miss"), false);
   assert.equal(isTransientCompareBaseMissReason(null), false);
+});
+
+test("base availability classification separates temporary failures from not_found", () => {
+  assert.equal(
+    classifyCompareBaseAvailability({ hasPayload: true, matchedFromUniverse: false, missReason: "db_miss" }),
+    "ok"
+  );
+  assert.equal(
+    classifyCompareBaseAvailability({ hasPayload: false, matchedFromUniverse: true, missReason: "db_miss" }),
+    "ok"
+  );
+  assert.equal(
+    classifyCompareBaseAvailability({ hasPayload: false, matchedFromUniverse: false, missReason: "read_timeout" }),
+    "temporarily_unavailable"
+  );
+  assert.equal(
+    classifyCompareBaseAvailability({ hasPayload: false, matchedFromUniverse: false, missReason: "db_miss" }),
+    "not_found"
+  );
 });

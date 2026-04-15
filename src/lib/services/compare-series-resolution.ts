@@ -49,3 +49,13 @@ export async function readServingPayloadForCompareSeries<TPayload>(
 export function isTransientCompareBaseMissReason(reason: string | null | undefined): boolean {
   return TRANSIENT_COMPARE_BASE_MISS_REASONS.has((reason ?? "").trim());
 }
+
+export function classifyCompareBaseAvailability(input: {
+  hasPayload: boolean;
+  matchedFromUniverse: boolean;
+  missReason: string | null | undefined;
+}): "ok" | "not_found" | "temporarily_unavailable" {
+  if (input.hasPayload || input.matchedFromUniverse) return "ok";
+  if (isTransientCompareBaseMissReason(input.missReason)) return "temporarily_unavailable";
+  return "not_found";
+}
