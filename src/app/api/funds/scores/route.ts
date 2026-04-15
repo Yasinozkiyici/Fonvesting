@@ -24,6 +24,12 @@ const SCORES_SERVER_TIMEOUT_MS = parseEnvMs("SCORES_SERVER_TIMEOUT_MS", 4_500, 2
 const SCORES_FRESH_TTL_MS = parseEnvMs("SCORES_ROUTE_CACHE_TTL_MS", 90_000, 10_000, 10 * 60_000);
 const SCORES_STALE_TTL_MS = parseEnvMs("SCORES_ROUTE_STALE_TTL_MS", 10 * 60_000, 30_000, 60 * 60_000);
 const SCORES_PERSISTED_CACHE_TIMEOUT_MS = parseEnvMs("SCORES_PERSISTED_CACHE_TIMEOUT_MS", 1_000, 400, 5_000);
+const SCORES_PERSISTED_CACHE_TIMEOUT_BEST_ALL_MS = parseEnvMs(
+  "SCORES_PERSISTED_CACHE_TIMEOUT_BEST_ALL_MS",
+  2_200,
+  600,
+  8_000
+);
 const SCORES_LIGHT_FALLBACK_TIMEOUT_MS = parseEnvMs("SCORES_LIGHT_FALLBACK_TIMEOUT_MS", 1_500, 600, 6_000);
 const SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS = parseEnvMs("SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS", 1_000, 500, 6_000);
 const SCORES_LIGHT_FALLBACK_LIMIT = 300;
@@ -149,6 +155,19 @@ async function readPersistedScoresPayload(mode: RankingMode, categoryCode: strin
       select: { payload: true },
     }),
     SCORES_PERSISTED_CACHE_TIMEOUT_MS
+  ).catch(() => null);
+  if (!row?.payload) return null;
+  return sanitizePersistedPayload(mode, row.payload);
+}
+
+async function readPersistedScoresPayloadBestAll(mode: RankingMode): Promise<ScoresApiPayload | null> {
+  const cacheKey = scoresApiCacheKey(mode, "", "");
+  const row = await withTimeout(
+    prisma.scoresApiCache.findUnique({
+      where: { cacheKey },
+      select: { payload: true },
+    }),
+    SCORES_PERSISTED_CACHE_TIMEOUT_BEST_ALL_MS
   ).catch(() => null);
   if (!row?.payload) return null;
   return sanitizePersistedPayload(mode, row.payload);
@@ -333,6 +352,7 @@ export async function GET(request: NextRequest) {
   const theme = parseFundThemeParam(searchParams.get("theme") ?? "");
   const queryTrim = (searchParams.get("q") ?? searchParams.get("query") ?? "").trim().slice(0, MAX_QUERY_LENGTH);
   const limit = parseLimit(searchParams);
+  const isCriticalBestAllPath = mode === "BEST" && !categoryCode && !queryTrim && !theme;
   const key = baseScoresKey(mode, categoryCode, limit);
   const state = getScoresRouteState();
 
@@ -340,19 +360,17 @@ export async function GET(request: NextRequest) {
   let source: "snapshot" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "snapshot";
   let degradedReason: string | null = null;
   let failureClass: string | null = null;
-  let basePayload: ScoresApiPayload;
-
-  console.info(
-    `[discover-server-query] mode=${mode} category=${categoryCode || "all"} theme=${theme ?? "none"} ` +
-      `limit=${limit ?? "none"} q=${queryTrim ? "1" : "0"}`
-  );
-
-  try {
-    const resolved = await resolveBasePayload(mode, categoryCode, limit);
-    basePayload = resolved.payload;
-    cacheState = resolved.cacheState;
-  } catch (error) {
-    const classified = classifyDatabaseError(error);
+  let basePayload: ScoresApiPayload = buildEmptyPayload(mode);
+  const applyResolvedPayload = (
+    payload: ScoresApiPayload,
+    nextSource: typeof source,
+    nextCacheState: typeof cacheState
+  ): void => {
+    basePayload = payload;
+    source = nextSource;
+    cacheState = nextCacheState;
+  };
+  const logDbRouteFailure = (classified: ReturnType<typeof classifyDatabaseError>): void => {
     console.error("[db-route-failure]", {
       route: "/api/funds/scores",
       failureClass: classified.category,
@@ -364,76 +382,122 @@ export async function GET(request: NextRequest) {
       message: sanitizeFailureDetail(classified.message),
       timestamp: new Date().toISOString(),
     });
-    failureClass = classified.category;
+  };
+
+  console.info(
+    `[discover-server-query] mode=${mode} category=${categoryCode || "all"} theme=${theme ?? "none"} ` +
+      `limit=${limit ?? "none"} q=${queryTrim ? "1" : "0"}`
+  );
+
+  let handledByCriticalPath = false;
+  if (isCriticalBestAllPath) {
     const stale = pickStaleCache(state, key);
-    if (stale) {
-      basePayload = stale;
-      cacheState = "stale";
-      source = "stale";
-      degradedReason = isTimeoutError(error)
-        ? `timeout_stale_cache_${classified.category}`
-        : `error_stale_cache_${classified.category}`;
-    } else if (shouldShortCircuitDbFallback(classified.category) || isTimeoutError(error)) {
-      // Pool/timeout dalgalanmasında önce en ucuz güvenli fallback'i dene (persisted cache).
-      const persisted = await readPersistedScoresPayload(mode, categoryCode);
-      if (persisted) {
-        basePayload = persisted;
-        cacheState = "db-cache";
-        source = "db-cache";
-        degradedReason = isTimeoutError(error)
-          ? `timeout_db_cache_fast_${classified.category}`
-          : `error_db_cache_fast_${classified.category}`;
+    if (stale && stale.funds.length > 0) {
+      applyResolvedPayload(stale, "stale", "stale");
+      handledByCriticalPath = true;
+    } else {
+      const persisted = await readPersistedScoresPayloadBestAll(mode);
+      if (persisted && persisted.funds.length > 0) {
+        applyResolvedPayload(persisted, "db-cache", "db-cache");
+        handledByCriticalPath = true;
       } else {
         const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
-        if (servingFallback) {
-          basePayload = servingFallback;
-          cacheState = "light";
-          source = "light";
-          degradedReason = isTimeoutError(error)
-            ? `timeout_core_serving_fallback_${classified.category}`
-            : `error_core_serving_fallback_${classified.category}`;
-        } else {
-          // DB pool/connection baskısında ek DB fallback sorguları zincirleme yük üretiyor.
-          // Bu durumda yalnızca file/memory serving fallback de yoksa hızlı-degrade döneriz.
-          basePayload = buildEmptyPayload(mode);
-          cacheState = "empty";
-          source = "empty";
-          degradedReason = isTimeoutError(error)
-            ? `timeout_empty_fast_${classified.category}`
-            : `error_empty_fast_${classified.category}`;
-        }
-      }
-      console.warn(
-        `[scores-api][fast-degrade] mode=${mode} category=${categoryCode || "all"} timeout=${isTimeoutError(error) ? 1 : 0} class=${classified.category} retryable=${
-          classified.retryable ? 1 : 0
-        } fallback_rows=${basePayload.funds.length} fallback_source=${source}`
-      );
-    } else {
-      const persisted = await readPersistedScoresPayload(mode, categoryCode);
-      if (persisted) {
-        basePayload = persisted;
-        cacheState = "db-cache";
-        source = "db-cache";
-        degradedReason = isTimeoutError(error) ? "timeout_db_cache" : "error_db_cache";
-      } else {
-        const light = await readLightSnapshotFallback(mode, categoryCode);
-        if (light) {
-          basePayload = light;
-          cacheState = "light";
-          source = "light";
-          degradedReason = isTimeoutError(error) ? "timeout_light_fallback" : "error_light_fallback";
+        if (servingFallback && servingFallback.funds.length > 0) {
+          applyResolvedPayload(servingFallback, "light", "light");
+          handledByCriticalPath = true;
         } else {
           const fundsListFallback = await readFundsListFallback(mode, categoryCode);
-          if (fundsListFallback) {
-            basePayload = fundsListFallback;
-            cacheState = "funds-list";
-            source = "funds-list";
-            degradedReason = isTimeoutError(error) ? "timeout_funds_list_fallback" : "error_funds_list_fallback";
+          if (fundsListFallback && fundsListFallback.funds.length > 0) {
+            applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+            handledByCriticalPath = true;
           } else {
-            basePayload = buildEmptyPayload(mode);
-            cacheState = "empty";
-            source = "empty";
-            degradedReason = isTimeoutError(error) ? "timeout_empty" : "error_empty";
+            try {
+              const resolved = await resolveBasePayload(mode, categoryCode, limit);
+              applyResolvedPayload(resolved.payload, "snapshot", resolved.cacheState);
+            } catch (error) {
+              const classified = classifyDatabaseError(error);
+              failureClass = classified.category;
+              degradedReason = isTimeoutError(error)
+                ? `timeout_empty_fast_${classified.category}`
+                : `error_empty_fast_${classified.category}`;
+              applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
+              logDbRouteFailure(classified);
+            }
+            handledByCriticalPath = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (!handledByCriticalPath) {
+    try {
+      const resolved = await resolveBasePayload(mode, categoryCode, limit);
+      applyResolvedPayload(resolved.payload, "snapshot", resolved.cacheState);
+    } catch (error) {
+      const classified = classifyDatabaseError(error);
+      logDbRouteFailure(classified);
+      failureClass = classified.category;
+      const stale = pickStaleCache(state, key);
+      if (stale) {
+        applyResolvedPayload(stale, "stale", "stale");
+        degradedReason = isTimeoutError(error)
+          ? `timeout_stale_cache_${classified.category}`
+          : `error_stale_cache_${classified.category}`;
+      } else if (shouldShortCircuitDbFallback(classified.category) || isTimeoutError(error)) {
+        // Pool/timeout dalgalanmasında önce en ucuz güvenli fallback'i dene (persisted cache).
+        const persisted = await readPersistedScoresPayload(mode, categoryCode);
+        if (persisted) {
+          applyResolvedPayload(persisted, "db-cache", "db-cache");
+          degradedReason = isTimeoutError(error)
+            ? `timeout_db_cache_fast_${classified.category}`
+            : `error_db_cache_fast_${classified.category}`;
+        } else {
+          const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
+          if (servingFallback) {
+            applyResolvedPayload(servingFallback, "light", "light");
+            degradedReason = isTimeoutError(error)
+              ? `timeout_core_serving_fallback_${classified.category}`
+              : `error_core_serving_fallback_${classified.category}`;
+          } else {
+            const fundsListFallback = await readFundsListFallback(mode, categoryCode);
+            if (fundsListFallback) {
+              applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+              degradedReason = isTimeoutError(error)
+                ? `timeout_funds_list_fast_${classified.category}`
+                : `error_funds_list_fast_${classified.category}`;
+            } else {
+              applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
+              degradedReason = isTimeoutError(error)
+                ? `timeout_empty_fast_${classified.category}`
+                : `error_empty_fast_${classified.category}`;
+            }
+          }
+        }
+        console.warn(
+          `[scores-api][fast-degrade] mode=${mode} category=${categoryCode || "all"} timeout=${isTimeoutError(error) ? 1 : 0} class=${classified.category} retryable=${
+            classified.retryable ? 1 : 0
+          } fallback_rows=${basePayload.funds.length} fallback_source=${source}`
+        );
+      } else {
+        const persisted = await readPersistedScoresPayload(mode, categoryCode);
+        if (persisted) {
+          applyResolvedPayload(persisted, "db-cache", "db-cache");
+          degradedReason = isTimeoutError(error) ? "timeout_db_cache" : "error_db_cache";
+        } else {
+          const light = await readLightSnapshotFallback(mode, categoryCode);
+          if (light) {
+            applyResolvedPayload(light, "light", "light");
+            degradedReason = isTimeoutError(error) ? "timeout_light_fallback" : "error_light_fallback";
+          } else {
+            const fundsListFallback = await readFundsListFallback(mode, categoryCode);
+            if (fundsListFallback) {
+              applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+              degradedReason = isTimeoutError(error) ? "timeout_funds_list_fallback" : "error_funds_list_fallback";
+            } else {
+              applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
+              degradedReason = isTimeoutError(error) ? "timeout_empty" : "error_empty";
+            }
           }
         }
       }
