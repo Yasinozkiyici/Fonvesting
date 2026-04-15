@@ -27,7 +27,6 @@ const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERS
 const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "1600");
-const COMPARE_SERIES_BASE_READ_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_READ_TIMEOUT_MS ?? "4200");
 
 type Point = { t: number; v: number };
 
@@ -176,11 +175,7 @@ async function getCompareSeriesPayload(
   const readServing = deps?.readServing ?? getFundDetailCoreServingCached;
   const fetchMacro = deps?.fetchMacro ?? fetchKiyasMacroBuckets;
   const readUniverse = deps?.readUniverse ?? getFundDetailCoreServingUniversePayloads;
-  const baseRead = await withTimeout(
-    readServingPayloadForCompareSeries(baseCode, readServing),
-    COMPARE_SERIES_BASE_READ_TIMEOUT_MS,
-    "compare_series_base_read"
-  ).catch((error) => ({
+  const baseRead = await readServingPayloadForCompareSeries(baseCode, readServing).catch((error) => ({
     payload: null,
     missReason: isTimeoutLike(error) ? "read_timeout" : "read_failed",
   }));

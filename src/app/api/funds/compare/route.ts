@@ -17,7 +17,6 @@ const MAX = 4;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "2500");
 const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "3000");
-const COMPARE_SERVING_READ_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_READ_TIMEOUT_MS ?? "4200");
 
 type CompareFundRow = {
   fundId: string;
@@ -168,11 +167,7 @@ async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
   const reads = await Promise.all(
     codes.map(async (code) => {
       try {
-        return await withTimeout(
-          readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached),
-          COMPARE_SERVING_READ_TIMEOUT_MS,
-          "compare_serving_read"
-        );
+        return await readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached);
       } catch {
         return { payload: null };
       }
