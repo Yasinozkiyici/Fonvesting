@@ -12,6 +12,7 @@ import {
   type CompareContextDto,
 } from "@/lib/services/compare-reference.service";
 import { readServingPayloadForCompareSeries } from "@/lib/services/compare-series-resolution";
+import { readActiveRegistryFundsByCodes } from "@/lib/services/fund-registry-read.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -241,23 +242,7 @@ async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
 
 async function loadRowsFromFundRegistry(codes: string[]): Promise<CompareFundRow[]> {
   const rows = await withTimeout(
-    prisma.fund.findMany({
-      where: {
-        code: { in: codes },
-        isActive: true,
-      },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        shortName: true,
-        logoUrl: true,
-        lastPrice: true,
-        dailyReturn: true,
-        portfolioSize: true,
-        investorCount: true,
-      },
-    }),
+    readActiveRegistryFundsByCodes(codes),
     COMPARE_REGISTRY_TIMEOUT_MS,
     "compare_registry_rows"
   ).catch(() => []);

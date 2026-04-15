@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl, readCompareDataVersion } from "@/lib/data-freshness";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchKiyasMacroBuckets } from "@/lib/services/fund-detail-kiyas.service";
@@ -15,6 +14,7 @@ import {
   getFundDetailCoreServingUniversePayloads,
   type FundDetailCoreServingPayload,
 } from "@/lib/services/fund-detail-core-serving.service";
+import { readActiveRegistryFundByCode } from "@/lib/services/fund-registry-read.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -274,20 +274,7 @@ async function getCompareSeriesPayload(
   }
   if (!baseFund) {
     const registryRow = await withTimeout(
-      prisma.fund.findFirst({
-        where: { code: baseCode, isActive: true },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          shortName: true,
-          logoUrl: true,
-          lastPrice: true,
-          dailyReturn: true,
-          portfolioSize: true,
-          investorCount: true,
-        },
-      }),
+      readActiveRegistryFundByCode(baseCode),
       COMPARE_SERIES_REGISTRY_TIMEOUT_MS,
       "compare_series_registry_base"
     ).catch(() => null);

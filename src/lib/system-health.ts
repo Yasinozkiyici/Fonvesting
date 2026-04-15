@@ -552,14 +552,17 @@ export async function getSystemHealthSnapshot(options?: {
     let latestMacroObservationDate: Date | null = null;
     const restAvailable = hasSupabaseRestConfig();
 
-    // Fallback freshness yalnızca detay modda anlamlı; normal health çağrısı hızlı kalmalı.
-    if (includeExternalProbes && restAvailable) {
+    // DB ping düşse bile read-path operasyonelliğini anlamak için en azından
+    // FundDailySnapshot son tarihini REST üzerinden dene.
+    if (restAvailable) {
       try {
-        [latestFundSnapshotDate, latestMarketSnapshotDate, latestMacroObservationDate] = await Promise.all([
-          loadRestLatestDate("FundDailySnapshot"),
-          loadRestLatestDate("MarketSnapshot"),
-          loadRestLatestDate("MacroObservation"),
-        ]);
+        latestFundSnapshotDate = await loadRestLatestDate("FundDailySnapshot");
+        if (includeExternalProbes) {
+          [latestMarketSnapshotDate, latestMacroObservationDate] = await Promise.all([
+            loadRestLatestDate("MarketSnapshot"),
+            loadRestLatestDate("MacroObservation"),
+          ]);
+        }
       } catch (restError) {
         errors.push(`rest_freshness: ${formatError(restError)}`);
       }
