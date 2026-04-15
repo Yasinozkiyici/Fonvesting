@@ -217,5 +217,11 @@ assertContains(
   '{ emit: "event", level: "error" }',
   "production Prisma errors must use normalized event logging instead of raw prisma:error stdout."
 );
+assertContains(
+  "src/lib/prisma.ts",
+  prismaClient,
+  "console.warn(\n      `[db-runtime-error]",
+  "Prisma event diagnostics must stay warning-level; route-level handlers own user-impacting error logs."
+);
 
 console.log("Predeploy check başarılı.");

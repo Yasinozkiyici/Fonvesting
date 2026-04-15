@@ -95,7 +95,7 @@ function createPrismaClient(): PrismaClient {
     const last = globalForPrismaLogs.__dbRuntimeLastErrorLog;
     if (last && last.key === dedupeKey && now - last.at < 5_000) return;
     globalForPrismaLogs.__dbRuntimeLastErrorLog = { key: dedupeKey, at: now };
-    console.error(
+    console.warn(
       `[db-runtime-error] category=${classified.category} prisma_code=${classified.prismaCode ?? "none"} ` +
         `retryable=${classified.retryable ? 1 : 0} message=${classified.message}`
     );
