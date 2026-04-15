@@ -1,5 +1,18 @@
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 
+function hasHealthyScoresSet(payload) {
+  const funds = Array.isArray(payload?.funds) ? payload.funds : [];
+  if (funds.length === 0) return false;
+  const codes = funds
+    .map((item) => String(item?.code || "").trim().toUpperCase())
+    .filter(Boolean);
+  const uniqueCount = new Set(codes).size;
+  if (uniqueCount < Math.min(8, codes.length)) return false;
+  const uniqueRatio = uniqueCount / Math.max(codes.length, 1);
+  if (uniqueRatio < 0.7) return false;
+  return typeof payload?.total === "number" && payload.total >= uniqueCount;
+}
+
 const checks = [
   {
     path: "/api/health?mode=light",
@@ -24,8 +37,12 @@ const checks = [
   {
     path: "/api/funds/scores?mode=BEST&limit=150",
     maxMs: 5000,
-    validate(payload) {
-      return typeof payload === "object" && payload !== null && Array.isArray(payload.funds) && payload.funds.length > 0;
+    validate(payload, response) {
+      const scoresSource = response.headers.get("x-scores-source") || "none";
+      const emptyResult = response.headers.get("x-scores-empty-result");
+      if (emptyResult && emptyResult !== "none") return false;
+      if (scoresSource === "none") return false;
+      return typeof payload === "object" && payload !== null && hasHealthyScoresSet(payload);
     },
   },
   {
@@ -172,5 +189,14 @@ for (const check of checks) {
 }
 
 if (failed) {
+  console.log(
+    "[release-classification] step=smoke_data decision=NO_GO classification=PRODUCT_BUG code=data_contract_failed " +
+      'reason="release-significant data checks failed"'
+  );
   process.exitCode = 1;
+} else {
+  console.log(
+    "[release-classification] step=smoke_data decision=GO classification=NONE code=data_contract_ok " +
+      'reason="data smoke checks passed with non-polluted payload constraints"'
+  );
 }

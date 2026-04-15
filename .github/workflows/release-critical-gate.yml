@@ -29,6 +29,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Verify critical routes (normal)
         env:
           SMOKE_BASE_URL: ${{ inputs.base_url }}
@@ -44,3 +47,11 @@ jobs:
           VERIFY_REQUIRE_SCENARIOS: "1"
           VERIFY_SCENARIO: "degraded"
         run: pnpm run verify:critical-routes
+
+      - name: Release readiness chain (prodlike + target URL)
+        env:
+          SMOKE_UI_TIMEOUT_MS: "90000"
+          RELEASE_PREVIEW_URL: ${{ inputs.base_url }}
+          RELEASE_REQUIRE_PREVIEW: "1"
+          RELEASE_REQUIRE_PRODUCTION: "0"
+        run: pnpm run verify:release-readiness

@@ -86,6 +86,37 @@ Bir degisiklik "done" sayilmaz, su sirayla tum gate'ler gecmeden:
 5. Freshness invariants pass (`dailySync`, snapshot freshness, missed SLA).
 6. Production deploy oncesi `Release Critical Gate` workflow PASS (target URL uzerinden).
 
+## D.1) UI bug classi icin zorunlu dogrulama sirasi
+
+Bu sinif bug'larda "local dev calisiyor" kanit sayilmaz. Siralama zorunludur:
+
+1. `pnpm exec tsc --noEmit`
+2. `pnpm run test:unit`
+3. `pnpm run build:clean`
+4. `pnpm run smoke:ui:prodlike` (build artifact + `next start` uzerinde)
+5. `SMOKE_BASE_URL="<preview-url>" pnpm run smoke:ui:preview`
+6. Sadece tumu PASS ise production deploy
+7. Deploy sonrasi production final smoke
+8. Tum kanitlari tek zincirde siniflandirmak icin:
+   - `RELEASE_PREVIEW_URL="<preview-url>" RELEASE_PRODUCTION_URL="<prod-url>" pnpm run verify:release-readiness`
+
+## D.2) UI interaction smoke kapsami
+
+`scripts/smoke-ui-functional.mjs` production-like/preview URL'de su davranislari assert eder:
+
+- Homepage explore list non-empty
+- Search by code, search by name, trimmed + case-insensitive search
+- Filter aksiyonunda listede anlamli degisim
+- No-result state yalniz explicit no-match'te
+- Detail comparison summary + rows DOM'da gorunur
+- Alternatives API doluyken alternatives DOM bos kalmaz
+- "API full but UI empty" sinifi fail olarak raporlanir
+
+Ek siniflandirma kurali:
+- `401/403` preview auth/protection sonucu `PREVIEW_AUTH_BLOCKER` ve karar `RELEASE_BLOCKED`.
+- "UI/API ikisi de dogrulanamadi" durumu `SHALLOW_VERIFICATION` ve karar `NO_GO`.
+- Runtime chunk/MIME/pageerror sinyalleri `RUNTIME_CLIENT_ASSET_FAILURE` ve karar `NO_GO`.
+
 ## E) Immediate implementation plan
 
 ### Phase 1 (this week)
@@ -146,3 +177,15 @@ Verifier ciktisi release dilinde okunur:
   - `PASS` (senaryo gozlemlendi ve kontrat saglandi)
   - `WARN` (senaryo bu kosuda gozlemlenmedi, enforcement kapali)
   - `FAIL` (senaryo gozlemlendi ama kontrat kirik veya enforcement acik ve evidence yok)
+
+Bu dokumanla birlikte release raporu su formatta cikarilir:
+
+- WHAT CAN BE CAUGHT BEFORE PROD
+- WHAT STILL REQUIRES PROD VERIFICATION
+- UI BUGS REPRODUCED IN PRODUCTION-LIKE MODE
+- ROOT CAUSES FOUND
+- FILES CHANGED
+- TESTS ADDED OR UPDATED
+- PREVIEW VERIFICATION RESULTS
+- PRODUCTION VERIFICATION RESULTS
+- FINAL GO / NO-GO

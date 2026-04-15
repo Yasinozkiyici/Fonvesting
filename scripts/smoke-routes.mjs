@@ -1,4 +1,10 @@
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
+const forbiddenTokens = [
+  "chunkloaderror",
+  "loading chunk",
+  "cannot find module",
+  "__next_css__do_not_use__",
+];
 
 const routeChecks = [
   { path: "/", mustInclude: ["Yatirim.io", "Fonlar"], maxMs: 6000 },
@@ -41,6 +47,21 @@ for (const check of routeChecks) {
       failed = true;
     }
   }
+  const hasNextShellEvidence =
+    body.includes('id="__next"') ||
+    body.includes("/_next/static/") ||
+    body.includes("self.__next_f");
+  if (!hasNextShellEvidence) {
+    console.error(`[smoke:routes] ${check.path} missing Next shell evidence`);
+    failed = true;
+  }
+  const lowered = body.toLocaleLowerCase("tr-TR");
+  for (const token of forbiddenTokens) {
+    if (lowered.includes(token)) {
+      console.error(`[smoke:routes] ${check.path} includes runtime failure token: ${token}`);
+      failed = true;
+    }
+  }
   if (check.maxMs && durationMs > check.maxMs) {
     console.error(`[smoke:routes] ${check.path} exceeded latency budget: ${durationMs}ms > ${check.maxMs}ms`);
     failed = true;
@@ -50,5 +71,14 @@ for (const check of routeChecks) {
 }
 
 if (failed) {
+  console.log(
+    "[release-classification] step=smoke_routes decision=NO_GO classification=RUNTIME_CLIENT_ASSET_FAILURE " +
+      'code=route_runtime_contract_failed reason="route shell/runtime checks failed"'
+  );
   process.exitCode = 1;
+} else {
+  console.log(
+    "[release-classification] step=smoke_routes decision=GO classification=NONE " +
+      'code=route_runtime_contract_ok reason="route shell/runtime checks passed"'
+  );
 }

@@ -1,4 +1,13 @@
 import { chromium } from "playwright";
+import {
+  asReleaseVerificationError,
+  buildPreviewAuthBlocker,
+  emitReleaseClassification,
+  isAuthBlockedStatus,
+  ReleaseClassification,
+  ReleaseDecision,
+  ReleaseVerificationError,
+} from "./release-verification-common.mjs";
 
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 const timeoutMs = Number(process.env.SMOKE_UI_TIMEOUT_MS || 45_000);
@@ -32,7 +41,17 @@ async function visibleText(page) {
 
 async function fetchJson(page, path) {
   const response = await page.request.get(`${baseUrl}${path}`, { timeout: timeoutMs });
-  if (!response.ok()) fail(`${path} status ${response.status()}`);
+  if (isAuthBlockedStatus(response.status())) {
+    throw buildPreviewAuthBlocker(response.status(), `${baseUrl}${path}`);
+  }
+  if (!response.ok()) {
+    throw new ReleaseVerificationError(`${path} status ${response.status()}`, {
+      classification: ReleaseClassification.ENV_CONFIG_BLOCKER,
+      decision: ReleaseDecision.RELEASE_BLOCKED,
+      code: "upstream_http_failure",
+      details: path,
+    });
+  }
   return response.json();
 }
 
@@ -73,12 +92,29 @@ async function assertSearch(page, input, query, expectedText) {
     const searchApiPayload = await fetchJson(page, `/api/funds/scores?mode=BEST&q=${encodeURIComponent(query)}`);
     const apiCount = Array.isArray(searchApiPayload?.funds) ? searchApiPayload.funds.length : 0;
     if (apiCount > 0) {
-      fail(`query "${query}" API returned ${apiCount} rows but UI did not surface "${expectedText}"`);
+      await page.waitForTimeout(1500);
+      const retryRows = await getHomepageRows(page);
+      const retryCount = await retryRows.count();
+      for (let index = 0; index < retryCount; index += 1) {
+        const rowText = normalizeText(await retryRows.nth(index).innerText());
+        if (rowText.includes(expected)) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        fail(`query "${query}" API returned ${apiCount} rows but UI did not surface "${expectedText}"`);
+      }
+      return;
     }
-    console.warn(
-      `[smoke:ui-functional] query "${query}" had no UI/API matches in this environment; skipped strict expectation`
+    throw new ReleaseVerificationError(
+      `query "${query}" had no UI/API matches; insufficient verification evidence for release`,
+      {
+        classification: ReleaseClassification.SHALLOW_VERIFICATION,
+        decision: ReleaseDecision.NO_GO,
+        code: "search_evidence_missing",
+      }
     );
-    return;
   }
   if (await getNoResultVisible(page)) {
     fail(`query "${query}" rendered empty-state unexpectedly`);
@@ -93,7 +129,11 @@ async function assertDetailUsable(page, code) {
   if (compareFunds < 2) fail(`/api/funds/compare for ${code} returned <2 funds`);
 
   const response = await page.goto(`${baseUrl}/fund/${code}`, { waitUntil: "networkidle", timeout: timeoutMs });
-  if (!response || response.status() >= 400) fail(`/fund/${code} status ${response?.status() ?? "none"}`);
+  if (!response) fail(`/fund/${code} status none`);
+  if (isAuthBlockedStatus(response.status())) {
+    throw buildPreviewAuthBlocker(response.status(), `${baseUrl}/fund/${code}`);
+  }
+  if (response.status() >= 400) fail(`/fund/${code} status ${response.status()}`);
   await page.waitForFunction(
     () => document.body.innerText.toLocaleLowerCase("tr-TR").includes("getiri karşılaştırması"),
     null,
@@ -144,7 +184,11 @@ async function assertDetailUsable(page, code) {
 
 async function assertHomepageDiscovery(page) {
   const response = await page.goto(`${baseUrl}/`, { waitUntil: "networkidle", timeout: timeoutMs });
-  if (!response || response.status() >= 400) fail(`/ status ${response?.status() ?? "none"}`);
+  if (!response) fail("/ status none");
+  if (isAuthBlockedStatus(response.status())) {
+    throw buildPreviewAuthBlocker(response.status(), `${baseUrl}/`);
+  }
+  if (response.status() >= 400) fail(`/ status ${response.status()}`);
   await waitForLoadingToSettle(page);
 
   const initialRows = await getHomepageRows(page);
@@ -197,6 +241,27 @@ async function assertHomepageDiscovery(page) {
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+const runtimeErrors = [];
+
+page.on("pageerror", (error) => {
+  runtimeErrors.push(`[pageerror] ${error.message}`);
+});
+
+page.on("response", async (response) => {
+  const url = response.url();
+  if (!/\.(js|css)(\?|$)/i.test(url)) return;
+  if (response.status() >= 400) {
+    runtimeErrors.push(`[asset-http] status=${response.status()} url=${url}`);
+    return;
+  }
+  const contentType = String(response.headers()["content-type"] || "").toLowerCase();
+  if (/\.js(\?|$)/i.test(url) && !contentType.includes("javascript")) {
+    runtimeErrors.push(`[asset-mime] expected=javascript got=${contentType || "none"} url=${url}`);
+  }
+  if (/\.css(\?|$)/i.test(url) && !contentType.includes("text/css")) {
+    runtimeErrors.push(`[asset-mime] expected=text/css got=${contentType || "none"} url=${url}`);
+  }
+});
 
 try {
   for (const code of ["VGA", "TI1", "ZP8"]) {
@@ -204,7 +269,33 @@ try {
     console.log(`[smoke:ui-functional] /fund/${code} ok`);
   }
   await assertHomepageDiscovery(page);
+  if (runtimeErrors.length > 0) {
+    throw new ReleaseVerificationError("runtime/client asset failures detected", {
+      classification: ReleaseClassification.RUNTIME_CLIENT_ASSET_FAILURE,
+      decision: ReleaseDecision.NO_GO,
+      code: "runtime_asset_failure",
+      details: runtimeErrors.slice(0, 6).join(" | "),
+    });
+  }
+  emitReleaseClassification({
+    step: "ui_functional",
+    decision: ReleaseDecision.GO,
+    classification: "NONE",
+    code: "all_assertions_passed",
+    reason: "UI-functional verification succeeded on target URL",
+  });
   console.log("[smoke:ui-functional] homepage discovery/search/filter ok");
+} catch (error) {
+  const classified = asReleaseVerificationError(error);
+  emitReleaseClassification({
+    step: "ui_functional",
+    decision: classified.decision,
+    classification: classified.classification,
+    code: classified.code,
+    reason: classified.message,
+    details: classified.details,
+  });
+  process.exitCode = classified.decision === ReleaseDecision.RELEASE_BLOCKED ? 2 : 1;
 } finally {
   await browser.close();
 }

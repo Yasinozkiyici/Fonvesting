@@ -93,3 +93,10 @@ Günlük akış şunları içerir:
 2. `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting" pnpm exec prisma migrate deploy`
 3. `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting" pnpm sync:macro -- --days 730`
 4. `DATABASE_URL="postgresql://postgres:postgres@localhost:5433/fonvesting" pnpm dev`
+
+## Prod DB Smoke
+
+Production deploy sonrası DB/read-path sağlığını hızlı doğrulama:
+
+1. `SMOKE_BASE_URL="https://www.yatirim.io" pnpm run smoke:prod-db`
+2. Tüm satırlar `OK` olmalı; herhangi bir `FAIL` satırında `x-db-env-status`, `x-db-connection-mode`, `x-db-failure-class` başlıklarını inceleyin.

@@ -40,7 +40,25 @@
 - `pnpm run prod:check`
 - `pnpm exec tsc --noEmit`
 - `pnpm run test:unit`
+- `pnpm run smoke:ui:prodlike` (clean build + `next start` artifact + UI interaction smoke)
+- `SMOKE_BASE_URL="<preview-url>" pnpm run smoke:ui:preview`
+- `RELEASE_PREVIEW_URL="<preview-url>" RELEASE_PRODUCTION_URL="<prod-url>" pnpm run verify:release-readiness`
 - `pnpm run verify:release-critical`
 - `pnpm run smoke:routes`
 - `pnpm run smoke:data`
 - `pnpm run audit:system`
+
+## UI release gate (zorunlu fail)
+- Homepage search by code (`ZP8`) sonuc getirir.
+- Homepage search by name (`is portfoy para`) sonuc getirir.
+- Trimmed + case-insensitive query sonuc verir.
+- Filtre aksiyonu listeyi anlamsiz olmayan bicimde degistirir.
+- `/fund/VGA`, `/fund/TI1`, `/fund/ZP8` detail sayfalarinda kiyas satirlari gorunur.
+- Alternatif fon API doluyken detail DOM bos kalmaz.
+- "API full but UI empty" gozlenirse release bloklanir.
+
+## Karar siniflandirmasi (zorunlu)
+- `GO`: tum kritik adimlar ve hedef URL UI-functional kaniti PASS.
+- `NO_GO`: product/test/runtime sorunu veya yetersiz kanit (`insufficient evidence`).
+- `RELEASE_BLOCKED`: preview/prod URL auth-protection ya da env/config erisim blokaji.
+- `401/403` protected preview sonucu **product bug** sayilmaz; sinif `PREVIEW_AUTH_BLOCKER` olarak raporlanir ve deploy bloklanir.
