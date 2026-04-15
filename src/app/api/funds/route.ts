@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
+import { getScoresPayloadServerCachedSafe } from "@/lib/services/fund-scores-cache.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,6 +20,12 @@ const FUNDS_STALE_TTL_MS = parseEnvMs("FUNDS_ROUTE_STALE_TTL_MS", 10 * 60_000, 3
 const FUNDS_LIGHT_LATEST_TIMEOUT_MS = parseEnvMs("FUNDS_LIGHT_LATEST_TIMEOUT_MS", 1_000, 400, 6_000);
 const FUNDS_LIGHT_ROWS_TIMEOUT_MS = parseEnvMs("FUNDS_LIGHT_ROWS_TIMEOUT_MS", 1_200, 500, 6_000);
 const FUNDS_LIGHT_SERVING_LIMIT = parseEnvMs("FUNDS_LIGHT_SERVING_LIMIT", 180, 30, 320);
+const FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS = parseEnvMs(
+  "FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS",
+  1_800,
+  600,
+  6_000
+);
 
 type FundsPayload = {
   items: Array<{
@@ -231,6 +238,60 @@ async function buildServingFundsFallback(page: number, pageSize: number): Promis
   };
 }
 
+async function buildScoresCacheFundsFallback(input: {
+  page: number;
+  pageSize: number;
+  q: string;
+  category: string;
+  fundType: string;
+  sortField: FundListSortField;
+  sortDir: "asc" | "desc";
+}): Promise<FundsPayload> {
+  const payload = await withTimeout(
+    getScoresPayloadServerCachedSafe("BEST", "", input.q),
+    FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS
+  ).catch(() => null);
+  const funds = payload?.funds ?? [];
+  const filtered = funds
+    .filter((fund) => (input.category ? fund.category?.code === input.category : true))
+    .filter((fund) => (input.fundType ? String(fund.fundType?.code ?? "") === input.fundType : true));
+  filtered.sort((a, b) => {
+    const left = Number(a[input.sortField as keyof typeof a] ?? 0);
+    const right = Number(b[input.sortField as keyof typeof b] ?? 0);
+    const delta = left - right;
+    if (delta !== 0) return input.sortDir === "asc" ? delta : -delta;
+    return a.code.localeCompare(b.code, "tr", { sensitivity: "base" });
+  });
+  const start = Math.max(0, (input.page - 1) * input.pageSize);
+  const rows = filtered.slice(start, start + input.pageSize);
+  return {
+    items: rows.map((row) => ({
+      id: row.fundId,
+      code: row.code,
+      name: row.name,
+      shortName: row.shortName,
+      logoUrl: row.logoUrl,
+      portfolioSize: row.portfolioSize,
+      lastPrice: row.lastPrice,
+      dailyReturn: row.dailyReturn,
+      weeklyReturn: 0,
+      monthlyReturn: 0,
+      yearlyReturn: 0,
+      investorCount: row.investorCount,
+      shareCount: 0,
+      category: row.category ? { ...row.category, color: null } : null,
+      fundType: row.fundType,
+      sparkline: [],
+      sparklineTrend:
+        row.dailyReturn > 0 ? ("up" as const) : row.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+    })),
+    page: input.page,
+    pageSize: input.pageSize,
+    total: filtered.length,
+    totalPages: Math.max(1, Math.ceil(filtered.length / input.pageSize)),
+  };
+}
+
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
   const dbEnvStatus = getDbEnvStatus();
@@ -319,6 +380,30 @@ export async function GET(req: NextRequest) {
       total: result.total,
       totalPages: result.totalPages,
     };
+    if (payload.items.length === 0) {
+      const scoresFallback = await buildScoresCacheFundsFallback({
+        page,
+        pageSize,
+        q,
+        category,
+        fundType,
+        sortField,
+        sortDir,
+      });
+      if (scoresFallback.items.length > 0) {
+        state.cache.set(cacheKey, { payload: scoresFallback, updatedAt: Date.now() });
+        return NextResponse.json(scoresFallback, {
+          headers: {
+            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            "X-Funds-Cache": "scores-cache",
+            "X-Funds-Source": "scores-cache",
+            "X-Funds-Degraded": "empty_result_repaired",
+            "X-Db-Failure-Class": "none",
+            ...dbHeaders,
+          },
+        });
+      }
+    }
     state.cache.set(cacheKey, { payload, updatedAt: Date.now() });
 
     return NextResponse.json(
@@ -393,6 +478,28 @@ export async function GET(req: NextRequest) {
           },
         });
       }
+      const scoresFallback = await buildScoresCacheFundsFallback({
+        page,
+        pageSize,
+        q,
+        category,
+        fundType,
+        sortField,
+        sortDir,
+      });
+      if (scoresFallback.items.length > 0) {
+        return NextResponse.json(scoresFallback, {
+          status: 200,
+          headers: {
+            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            "X-Funds-Cache": "scores-cache-fast",
+            "X-Funds-Source": "scores-cache",
+            "X-Funds-Degraded": classified.category,
+            "X-Db-Failure-Class": classified.category,
+            ...dbHeaders,
+          },
+        });
+      }
       console.warn(
         `[api/funds][fast-degrade] class=${classified.category} timeout=${isFundsTimeoutError(e) ? 1 : 0} ms=${
           Date.now() - startedAt
@@ -427,6 +534,30 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
     const fallback = await buildLightFundsFallback(page, pageSize);
+    if (fallback.items.length === 0) {
+      const scoresFallback = await buildScoresCacheFundsFallback({
+        page,
+        pageSize,
+        q,
+        category,
+        fundType,
+        sortField,
+        sortDir,
+      });
+      if (scoresFallback.items.length > 0) {
+        return NextResponse.json(scoresFallback, {
+          status: 200,
+          headers: {
+            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            "X-Funds-Cache": "scores-cache-fallback",
+            "X-Funds-Source": "scores-cache",
+            "X-Funds-Degraded": classified.category,
+            "X-Db-Failure-Class": classified.category,
+            ...dbHeaders,
+          },
+        });
+      }
+    }
     return NextResponse.json(fallback, {
       status: 200,
       headers: {

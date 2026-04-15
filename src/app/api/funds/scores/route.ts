@@ -263,6 +263,34 @@ async function readFundsListFallback(
   };
 }
 
+async function readPersistedAllScoresFilteredFallback(
+  mode: RankingMode,
+  categoryCode: string,
+  queryTrim = ""
+): Promise<ScoresApiPayload | null> {
+  const modePayload = await readPersistedScoresPayloadBestAll(mode);
+  const allPayload = hasUsableScoresPayload(modePayload)
+    ? modePayload
+    : mode === "BEST"
+      ? null
+      : await readPersistedScoresPayloadBestAll("BEST");
+  if (!hasUsableScoresPayload(allPayload)) return null;
+  const categoryFiltered = categoryCode
+    ? allPayload.funds.filter((fund) => fund.category?.code === categoryCode)
+    : allPayload.funds;
+  const sorted = [...categoryFiltered].sort((a, b) => {
+    if (mode === "HIGH_RETURN") {
+      const daily = b.dailyReturn - a.dailyReturn;
+      if (daily !== 0) return daily;
+    }
+    const portfolio = b.portfolioSize - a.portfolioSize;
+    if (portfolio !== 0) return portfolio;
+    return a.code.localeCompare(b.code, "tr");
+  });
+  const payload = { mode, total: sorted.length, funds: sorted };
+  return queryTrim ? filterScoresPayloadByQuery(payload, queryTrim) : payload;
+}
+
 async function readCoreServingScoresFallback(
   mode: RankingMode,
   categoryCode: string,
@@ -515,6 +543,14 @@ export async function GET(request: NextRequest) {
       }
     }
     if (!handledByCriticalPath) {
+      const scoresCacheFallback = await readPersistedAllScoresFilteredFallback(mode, categoryCode, queryTrim);
+      if (hasUsableScoresPayload(scoresCacheFallback)) {
+        applyResolvedPayload(scoresCacheFallback, "db-cache", "db-cache");
+        degradedReason = "category_scores_cache_fallback";
+        handledByCriticalPath = true;
+      }
+    }
+    if (!handledByCriticalPath) {
       const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
       if (hasUsableScoresPayload(servingFallback)) {
         applyResolvedPayload(servingFallback, "light", "light");
@@ -536,16 +572,28 @@ export async function GET(request: NextRequest) {
       const resolved = await resolveBasePayload(mode, categoryCode, limit);
       applyResolvedPayload(resolved.payload, "snapshot", resolved.cacheState);
       if (categoryCode && basePayload.funds.length === 0) {
-        const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
-        const servingFallback = hasUsableScoresPayload(fundsListFallback)
+        const scoresCacheFallback = await readPersistedAllScoresFilteredFallback(mode, categoryCode, queryTrim);
+        const fundsListFallback = hasUsableScoresPayload(scoresCacheFallback)
+          ? null
+          : await readFundsListFallback(mode, categoryCode, queryTrim);
+        const servingFallback = hasUsableScoresPayload(scoresCacheFallback) || hasUsableScoresPayload(fundsListFallback)
           ? null
           : await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
-        const repaired = hasUsableScoresPayload(fundsListFallback) ? fundsListFallback : servingFallback;
+        const repaired = hasUsableScoresPayload(scoresCacheFallback)
+          ? scoresCacheFallback
+          : hasUsableScoresPayload(fundsListFallback)
+            ? fundsListFallback
+            : servingFallback;
         if (hasUsableScoresPayload(repaired)) {
+          const repairedSource = hasUsableScoresPayload(scoresCacheFallback)
+            ? "db-cache"
+            : hasUsableScoresPayload(fundsListFallback)
+              ? "funds-list"
+              : "light";
           applyResolvedPayload(
             repaired,
-            hasUsableScoresPayload(fundsListFallback) ? "funds-list" : "light",
-            hasUsableScoresPayload(fundsListFallback) ? "funds-list" : "light"
+            repairedSource,
+            repairedSource
           );
           degradedReason = "empty_snapshot_repaired";
         }
@@ -576,17 +624,25 @@ export async function GET(request: NextRequest) {
               ? `timeout_funds_list_fast_${classified.category}`
               : `error_funds_list_fast_${classified.category}`;
           } else {
-            const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
-            if (hasUsableScoresPayload(servingFallback)) {
-              applyResolvedPayload(servingFallback, "light", "light");
+            const scoresCacheFallback = await readPersistedAllScoresFilteredFallback(mode, categoryCode, queryTrim);
+            if (hasUsableScoresPayload(scoresCacheFallback)) {
+              applyResolvedPayload(scoresCacheFallback, "db-cache", "db-cache");
               degradedReason = isTimeoutError(error)
-                ? `timeout_core_serving_fallback_${classified.category}`
-                : `error_core_serving_fallback_${classified.category}`;
+                ? `timeout_scores_cache_fast_${classified.category}`
+                : `error_scores_cache_fast_${classified.category}`;
             } else {
-              applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
-              degradedReason = isTimeoutError(error)
-                ? `timeout_empty_fast_${classified.category}`
-                : `error_empty_fast_${classified.category}`;
+              const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
+              if (hasUsableScoresPayload(servingFallback)) {
+                applyResolvedPayload(servingFallback, "light", "light");
+                degradedReason = isTimeoutError(error)
+                  ? `timeout_core_serving_fallback_${classified.category}`
+                  : `error_core_serving_fallback_${classified.category}`;
+              } else {
+                applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
+                degradedReason = isTimeoutError(error)
+                  ? `timeout_empty_fast_${classified.category}`
+                  : `error_empty_fast_${classified.category}`;
+              }
             }
           }
         }
@@ -606,13 +662,21 @@ export async function GET(request: NextRequest) {
             applyResolvedPayload(light, "light", "light");
             degradedReason = isTimeoutError(error) ? "timeout_light_fallback" : "error_light_fallback";
           } else {
-            const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
-            if (fundsListFallback) {
-              applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
-              degradedReason = isTimeoutError(error) ? "timeout_funds_list_fallback" : "error_funds_list_fallback";
+            const scoresCacheFallback = await readPersistedAllScoresFilteredFallback(mode, categoryCode, queryTrim);
+            if (hasUsableScoresPayload(scoresCacheFallback)) {
+              applyResolvedPayload(scoresCacheFallback, "db-cache", "db-cache");
+              degradedReason = isTimeoutError(error)
+                ? "timeout_scores_cache_fallback"
+                : "error_scores_cache_fallback";
             } else {
-              applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
-              degradedReason = isTimeoutError(error) ? "timeout_empty" : "error_empty";
+              const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
+              if (fundsListFallback) {
+                applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+                degradedReason = isTimeoutError(error) ? "timeout_funds_list_fallback" : "error_funds_list_fallback";
+              } else {
+                applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
+                degradedReason = isTimeoutError(error) ? "timeout_empty" : "error_empty";
+              }
             }
           }
         }
