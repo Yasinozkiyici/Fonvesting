@@ -22,7 +22,7 @@ import {
 } from "@/lib/compare-series-category";
 import { optionalReferenceDegradation } from "@/lib/operational-hardening";
 import { readActiveRegistryFundByCodeWithMeta, type RegistryRow } from "@/lib/services/fund-registry-read.service";
-import { getFundsPage } from "@/lib/services/fund-list.service";
+import { getFundsPage, type FundListRow } from "@/lib/services/fund-list.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,6 +32,7 @@ const MAX_CODES = 3;
 const DAY_MS = 86_400_000;
 const MAX_REF_SNAPSHOT_LAG_DAYS = 1;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
+const ACTIVE_FUND_CODE_RE = /^[A-Z0-9]{2,4}$/;
 const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERSION_TIMEOUT_MS ?? "1000");
 const COMPARE_SERIES_MACRO_TIMEOUT_MS = Math.max(
   3_200,
@@ -47,8 +48,8 @@ const COMPARE_SERIES_CATEGORY_FALLBACK_TIMEOUT_MS = Math.max(
   Number(process.env.COMPARE_SERIES_CATEGORY_FALLBACK_TIMEOUT_MS ?? "2200")
 );
 const COMPARE_SERIES_CATEGORY_FALLBACK_PAYLOAD_TIMEOUT_MS = Math.max(
-  3_200,
-  Number(process.env.COMPARE_SERIES_CATEGORY_FALLBACK_PAYLOAD_TIMEOUT_MS ?? "3600")
+  5_200,
+  Number(process.env.COMPARE_SERIES_CATEGORY_FALLBACK_PAYLOAD_TIMEOUT_MS ?? "5600")
 );
 const COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS = Math.max(
   8,
@@ -163,6 +164,10 @@ function buildSyntheticServingPayloadFromRegistry(input: {
   name: string;
   shortName: string | null;
   logoUrl: string | null;
+  categoryCode?: string | null;
+  categoryName?: string | null;
+  fundTypeCode?: number | null;
+  fundTypeName?: string | null;
   lastPrice: number;
   dailyReturn: number;
   portfolioSize: number;
@@ -179,10 +184,10 @@ function buildSyntheticServingPayloadFromRegistry(input: {
       name: input.name,
       shortName: input.shortName,
       logoUrl: input.logoUrl,
-      categoryCode: null,
-      categoryName: null,
-      fundTypeCode: null,
-      fundTypeName: null,
+      categoryCode: input.categoryCode ?? null,
+      categoryName: input.categoryName ?? null,
+      fundTypeCode: input.fundTypeCode ?? null,
+      fundTypeName: input.fundTypeName ?? null,
     },
     latestSnapshotDate: null,
     latestPrice: input.lastPrice,
@@ -224,6 +229,24 @@ function syntheticServingPayloadFromRegistryRow(row: RegistryRow): FundDetailCor
     name: row.name,
     shortName: row.shortName,
     logoUrl: row.logoUrl,
+    lastPrice: row.lastPrice,
+    dailyReturn: row.dailyReturn,
+    portfolioSize: row.portfolioSize,
+    investorCount: row.investorCount,
+  });
+}
+
+function syntheticServingPayloadFromFundListRow(row: FundListRow): FundDetailCoreServingPayload {
+  return buildSyntheticServingPayloadFromRegistry({
+    fundId: row.id,
+    code: row.code,
+    name: row.name,
+    shortName: row.shortName,
+    logoUrl: row.logoUrl,
+    categoryCode: row.category?.code ?? null,
+    categoryName: row.category?.name ?? null,
+    fundTypeCode: row.fundType?.code ?? null,
+    fundTypeName: row.fundType?.name ?? null,
     lastPrice: row.lastPrice,
     dailyReturn: row.dailyReturn,
     portfolioSize: row.portfolioSize,
@@ -353,6 +376,36 @@ async function readOptionalCategoryReferencePayloads(input: {
 type CompareServingRead = Awaited<ReturnType<typeof getFundDetailCoreServingCached>>;
 type CompareServingReader = CompareServingReaderLike<FundDetailCoreServingPayload>;
 
+async function readBaseProofFromFundsList(code: string): Promise<{
+  row: FundListRow | null;
+  source: "funds_list" | "none";
+  failureClass?: "funds_list_timeout" | "funds_list_failed";
+}> {
+  const normalized = code.trim().toUpperCase();
+  if (!normalized) return { row: null, source: "funds_list" };
+  try {
+    const page = await withTimeout(
+      getFundsPage({
+        page: 1,
+        pageSize: 5,
+        q: normalized,
+        sortField: "portfolioSize",
+        sortDir: "desc",
+      }),
+      COMPARE_SERIES_REGISTRY_PROOF_TIMEOUT_MS,
+      "compare_series_funds_list_base_proof"
+    );
+    const row = page.items.find((item) => item.code.trim().toUpperCase() === normalized) ?? null;
+    return { row, source: "funds_list" };
+  } catch (error) {
+    return {
+      row: null,
+      source: "none",
+      failureClass: isTimeoutLike(error) ? "funds_list_timeout" : "funds_list_failed",
+    };
+  }
+}
+
 async function getCompareSeriesPayload(
   baseCode: string,
   compareCodes: string[],
@@ -398,6 +451,13 @@ async function getCompareSeriesPayload(
   ) {
     return { error: "base_not_found", failureClass: [] };
   }
+  const baseFundsListProof =
+    baseRegistryProof.row || baseRegistryProof.source !== "none"
+      ? null
+      : await readBaseProofFromFundsList(baseCode);
+  if (baseFundsListProof?.source === "funds_list" && !baseFundsListProof.row) {
+    return { error: "base_not_found", failureClass: [] };
+  }
 
   const baseRead = await withTimeout(
     readServingPayloadForCompareSeries(baseCode, readServing),
@@ -415,6 +475,12 @@ async function getCompareSeriesPayload(
       baseFund = findFromUniverse(baseCode, await getUniverse());
     } catch {
       // universe read failure below transient class branch'inde ele alınır
+    }
+  }
+  if (!baseFund) {
+    if (baseFundsListProof?.row) {
+      baseFund = syntheticServingPayloadFromFundListRow(baseFundsListProof.row);
+      baseFromRegistryFallback = true;
     }
   }
   if (!baseFund) {
@@ -570,6 +636,9 @@ export async function GET(req: NextRequest) {
     const baseCode = normalizeBaseCode(req.nextUrl.searchParams.get("base"));
     if (!baseCode) {
       return NextResponse.json({ error: "base_required" }, { status: 400 });
+    }
+    if (!ACTIVE_FUND_CODE_RE.test(baseCode)) {
+      return NextResponse.json({ error: "base_not_found" }, { status: 404 });
     }
     const compareCodes = parseCompareCodes(req.nextUrl.searchParams.get("codes"), {
       maxCodes: MAX_CODES,
