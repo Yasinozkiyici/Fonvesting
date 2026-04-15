@@ -1,0 +1,46 @@
+name: Release Critical Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Target deployment URL (e.g. https://www.yatirim.io)"
+        required: true
+        type: string
+      degraded_scenario:
+        description: "Run degraded scenario checks as well"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  verify-critical-routes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify critical routes (normal)
+        env:
+          SMOKE_BASE_URL: ${{ inputs.base_url }}
+          HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
+          VERIFY_REQUIRE_SCENARIOS: "1"
+        run: pnpm run verify:critical-routes
+
+      - name: Verify critical routes (degraded)
+        if: ${{ inputs.degraded_scenario }}
+        env:
+          SMOKE_BASE_URL: ${{ inputs.base_url }}
+          HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
+          VERIFY_REQUIRE_SCENARIOS: "1"
+          VERIFY_SCENARIO: "degraded"
+        run: pnpm run verify:critical-routes

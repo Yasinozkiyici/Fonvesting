@@ -103,6 +103,10 @@ export async function GET(request: Request) {
     "X-Db-Env-Status": snapshot.database.envStatus.failureCategory ?? "ok",
     "X-Db-Connection-Mode": snapshot.database.connectionMode,
     "X-Db-Failure-Class": snapshot.database.diagnostics.failureCategory ?? "none",
+    "X-Daily-Sync-Source-Status": snapshot.jobs.dailySyncStatus?.sourceStatus ?? "unknown",
+    "X-Daily-Sync-Publish-Status": snapshot.jobs.dailySyncStatus?.publishStatus ?? "unknown",
+    "X-Daily-Sync-Missed-Sla": snapshot.jobs.dailySyncStatus?.missedSlaToday ? "1" : "0",
+    "X-Daily-Sync-Run-Key": snapshot.jobs.dailySyncStatus?.runKey ?? "none",
     "X-Build-Commit": buildFingerprint.commitShort ?? "unknown",
     "X-Build-Env": buildFingerprint.env ?? "unknown",
   };
@@ -149,12 +153,22 @@ export async function GET(request: Request) {
           latestFundSnapshotDate: snapshot.freshness.latestFundSnapshotDate,
           latestMarketSnapshotDate: snapshot.freshness.latestMarketSnapshotDate,
           latestMacroObservationDate: snapshot.freshness.latestMacroObservationDate,
+          lastSuccessfulIngestionAt: snapshot.freshness.lastSuccessfulIngestionAt,
+          lastPublishedSnapshotAt: snapshot.freshness.lastPublishedSnapshotAt,
         },
         integrity: {
           macroSyncStatus: snapshot.integrity.macroSyncStatus,
           latestSnapshotCoverageGap: snapshot.integrity.latestSnapshotCoverageGap,
         },
         jobs: snapshot.jobs,
+        dailySync: {
+          sourceStatus: snapshot.jobs.dailySyncStatus?.sourceStatus ?? "unknown",
+          publishStatus: snapshot.jobs.dailySyncStatus?.publishStatus ?? "unknown",
+          missedSlaToday: snapshot.jobs.dailySyncStatus?.missedSlaToday ?? false,
+          runKey: snapshot.jobs.dailySyncStatus?.runKey ?? null,
+          failureKind: snapshot.jobs.dailySyncStatus?.failureKind ?? "unknown",
+          firstFailedStep: snapshot.jobs.dailySyncStatus?.firstFailedStep ?? null,
+        },
         issueCount: snapshot.issues.length,
         build: {
           commit: buildFingerprint.commitShort,

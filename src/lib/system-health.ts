@@ -107,6 +107,8 @@ export interface SystemHealthSnapshot {
     latestMacroObservationDate: string | null;
     latestFundUpdateAt: string | null;
     latestSnapshotCoverageDate: string | null;
+    lastSuccessfulIngestionAt: string | null;
+    lastPublishedSnapshotAt: string | null;
     daysSinceLatestFundSnapshot: number | null;
     daysSinceLatestMarketSnapshot: number | null;
     daysSinceLatestMacroObservation: number | null;
@@ -126,6 +128,7 @@ export interface SystemHealthSnapshot {
     servingRebuild: SystemHealthJobSnapshot | null;
     warmScores: SystemHealthJobSnapshot | null;
     dailySync: SystemHealthJobSnapshot | null;
+    dailySyncStatus: DailySyncStatusView | null;
   };
   issues: SystemHealthIssue[];
   errors: string[];
@@ -138,6 +141,38 @@ export interface SystemHealthJobSnapshot {
   completedAt: string | null;
   durationMs: number | null;
   errorMessage: string | null;
+}
+
+type DailySyncRunMeta = {
+  phase?: string;
+  runKey?: string;
+  trigger?: string;
+  sourceStatus?: string;
+  publishStatus?: string;
+  firstFailedStep?: string | null;
+  failureKind?: "none" | "exception" | "timeout_suspected";
+  staleRunRecovered?: boolean;
+};
+
+type DailySyncStatusView = {
+  runKey: string | null;
+  trigger: string | null;
+  sourceStatus: "unknown" | "success" | "failed";
+  publishStatus: "unknown" | "success" | "failed";
+  firstFailedStep: string | null;
+  failureKind: "none" | "exception" | "timeout_suspected" | "unknown";
+  staleRunRecovered: boolean;
+  missedSlaToday: boolean;
+};
+
+function parseDailySyncRunMeta(message: string | null | undefined): DailySyncRunMeta | null {
+  if (!message) return null;
+  try {
+    const parsed = JSON.parse(message) as DailySyncRunMeta;
+    return typeof parsed === "object" && parsed ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function isRelationMissingError(error: unknown): boolean {
@@ -627,6 +662,8 @@ export async function getSystemHealthSnapshot(options?: {
         latestMacroObservationDate: latestMacroObservationDate?.toISOString() ?? null,
         latestFundUpdateAt: null,
         latestSnapshotCoverageDate: null,
+        lastSuccessfulIngestionAt: null,
+        lastPublishedSnapshotAt: null,
         daysSinceLatestFundSnapshot: daysSince(latestFundSnapshotDate),
         daysSinceLatestMarketSnapshot: daysSince(latestMarketSnapshotDate),
         daysSinceLatestMacroObservation: daysSince(latestMacroObservationDate),
@@ -646,6 +683,7 @@ export async function getSystemHealthSnapshot(options?: {
         servingRebuild: null,
         warmScores: null,
         dailySync: null,
+        dailySyncStatus: null,
       },
       issues,
       errors,
@@ -706,6 +744,8 @@ export async function getSystemHealthSnapshot(options?: {
         latestMacroObservationDate: null,
         latestFundUpdateAt: null,
         latestSnapshotCoverageDate: null,
+        lastSuccessfulIngestionAt: null,
+        lastPublishedSnapshotAt: null,
         daysSinceLatestFundSnapshot: null,
         daysSinceLatestMarketSnapshot: null,
         daysSinceLatestMacroObservation: null,
@@ -725,6 +765,7 @@ export async function getSystemHealthSnapshot(options?: {
         servingRebuild: null,
         warmScores: null,
         dailySync: null,
+        dailySyncStatus: null,
       },
       issues,
       errors,
@@ -959,6 +1000,37 @@ export async function getSystemHealthSnapshot(options?: {
   const sourceRefreshDateKey = toIstanbulDateKey(sourceRefreshJob?.completedAt ?? null);
   const servingRebuildDateKey = toIstanbulDateKey(servingRebuildJob?.completedAt ?? null);
   const warmScoresDateKey = toIstanbulDateKey(warmScoresJob?.completedAt ?? null);
+  const dailySyncDateKey = toIstanbulDateKey(dailySyncJob?.completedAt ?? null);
+  const dailySyncMeta = parseDailySyncRunMeta(dailySyncJob?.errorMessage);
+  const lastSuccessfulIngestionAt =
+    dailySyncJob?.status === "SUCCESS" && dailySyncMeta?.sourceStatus === "success"
+      ? dailySyncJob.completedAt?.toISOString() ?? null
+      : null;
+  const lastPublishedSnapshotAt =
+    dailySyncJob?.status === "SUCCESS" && dailySyncMeta?.publishStatus === "success"
+      ? dailySyncJob.completedAt?.toISOString() ?? null
+      : null;
+  const dailySyncStatus: DailySyncStatusView = {
+    runKey: dailySyncMeta?.runKey ?? null,
+    trigger: dailySyncMeta?.trigger ?? null,
+    sourceStatus:
+      dailySyncMeta?.sourceStatus === "success" || dailySyncMeta?.sourceStatus === "failed"
+        ? dailySyncMeta.sourceStatus
+        : "unknown",
+    publishStatus:
+      dailySyncMeta?.publishStatus === "success" || dailySyncMeta?.publishStatus === "failed"
+        ? dailySyncMeta.publishStatus
+        : "unknown",
+    firstFailedStep: dailySyncMeta?.firstFailedStep ?? null,
+    failureKind:
+      dailySyncMeta?.failureKind === "none" ||
+      dailySyncMeta?.failureKind === "exception" ||
+      dailySyncMeta?.failureKind === "timeout_suspected"
+        ? dailySyncMeta.failureKind
+        : "unknown",
+    staleRunRecovered: dailySyncMeta?.staleRunRecovered === true,
+    missedSlaToday: false,
+  };
 
   const cronExpectations = [
     {
@@ -981,6 +1053,13 @@ export async function getSystemHealthSnapshot(options?: {
       cutoffMinute: DAILY_JOB_SLA_MINUTES.warmScores,
       job: warmScoresJob,
       completedDateKey: warmScoresDateKey,
+    },
+    {
+      key: "daily_sync",
+      label: "Daily sync",
+      cutoffMinute: DAILY_JOB_SLA_MINUTES.dailySync,
+      job: dailySyncJob,
+      completedDateKey: dailySyncDateKey,
     },
   ] as const;
 
@@ -1018,6 +1097,7 @@ export async function getSystemHealthSnapshot(options?: {
       });
     }
   }
+  dailySyncStatus.missedSlaToday = issues.some((issue) => issue.code === "daily_sync_missed_sla");
 
   for (const job of [sourceRefreshJob, servingRebuildJob, warmScoresJob, dailySyncJob]) {
     if (!job) continue;
@@ -1037,6 +1117,23 @@ export async function getSystemHealthSnapshot(options?: {
           message: `${job.syncType} ${runningMinutes} dakikadır tamamlanmadı.`,
         });
       }
+    }
+  }
+
+  if (dailySyncJob?.status === "SUCCESS" && dailySyncMeta?.phase === "daily_sync") {
+    if (dailySyncMeta.sourceStatus !== "success") {
+      issues.push({
+        code: "daily_sync_source_not_success",
+        severity: "error",
+        message: "Daily sync tamamlandı görünse de source aşaması başarılı değil.",
+      });
+    }
+    if (dailySyncMeta.publishStatus !== "success") {
+      issues.push({
+        code: "daily_sync_publish_not_success",
+        severity: "error",
+        message: "Daily sync tamamlandı görünse de publish aşaması başarılı değil.",
+      });
     }
   }
 
@@ -1129,6 +1226,8 @@ export async function getSystemHealthSnapshot(options?: {
         latestFundUpdateResult.value._max.lastUpdatedAt?.toISOString() ??
         null,
       latestSnapshotCoverageDate: latestFundSnapshotDate?.toISOString() ?? null,
+      lastSuccessfulIngestionAt,
+      lastPublishedSnapshotAt,
       daysSinceLatestFundSnapshot,
       daysSinceLatestMarketSnapshot,
       daysSinceLatestMacroObservation,
@@ -1148,6 +1247,7 @@ export async function getSystemHealthSnapshot(options?: {
       servingRebuild: jobToSnapshot(servingRebuildJob),
       warmScores: jobToSnapshot(warmScoresJob),
       dailySync: jobToSnapshot(dailySyncJob),
+      dailySyncStatus,
     },
     issues,
     errors,

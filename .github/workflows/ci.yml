@@ -47,3 +47,6 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      - name: Critical contract definitions
+        run: pnpm exec tsx --test src/lib/critical-path-contracts.test.ts

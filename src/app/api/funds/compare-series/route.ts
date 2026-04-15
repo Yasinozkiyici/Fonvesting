@@ -16,8 +16,59 @@ const MAX_CODES = 3;
 const DAY_MS = 86_400_000;
 const MAX_REF_SNAPSHOT_LAG_DAYS = 1;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
+const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERSION_TIMEOUT_MS ?? "1000");
+const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "2200");
+const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
+const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "1600");
 
 type Point = { t: number; v: number };
+
+type CompareSeriesPayload = {
+  fundSeries: Array<{ key: string; label: string; code: string; series: Point[] }>;
+  macroSeries: {
+    category: Point[];
+    bist100: Point[];
+    usdtry: Point[];
+    eurtry: Point[];
+    gold: Point[];
+    policy: Point[];
+  };
+  labels: {
+    category: string;
+    bist100: string;
+    usdtry: string;
+    eurtry: string;
+    gold: string;
+    policy: string;
+  };
+};
+
+type CompareSeriesBuildResult = {
+  payload: CompareSeriesPayload;
+  degraded: boolean;
+  degradedSources: string[];
+  failureClass: string[];
+};
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+function isTimeoutLike(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|aborted/i.test(message);
+}
 
 function parseCodes(raw: string | null): string[] {
   if (!raw) return [];
@@ -115,9 +166,23 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
     return { error: "base_not_found" as const };
   }
   const baseFund = baseRead.payload;
+  const failureClass: string[] = [];
+  const degradedSources: string[] = [];
   const baseSnapshotMs = Date.parse(baseFund.latestSnapshotDate ?? "");
   const selectedReads = await Promise.all(
-    compareCodes.map((code) => getFundDetailCoreServingCached(code, { preferFileOnly: true }))
+    compareCodes.map(async (code) => {
+      try {
+        return await withTimeout(
+          getFundDetailCoreServingCached(code, { preferFileOnly: true }),
+          COMPARE_SERIES_SECONDARY_TIMEOUT_MS,
+          "compare_series_secondary_read"
+        );
+      } catch (error) {
+        degradedSources.push(`secondary:${code}`);
+        failureClass.push(isTimeoutLike(error) ? "timeout" : "secondary_read_failed");
+        return { payload: null };
+      }
+    })
   );
   const orderedSelected = selectedReads
     .map((read) => read.payload)
@@ -140,8 +205,29 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
   const anchor = startOfUtcDay(new Date());
   const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
   const [macroByRef, servingUniverse] = await Promise.all([
-    fetchKiyasMacroBuckets(anchor),
-    shouldBuildCategoryFromUniverse ? getFundDetailCoreServingUniversePayloads() : Promise.resolve(null),
+    withTimeout(fetchKiyasMacroBuckets(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro").catch((error) => {
+      degradedSources.push("macro");
+      failureClass.push(isTimeoutLike(error) ? "timeout" : "macro_failed");
+      return {
+        category: [],
+        bist100: [],
+        usdtry: [],
+        eurtry: [],
+        gold: [],
+        policy: [],
+      };
+    }),
+    shouldBuildCategoryFromUniverse
+      ? withTimeout(
+        getFundDetailCoreServingUniversePayloads(),
+        COMPARE_SERIES_UNIVERSE_TIMEOUT_MS,
+        "compare_series_universe"
+      ).catch((error) => {
+        degradedSources.push("category_universe");
+        failureClass.push(isTimeoutLike(error) ? "timeout" : "universe_failed");
+        return null;
+      })
+      : Promise.resolve(null),
   ]);
 
   const fundSeries = [
@@ -163,7 +249,7 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
       `requested_refs=${compareCodes.length} accepted_refs=${Math.max(0, fundSeries.length - 1)} lag_threshold_days=${MAX_REF_SNAPSHOT_LAG_DAYS}`
   );
 
-  return {
+  const payload: CompareSeriesPayload = {
     fundSeries,
     macroSeries: {
       category:
@@ -185,6 +271,12 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
       policy: "Faiz / Para Piyasası Eşiği",
     },
   };
+  return {
+    payload,
+    degraded: degradedSources.length > 0 || failureClass.length > 0,
+    degradedSources: [...new Set(degradedSources)],
+    failureClass: [...new Set(failureClass)],
+  } as CompareSeriesBuildResult;
 }
 
 export async function GET(req: NextRequest) {
@@ -198,18 +290,25 @@ export async function GET(req: NextRequest) {
 
     // Compare payload'da özellikle geçmiş backfill sonrası stale sonuç istemiyoruz.
     // Versiyon yine okunur; yanıt HTTP cache başlıklarıyla CDN katmanında korunur.
-    await readCompareDataVersion();
-    const payload = await getCompareSeriesPayload(baseCode, compareCodes);
+    await withTimeout(readCompareDataVersion(), COMPARE_SERIES_VERSION_TIMEOUT_MS, "compare_series_version").catch(() => null);
+    const result = await getCompareSeriesPayload(baseCode, compareCodes);
 
-    if ("error" in payload) {
+    if ("error" in result) {
       return NextResponse.json({ error: "base_not_found" }, { status: 404 });
     }
 
     return NextResponse.json(
-      payload,
+      result.payload,
       {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+          ...(result.degraded ? { "X-Compare-Series-Degraded": "1" } : {}),
+          ...(result.degradedSources.length
+            ? { "X-Compare-Series-Degraded-Source": result.degradedSources.join(",") }
+            : {}),
+          ...(result.failureClass.length
+            ? { "X-Compare-Series-Failure-Class": result.failureClass.join(",") }
+            : {}),
         },
       }
     );

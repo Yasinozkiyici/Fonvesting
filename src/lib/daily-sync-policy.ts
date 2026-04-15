@@ -6,6 +6,7 @@ export const DAILY_JOB_SLA_MINUTES = {
   sourceRefresh: DAILY_SOURCE_REFRESH_CUTOFF_MINUTES + 8,
   servingRebuild: DAILY_SOURCE_REFRESH_CUTOFF_MINUTES + 22,
   warmScores: DAILY_SOURCE_REFRESH_CUTOFF_MINUTES + 36,
+  dailySync: DAILY_SOURCE_REFRESH_CUTOFF_MINUTES + 45,
 } as const;
 
 export type IstanbulWallClock = {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { Prisma } from "@prisma/client";
+import { getIstanbulWallClock } from "@/lib/daily-sync-policy";
 import { areRuntimeTargetsIdentical, getDbRuntimeTargetDiagnostics } from "@/lib/db-runtime-diagnostics";
 import { runDailyPipeline, type DailyPipelineStepState } from "@/lib/pipeline/runDailyPipeline";
 import { prisma } from "@/lib/prisma";
@@ -31,6 +32,21 @@ type PipelineStepProgress = {
   steps: DailyPipelineStepState[];
   firstFailedStep: string | null;
   failureKind: "none" | "exception" | "timeout_suspected";
+};
+
+type DailySyncRunMeta = {
+  phase: "daily_sync";
+  runKey: string;
+  trigger: "cron_route";
+  sourceStatus: "unknown" | "success" | "failed";
+  publishStatus: "unknown" | "success" | "failed";
+  firstFailedStep: string | null;
+  failureKind: "none" | "exception" | "timeout_suspected";
+  staleRunRecovered: boolean;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  message?: string;
 };
 
 function buildInitialProgress(): PipelineStepProgress {
@@ -94,6 +110,33 @@ function toSyncLogProgressMessage(input: {
   return raw.length > 1900 ? `${raw.slice(0, 1897)}...` : raw;
 }
 
+function toDailySyncRunMetaMessage(input: DailySyncRunMeta): string {
+  const raw = JSON.stringify(input);
+  return raw.length > 1900 ? `${raw.slice(0, 1897)}...` : raw;
+}
+
+function computeDailySyncStatuses(progress: PipelineStepProgress): {
+  sourceStatus: DailySyncRunMeta["sourceStatus"];
+  publishStatus: DailySyncRunMeta["publishStatus"];
+} {
+  const sourceStep = progress.steps.find((step) => step.step === "source_refresh");
+  const publishStep = progress.steps.find((step) => step.step === "rebuild_market_snapshot_from_snapshot");
+  return {
+    sourceStatus:
+      sourceStep?.status === "success"
+        ? "success"
+        : sourceStep?.status === "error" || sourceStep?.status === "timeout_suspected"
+          ? "failed"
+          : "unknown",
+    publishStatus:
+      publishStep?.status === "success"
+        ? "success"
+        : publishStep?.status === "error" || publishStep?.status === "timeout_suspected"
+          ? "failed"
+          : "unknown",
+  };
+}
+
 export async function GET(req: NextRequest) {
   const startedAt = new Date().toISOString();
   const diagnosticsTargets = [
@@ -107,13 +150,16 @@ export async function GET(req: NextRequest) {
   }
 
   let heartbeatId: string | null = null;
+  let dailySyncLogId: string | null = null;
   let heartbeatWriteError: string | null = null;
+  let dailySyncWriteError: string | null = null;
   let previousInvocationAt: string | null = null;
   let skippedDueToActiveRun = false;
   let activeRunStartedAt: string | null = null;
   let activeRunAgeMs: number | null = null;
   let activeRunId: string | null = null;
   let staleRunRecovered = false;
+  const runKey = getIstanbulWallClock().dateKey;
   let pipelineProgress: PipelineStepProgress = buildInitialProgress();
   try {
     const txResult = await prisma.$transaction(
@@ -142,6 +188,7 @@ export async function GET(req: NextRequest) {
               activeRunAgeMs: ageMs,
               staleRunRecovered: false,
               heartbeatId: null as string | null,
+              dailySyncLogId: null as string | null,
             };
           }
           await tx.syncLog.update({
@@ -166,6 +213,27 @@ export async function GET(req: NextRequest) {
           },
           select: { id: true },
         });
+        const dailySync = await tx.syncLog.create({
+          data: {
+            syncType: "daily_sync",
+            status: "RUNNING",
+            fundsUpdated: 0,
+            fundsCreated: 0,
+            startedAt: now,
+            errorMessage: toDailySyncRunMetaMessage({
+              phase: "daily_sync",
+              runKey,
+              trigger: "cron_route",
+              sourceStatus: "unknown",
+              publishStatus: "unknown",
+              firstFailedStep: null,
+              failureKind: "none",
+              staleRunRecovered: recoveredStaleRun,
+              startedAt,
+            }),
+          },
+          select: { id: true },
+        });
 
         return {
           previousInvocationAt: latestAny?.startedAt.toISOString() ?? null,
@@ -175,6 +243,7 @@ export async function GET(req: NextRequest) {
           activeRunAgeMs: null as number | null,
           staleRunRecovered: recoveredStaleRun,
           heartbeatId: hb.id,
+          dailySyncLogId: dailySync.id,
         };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
@@ -186,8 +255,10 @@ export async function GET(req: NextRequest) {
     activeRunId = txResult.activeRunId;
     staleRunRecovered = txResult.staleRunRecovered;
     heartbeatId = txResult.heartbeatId;
+    dailySyncLogId = txResult.dailySyncLogId;
   } catch (error) {
     heartbeatWriteError = error instanceof Error ? error.message : String(error);
+    dailySyncWriteError = heartbeatWriteError;
   }
 
   if (skippedDueToActiveRun) {
@@ -211,6 +282,7 @@ export async function GET(req: NextRequest) {
           identicalAcrossPaths: diagnosticsIdentity.identical,
         },
         heartbeatWriteError,
+        dailySyncWriteError,
       },
       { status: 202 }
     );
@@ -224,20 +296,45 @@ export async function GET(req: NextRequest) {
           firstFailedStep: update.firstFailedStep,
           failureKind: update.failureKind,
         };
-        if (!heartbeatId) return;
-        try {
-          await prisma.syncLog.update({
-            where: { id: heartbeatId },
-            data: {
-              status: "RUNNING",
-              errorMessage: toSyncLogProgressMessage({
-                startedAt,
-                progress: pipelineProgress,
-              }),
-            },
-          });
-        } catch {
-          // no-op
+        if (heartbeatId) {
+          try {
+            await prisma.syncLog.update({
+              where: { id: heartbeatId },
+              data: {
+                status: "RUNNING",
+                errorMessage: toSyncLogProgressMessage({
+                  startedAt,
+                  progress: pipelineProgress,
+                }),
+              },
+            });
+          } catch {
+            // no-op
+          }
+        }
+        if (dailySyncLogId) {
+          try {
+            const statuses = computeDailySyncStatuses(pipelineProgress);
+            await prisma.syncLog.update({
+              where: { id: dailySyncLogId },
+              data: {
+                status: "RUNNING",
+                errorMessage: toDailySyncRunMetaMessage({
+                  phase: "daily_sync",
+                  runKey,
+                  trigger: "cron_route",
+                  sourceStatus: statuses.sourceStatus,
+                  publishStatus: statuses.publishStatus,
+                  firstFailedStep: pipelineProgress.firstFailedStep,
+                  failureKind: pipelineProgress.failureKind,
+                  staleRunRecovered,
+                  startedAt,
+                }),
+              },
+            });
+          } catch {
+            // no-op
+          }
         }
       },
     });
@@ -261,6 +358,36 @@ export async function GET(req: NextRequest) {
         },
       });
     }
+    if (dailySyncLogId) {
+      const statuses = computeDailySyncStatuses({
+        steps: result.steps,
+        firstFailedStep: result.firstFailedStep,
+        failureKind: result.failureKind,
+      });
+      await prisma.syncLog.update({
+        where: { id: dailySyncLogId },
+        data: {
+          status: "SUCCESS",
+          completedAt: new Date(),
+          durationMs: result.durationMs,
+          fundsUpdated: result.insertedCounts.fundRows,
+          fundsCreated: result.insertedCounts.macroRows,
+          errorMessage: toDailySyncRunMetaMessage({
+            phase: "daily_sync",
+            runKey,
+            trigger: "cron_route",
+            sourceStatus: statuses.sourceStatus,
+            publishStatus: statuses.publishStatus,
+            firstFailedStep: result.firstFailedStep,
+            failureKind: result.failureKind,
+            staleRunRecovered,
+            startedAt,
+            finishedAt: result.finishedAt,
+            durationMs: result.durationMs,
+          }),
+        },
+      });
+    }
     revalidateTag(MARKET_SUMMARY_CACHE_TAG);
     return NextResponse.json({
       ok: true,
@@ -279,6 +406,7 @@ export async function GET(req: NextRequest) {
         identicalAcrossPaths: diagnosticsIdentity.identical,
       },
       heartbeatWriteError,
+      dailySyncWriteError,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -304,6 +432,37 @@ export async function GET(req: NextRequest) {
         },
       });
     }
+    if (dailySyncLogId) {
+      const statuses = computeDailySyncStatuses({
+        steps: pipelineProgress.steps,
+        firstFailedStep,
+        failureKind,
+      });
+      try {
+        await prisma.syncLog.update({
+          where: { id: dailySyncLogId },
+          data: {
+            status: "FAILED",
+            completedAt: new Date(),
+            errorMessage: toDailySyncRunMetaMessage({
+              phase: "daily_sync",
+              runKey,
+              trigger: "cron_route",
+              sourceStatus: statuses.sourceStatus,
+              publishStatus: statuses.publishStatus,
+              firstFailedStep,
+              failureKind,
+              staleRunRecovered,
+              startedAt,
+              finishedAt: new Date().toISOString(),
+              message,
+            }),
+          },
+        });
+      } catch (syncError) {
+        dailySyncWriteError = syncError instanceof Error ? syncError.message : String(syncError);
+      }
+    }
     console.error("[daily-cron] cron_failed", { startedAt, message });
     return NextResponse.json(
       {
@@ -325,6 +484,7 @@ export async function GET(req: NextRequest) {
           identicalAcrossPaths: diagnosticsIdentity.identical,
         },
         heartbeatWriteError,
+        dailySyncWriteError,
       },
       { status: 500 }
     );
