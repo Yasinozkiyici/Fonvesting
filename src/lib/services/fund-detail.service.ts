@@ -36,6 +36,7 @@ import {
 } from "@/lib/fund-detail-section-status";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
+import { shouldDropServingRowForUniverseLag } from "@/lib/services/fund-detail-serving-lag";
 
 const DAY_MS = 86400000;
 const DETAIL_HISTORY_LOOKBACK_DAYS = parseEnvMs("FUND_DETAIL_HISTORY_LOOKBACK_DAYS", 1095, 120, 1095);
@@ -113,6 +114,13 @@ const DETAIL_CORE_SERVING_MAX_SNAPSHOT_LAG_DAYS = parseEnvMs(
   1,
   30
 );
+const DETAIL_CORE_SERVING_ROW_LAG_VS_UNIVERSE_MAX_DAYS = parseEnvMs(
+  "FUND_DETAIL_CORE_SERVING_ROW_LAG_VS_UNIVERSE_MAX_DAYS",
+  7,
+  1,
+  45
+);
+
 const DETAIL_ADAPTIVE_RESCUE_THRESHOLD_MS = parseEnvMs(
   "FUND_DETAIL_ADAPTIVE_RESCUE_THRESHOLD_MS",
   Math.max(1_600, Math.round(DETAIL_TOTAL_BUDGET_MS * 0.6)),
@@ -3726,13 +3734,22 @@ async function getFundDetailPageDataUncached(
         const rowSnapshotMs = Date.parse(servingPayload.latestSnapshotDate ?? "");
         const universeSnapshotMs = universeSnapshotHint.getTime();
         if (Number.isFinite(rowSnapshotMs) && Number.isFinite(universeSnapshotMs)) {
-          const lagDays = Math.floor((universeSnapshotMs - rowSnapshotMs) / DAY_MS);
+          const lagDecision = shouldDropServingRowForUniverseLag({
+            rowSnapshotMs,
+            universeSnapshotMs,
+            maxLagDays: DETAIL_CORE_SERVING_ROW_LAG_VS_UNIVERSE_MAX_DAYS,
+          });
+          const lagDays = lagDecision.lagDays;
           steps.core_serving_row_lag_vs_universe_days = lagDays;
-          if (lagDays >= 1) {
-            degradedReasons.add("core_serving_snapshot_stale");
-            servingMissReason = `row_snapshot_lag_${lagDays}d_vs_universe`;
-            servingPayload = null;
-            servingSource = "miss";
+          // Small lag is allowed so previous-good serving data remains eligible.
+          if (lagDecision.rowBehindUniverse) {
+            degradedReasons.add("core_serving_row_behind_universe");
+            if (lagDecision.shouldDrop) {
+              degradedReasons.add("core_serving_snapshot_stale");
+              servingMissReason = `row_snapshot_lag_${lagDays}d_vs_universe`;
+              servingPayload = null;
+              servingSource = "miss";
+            }
           }
         }
       }

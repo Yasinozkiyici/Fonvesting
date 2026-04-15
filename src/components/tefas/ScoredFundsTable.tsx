@@ -24,6 +24,7 @@ import {
   normalizeFundListResponse,
   normalizeScoredResponse,
 } from "@/lib/client-data";
+import { shouldStopBootstrapRetries } from "@/lib/scored-funds-bootstrap";
 import { fundMatchesTheme, getFundTheme, type FundThemeId } from "@/lib/fund-themes";
 import { fundTypeSortKey } from "@/lib/fund-type-display";
 import {
@@ -42,6 +43,7 @@ const DEFAULT_SORT_DIR: SortDir = "desc";
 const SCORES_FETCH_TIMEOUT_MS_DEFAULT = 12_000;
 const SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN = 14_000;
 const SCORES_BOOTSTRAP_RETRY_MS = 3_500;
+const SCORES_BOOTSTRAP_MAX_RETRY = 3;
 const SCORES_CORE_ROWS_FALLBACK_TIMEOUT_MS = 6_500;
 const SCORES_CORE_ROWS_FALLBACK_PAGE_SIZE = 120;
 const SCORES_LAST_GOOD_STORAGE_KEY = "scores-table:last-good:v1";
@@ -277,6 +279,7 @@ export default function ScoredFundsTable({
   });
   const [storageHydrated, setStorageHydrated] = useState(false);
   const [bootstrapFallbackActive, setBootstrapFallbackActive] = useState(false);
+  const [bootstrapAttemptCount, setBootstrapAttemptCount] = useState(0);
   const [bootstrapRetryTick, setBootstrapRetryTick] = useState(0);
   const firstRowsProbeRef = useRef<{ mode: RankingMode; startedAt: number; logged: boolean } | null>(null);
   const initialScopeRefreshDoneRef = useRef(false);
@@ -343,11 +346,29 @@ export default function ScoredFundsTable({
 
   useEffect(() => {
     if (!bootstrapFallbackActive) return;
+    // Retry ceiling prevents completed-empty flows from looking like endless loading.
+    if (shouldStopBootstrapRetries(bootstrapAttemptCount, SCORES_BOOTSTRAP_MAX_RETRY)) {
+      const visibleRows =
+        (modePayloadsRef.current[rankingMode]?.funds.length ?? 0) +
+        (lastGoodPayload?.funds.length ?? 0);
+      setBootstrapFallbackActive(false);
+      if (visibleRows === 0) {
+        setError("Fon listesi geçici olarak yüklenemedi. Lütfen kısa süre sonra tekrar deneyin.");
+        setDegradedNotice("Skor verisi hazır değil. Güvenli boş sonuç gösteriliyor.");
+        setLastScoresMeta((prev) => ({
+          ...prev,
+          degraded: prev.degraded || "bootstrap_retry_exhausted",
+          emptyResult: prev.emptyResult || "degraded",
+        }));
+      }
+      return;
+    }
     const timer = window.setTimeout(() => {
+      setBootstrapAttemptCount((value) => value + 1);
       setBootstrapRetryTick((value) => value + 1);
     }, SCORES_BOOTSTRAP_RETRY_MS);
     return () => window.clearTimeout(timer);
-  }, [bootstrapFallbackActive]);
+  }, [bootstrapAttemptCount, bootstrapFallbackActive, lastGoodPayload, rankingMode]);
 
   useEffect(() => {
     if (seededCategories.length > 0) return;
@@ -487,6 +508,7 @@ export default function ScoredFundsTable({
     if (!cachedMatchesScope) setLoading(true);
     setError(null);
     setBootstrapFallbackActive(false);
+    setBootstrapAttemptCount(0);
     setDegradedNotice(null);
     const timeoutMs = scoresFetchTimeoutForMode(rankingMode);
     // Tema / kategori süzgeci istemcide uygulanıyorsa dar limit üst sıradaki fonlarda kalır → yanlış boş liste.
@@ -553,6 +575,7 @@ export default function ScoredFundsTable({
           setLastGoodScopeKey(currentFetchScopeKey);
           persistStoredLastGoodPayload(corePayload, currentFetchScopeKey);
           setBootstrapFallbackActive(false);
+          setBootstrapAttemptCount(0);
           setBootstrapSource("bootstrap_fallback");
           setDegradedNotice("Skorlar hazırlanıyor. Temel fon listesi gösteriliyor.");
           setLoading(false);
@@ -643,6 +666,7 @@ export default function ScoredFundsTable({
           uiAction = "show_valid_empty";
           setBootstrapSource("valid_empty");
           setBootstrapFallbackActive(false);
+          setBootstrapAttemptCount(0);
           setDegradedNotice(null);
         } else {
           if (json.funds.length > 0) {
@@ -696,6 +720,7 @@ export default function ScoredFundsTable({
         if (timeoutLike && keepRows) {
           setError(null);
           setBootstrapFallbackActive(false);
+          setBootstrapAttemptCount(0);
           setDegradedNotice("Skor verisi gecikti. Son başarılı tablo korunuyor.");
           console.warn(
             `[scores-table] transition_timeout_keep_previous mode=${rankingMode} prev_rows=${previousRows} fallback_rows=${fallbackRows} timeout_ms=${timeoutMs}`
@@ -731,6 +756,7 @@ export default function ScoredFundsTable({
           return;
         }
         setBootstrapFallbackActive(false);
+        setBootstrapAttemptCount(0);
         setError(cause instanceof Error ? cause.message : "Veri yüklenemedi");
         console.error(
           `[scores-table] transition_failed mode=${rankingMode} category=${category || "all"} q=${search.trim() ? "1" : "0"} ` +
