@@ -46,3 +46,15 @@ export function healthDbPingFailureLogLevel(input: {
   if (input.readPathOperational) return "info";
   return "error";
 }
+
+export function resolveHealthDbPingSoftBudgetMs(input: {
+  lightweight: boolean;
+  defaultSoftBudgetMs: number;
+  lightSoftBudgetMs: number;
+}): number {
+  const fallback = Math.max(300, Math.trunc(input.defaultSoftBudgetMs));
+  if (!input.lightweight) return fallback;
+  const light = Math.trunc(input.lightSoftBudgetMs);
+  if (!Number.isFinite(light)) return Math.min(fallback, 900);
+  return Math.max(250, Math.min(fallback, light));
+}

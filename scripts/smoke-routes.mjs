@@ -4,6 +4,8 @@ const routeChecks = [
   { path: "/", mustInclude: ["Yatirim.io", "Fonlar"] },
   { path: "/compare", mustInclude: ["Karşılaştır"] },
   { path: "/fund/VGA", mustInclude: ["Fon detayı", "Son fiyat", "Portföy"] },
+  { path: "/fund/TI1", mustInclude: ["Fon detayı", "Son fiyat"] },
+  { path: "/fund/ZP8", mustInclude: ["Fon detayı", "Son fiyat"] },
 ];
 
 const FETCH_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);

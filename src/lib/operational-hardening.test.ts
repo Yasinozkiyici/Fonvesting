@@ -5,6 +5,7 @@ import {
   hasUsableCompareRows,
   healthDbPingFailureLogLevel,
   optionalReferenceDegradation,
+  resolveHealthDbPingSoftBudgetMs,
   shouldUseFastCompareContextFallback,
 } from "@/lib/operational-hardening";
 
@@ -57,4 +58,31 @@ test("expected direct DB diagnostic errors are filtered when user-critical read 
     "rest_freshness: timeout",
   ]);
   assert.deepEqual(filterExpectedHealthDiagnosticErrors({ errors, readPathOperational: false }), errors);
+});
+
+test("light health DB diagnostic uses a bounded low-cost budget", () => {
+  assert.equal(
+    resolveHealthDbPingSoftBudgetMs({
+      lightweight: true,
+      defaultSoftBudgetMs: 3000,
+      lightSoftBudgetMs: 900,
+    }),
+    900
+  );
+  assert.equal(
+    resolveHealthDbPingSoftBudgetMs({
+      lightweight: true,
+      defaultSoftBudgetMs: 3000,
+      lightSoftBudgetMs: 5000,
+    }),
+    3000
+  );
+  assert.equal(
+    resolveHealthDbPingSoftBudgetMs({
+      lightweight: false,
+      defaultSoftBudgetMs: 3000,
+      lightSoftBudgetMs: 900,
+    }),
+    3000
+  );
 });

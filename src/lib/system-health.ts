@@ -16,6 +16,7 @@ import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-res
 import {
   filterExpectedHealthDiagnosticErrors,
   healthDbPingFailureLogLevel,
+  resolveHealthDbPingSoftBudgetMs,
 } from "@/lib/operational-hardening";
 
 export type SystemHealthStatus = "ok" | "degraded" | "error";
@@ -32,6 +33,7 @@ const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_
 const HEALTH_DB_PING_MAX_WAIT_MS = Number(process.env.HEALTH_DB_PING_MAX_WAIT_MS ?? "900");
 const HEALTH_DB_PING_TX_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_TX_TIMEOUT_MS ?? "1800");
 const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "3000");
+const HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS ?? "900");
 
 export interface SystemHealthIssue {
   code: string;
@@ -228,14 +230,19 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
 
   if (state.inFlight) {
     const inflightElapsedMs = now - state.inFlight.startedAt;
-    const inflightBudgetMs = Math.max(250, HEALTH_DB_PING_SOFT_TIMEOUT_MS - inflightElapsedMs);
+    const softBudgetMs = resolveHealthDbPingSoftBudgetMs({
+      lightweight,
+      defaultSoftBudgetMs: HEALTH_DB_PING_SOFT_TIMEOUT_MS,
+      lightSoftBudgetMs: HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS,
+    });
+    const inflightBudgetMs = Math.max(250, softBudgetMs - inflightElapsedMs);
     if (inflightBudgetMs <= 0) {
       return {
         ok: false,
         ms: inflightElapsedMs,
         source: "cache_failed",
         failureCategory: "health_probe_soft_timeout",
-        failureDetail: `health_db_ping_inflight_timeout_${HEALTH_DB_PING_SOFT_TIMEOUT_MS}ms`,
+        failureDetail: `health_db_ping_inflight_timeout_${softBudgetMs}ms`,
       };
     }
     const inflight = await Promise.race<HealthPingResult>([
@@ -247,7 +254,7 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
             ms: inflightElapsedMs + inflightBudgetMs,
             source: "cache_failed",
             failureCategory: "health_probe_soft_timeout",
-            failureDetail: `health_db_ping_inflight_timeout_${HEALTH_DB_PING_SOFT_TIMEOUT_MS}ms`,
+            failureDetail: `health_db_ping_inflight_timeout_${softBudgetMs}ms`,
           });
         }, inflightBudgetMs);
       }),
@@ -294,7 +301,11 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
       }
     });
 
-  const softBudgetMs = Math.max(300, HEALTH_DB_PING_SOFT_TIMEOUT_MS);
+  const softBudgetMs = resolveHealthDbPingSoftBudgetMs({
+    lightweight,
+    defaultSoftBudgetMs: HEALTH_DB_PING_SOFT_TIMEOUT_MS,
+    lightSoftBudgetMs: HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS,
+  });
   const result = await Promise.race<HealthPingResult>([
     task,
     new Promise<HealthPingResult>((resolve) => {

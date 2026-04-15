@@ -3,26 +3,71 @@ const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(
 const checks = [
   {
     path: "/api/health?mode=light",
-    validate(payload) {
-      return typeof payload === "object" && payload !== null && "ok" in payload;
+    validate(payload, response) {
+      return (
+        typeof payload === "object" &&
+        payload !== null &&
+        payload.ok === true &&
+        (payload.userCriticalReadiness === true ||
+          payload.userCriticalReadiness?.operational === true ||
+          payload.database?.diagnostics?.readPathOperational === true) &&
+        response.headers.get("x-db-failure-class") === "none"
+      );
     },
   },
   {
     path: "/api/funds?page=1&pageSize=5",
     validate(payload) {
-      return typeof payload === "object" && payload !== null && Array.isArray(payload.items);
+      return typeof payload === "object" && payload !== null && Array.isArray(payload.items) && payload.items.length > 0;
     },
   },
   {
     path: "/api/funds/scores?mode=BEST&limit=150",
     validate(payload) {
-      return typeof payload === "object" && payload !== null && Array.isArray(payload.funds);
+      return typeof payload === "object" && payload !== null && Array.isArray(payload.funds) && payload.funds.length > 0;
     },
   },
   {
     path: "/api/market",
     validate(payload) {
       return typeof payload === "object" && payload !== null && typeof payload.fundCount === "number";
+    },
+  },
+  {
+    path: "/api/funds/compare?codes=VGA,TI1",
+    validate(payload) {
+      return typeof payload === "object" && payload !== null && Array.isArray(payload.funds) && payload.funds.length >= 2;
+    },
+  },
+  {
+    path: "/api/funds/compare-series?base=VGA&codes=",
+    validate(payload) {
+      return (
+        typeof payload === "object" &&
+        payload !== null &&
+        Array.isArray(payload.fundSeries) &&
+        payload.fundSeries.some((item) => item?.code === "VGA" && Array.isArray(item.series) && item.series.length > 0)
+      );
+    },
+  },
+  {
+    path: "/api/funds/compare-series?base=VGA&codes=TI1",
+    validate(payload) {
+      return (
+        typeof payload === "object" &&
+        payload !== null &&
+        Array.isArray(payload.fundSeries) &&
+        ["VGA", "TI1"].every((code) =>
+          payload.fundSeries.some((item) => item?.code === code && Array.isArray(item.series) && item.series.length > 0)
+        )
+      );
+    },
+  },
+  {
+    path: "/api/funds/compare-series?base=INVALID&codes=TI1",
+    expectedStatus: 404,
+    validate(payload) {
+      return typeof payload === "object" && payload !== null && payload.error === "base_not_found";
     },
   },
 ];
@@ -61,7 +106,8 @@ for (const check of checks) {
       break;
     }
 
-    if (!response.ok) {
+    const expectedStatus = check.expectedStatus ?? 200;
+    if (response.status !== expectedStatus) {
       lastError = `HTTP ${response.status}`;
       if (attempt < RETRY_COUNT) {
         console.warn(
@@ -88,7 +134,7 @@ for (const check of checks) {
       break;
     }
 
-    if (!check.validate(json)) {
+    if (!check.validate(json, response)) {
       lastError = "unexpected shape";
       if (attempt < RETRY_COUNT) {
         console.warn(

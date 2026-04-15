@@ -8,7 +8,18 @@ const checks = [
   { kind: "api", path: "/api/market", maxMs: 3000, retry: 1 },
   { kind: "api", path: "/api/funds/scores?mode=BEST&limit=150", maxMs: 4000, retry: 1 },
   { kind: "api", path: "/api/funds?page=1&pageSize=5", maxMs: 5000, retry: 1 },
+  { kind: "api", path: "/api/funds/compare?codes=VGA,TI1", maxMs: 5000, retry: 1 },
+  { kind: "api", path: "/api/funds/compare-series?base=VGA&codes=", maxMs: 5000, retry: 1 },
+  { kind: "api", path: "/api/funds/compare-series?base=VGA&codes=TI1", maxMs: 5000, retry: 1 },
+  {
+    kind: "api",
+    path: "/api/funds/compare-series?base=INVALID&codes=TI1",
+    maxMs: 5000,
+    allow4xx: true,
+    retry: 1,
+  },
   { kind: "page", path: "/", maxMs: 5000, mustInclude: ["Yatirim.io", "Fonlar"], retry: 1 },
+  { kind: "page", path: "/compare", maxMs: 5000, mustInclude: ["Karşılaştır"], retry: 1 },
   { kind: "page", path: "/fund/VGA", maxMs: 6000, mustInclude: ["Fon detayı", "Son fiyat"], retry: 1 },
   // Edge case: invalid mode should degrade gracefully (not 5xx).
   { kind: "api", path: "/api/funds/scores?mode=INVALID_MODE&limit=150", maxMs: 5000, allow4xx: true, retry: 1 },

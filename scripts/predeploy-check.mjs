@@ -73,4 +73,81 @@ if (missingInLocalExample.length || missingInExample.length) {
   process.exit(1);
 }
 
+function readProjectFile(relativePath) {
+  return fs.readFileSync(path.resolve(relativePath), "utf8");
+}
+
+function assertContains(fileLabel, content, token, message) {
+  if (!content.includes(token)) {
+    console.error(`${fileLabel}: ${message}`);
+    process.exit(1);
+  }
+}
+
+function assertOrder(fileLabel, content, first, second, message) {
+  const firstIndex = content.indexOf(first);
+  const secondIndex = content.indexOf(second);
+  if (firstIndex === -1 || secondIndex === -1 || firstIndex >= secondIndex) {
+    console.error(`${fileLabel}: ${message}`);
+    process.exit(1);
+  }
+}
+
+const compareRoute = readProjectFile("src/app/api/funds/compare/route.ts");
+assertOrder(
+  "src/app/api/funds/compare/route.ts",
+  compareRoute,
+  "let rows = await loadRowsFromServing(codes)",
+  "rows = await loadRowsFromSnapshot(codes)",
+  "compare critical path must stay serving/cache-first before Prisma snapshot fallback."
+);
+assertContains(
+  "src/app/api/funds/compare/route.ts",
+  compareRoute,
+  "context_optional_skipped",
+  "compare enrichment must remain optional when a usable serving payload is available."
+);
+
+const compareSeriesRoute = readProjectFile("src/app/api/funds/compare-series/route.ts");
+assertContains(
+  "src/app/api/funds/compare-series/route.ts",
+  compareSeriesRoute,
+  "classifyRegistryProofAvailability",
+  "compare-series must keep durable registry proof for invalid-base semantics."
+);
+assertContains(
+  "src/app/api/funds/compare-series/route.ts",
+  compareSeriesRoute,
+  "base_not_found",
+  "compare-series must keep deterministic base_not_found handling."
+);
+assertContains(
+  "src/app/api/funds/compare-series/route.ts",
+  compareSeriesRoute,
+  "optionalReferenceDegradation",
+  "macro/reference degradation must stay explicitly optional."
+);
+
+const healthRoute = readProjectFile("src/app/api/health/route.ts");
+assertContains(
+  "src/app/api/health/route.ts",
+  healthRoute,
+  "X-Health-Read-Path-Operational",
+  "health must expose user-critical read-path readiness."
+);
+assertContains(
+  "src/app/api/health/route.ts",
+  healthRoute,
+  "X-Health-Direct-Db-Failure-Class",
+  "health must keep direct DB diagnostics separate from read-path readiness."
+);
+
+const detailService = readProjectFile("src/lib/services/fund-detail.service.ts");
+assertContains(
+  "src/lib/services/fund-detail.service.ts",
+  detailService,
+  'process.env.FUND_DETAIL_CORE_SERVING_FILE_ONLY === "1"',
+  "detail serving must not default to local file-only cache in production."
+);
+
 console.log("Predeploy check başarılı.");
