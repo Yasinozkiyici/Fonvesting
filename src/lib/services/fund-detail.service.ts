@@ -2233,7 +2233,7 @@ async function buildMinimalDetailPayloadFromFundTable(
       fundSource = "db";
     }
   } catch (error) {
-    console.error("[fund-detail] minimal_fund_query failed", error);
+    console.warn("[fund-detail] minimal_fund_query degraded", error);
     failedSteps.push("minimal_fund_query");
     degradedReasons.add("minimal_fund_query_failed");
   }
