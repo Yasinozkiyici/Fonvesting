@@ -177,6 +177,24 @@ assertContains(
   'process.env.FUND_DETAIL_CORE_SERVING_FILE_ONLY === "1"',
   "detail serving must not default to local file-only cache in production."
 );
+assertContains(
+  "src/lib/services/fund-detail.service.ts",
+  detailService,
+  'console.warn("[fund-detail] kiyas_block failed"',
+  "detail optional kiyas fallback must not emit error-level logs for usable pages."
+);
+assertContains(
+  "src/lib/services/fund-detail.service.ts",
+  detailService,
+  'console.warn("[fund-detail] related_funds failed"',
+  "detail optional related-funds fallback must not emit error-level logs for usable pages."
+);
+assertContains(
+  "src/lib/services/fund-detail.service.ts",
+  detailService,
+  'console.warn("[fund-detail] category_averages failed"',
+  "detail optional category fallback must not emit error-level logs for usable pages."
+);
 
 const systemHealth = readProjectFile("src/lib/system-health.ts");
 assertContains(

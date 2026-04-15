@@ -5074,7 +5074,7 @@ async function getFundDetailPageDataUncached(
     try {
       await runOptionalKiyasBlock();
     } catch (error) {
-      console.error("[fund-detail] kiyas_block failed", error);
+      console.warn("[fund-detail] kiyas_block failed", error);
       failedSteps.push("optional_kiyas_block_query");
       degradedReasons.add("optional_kiyas_block_failed");
       const message = error instanceof Error ? error.message : String(error);
@@ -5127,7 +5127,7 @@ async function getFundDetailPageDataUncached(
         alternativesSource = "snapshot_query";
       }
     } catch (error) {
-      console.error("[fund-detail] related_funds failed", error);
+      console.warn("[fund-detail] related_funds failed", error);
       failedSteps.push("optional_related_funds_query");
       degradedReasons.add("optional_related_funds_failed");
       alternativesDegradedReason = "optional_related_funds_failed";
@@ -5160,7 +5160,7 @@ async function getFundDetailPageDataUncached(
         )
       );
     } catch (error) {
-      console.error("[fund-detail] category_averages failed", error);
+      console.warn("[fund-detail] category_averages failed", error);
       failedSteps.push("optional_category_averages_query");
       degradedReasons.add("optional_category_averages_failed");
     }
