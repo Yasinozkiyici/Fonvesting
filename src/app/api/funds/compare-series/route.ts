@@ -38,6 +38,9 @@ const COMPARE_SERIES_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_REG
 const COMPARE_SERIES_REGISTRY_PROOF_TIMEOUT_MS = Number(
   process.env.COMPARE_SERIES_REGISTRY_PROOF_TIMEOUT_MS ?? "1600"
 );
+const COMPARE_SERIES_MACRO_TIMEOUT_COOLDOWN_MS = Number(
+  process.env.COMPARE_SERIES_MACRO_TIMEOUT_COOLDOWN_MS ?? "60000"
+);
 
 type Point = { t: number; v: number };
 
@@ -74,6 +77,57 @@ type CompareSeriesBaseError = {
 };
 
 type CompareUniverseLike = Awaited<ReturnType<typeof getFundDetailCoreServingUniversePayloads>>;
+type MacroBuckets = Awaited<ReturnType<typeof fetchKiyasMacroBuckets>>;
+type CompareSeriesOptionalState = {
+  macroCooldownUntil: number;
+};
+
+function getCompareSeriesOptionalState(): CompareSeriesOptionalState {
+  const g = globalThis as typeof globalThis & { __compareSeriesOptionalState?: CompareSeriesOptionalState };
+  if (!g.__compareSeriesOptionalState) {
+    g.__compareSeriesOptionalState = { macroCooldownUntil: 0 };
+  }
+  return g.__compareSeriesOptionalState;
+}
+
+function emptyMacroBuckets(): MacroBuckets {
+  return {
+    category: [],
+    bist100: [],
+    usdtry: [],
+    eurtry: [],
+    gold: [],
+    policy: [],
+  };
+}
+
+async function readOptionalMacroBuckets(
+  anchor: Date,
+  fetchMacro: typeof fetchKiyasMacroBuckets
+): Promise<{ macroByRef: MacroBuckets; degraded: { degradedSource: string; failureClass: string } | null }> {
+  const state = getCompareSeriesOptionalState();
+  if (state.macroCooldownUntil > Date.now()) {
+    return {
+      macroByRef: emptyMacroBuckets(),
+      degraded: optionalReferenceDegradation("macro", { timeout: true }),
+    };
+  }
+  try {
+    return {
+      macroByRef: await withTimeout(fetchMacro(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro"),
+      degraded: null,
+    };
+  } catch (error) {
+    const timeout = isTimeoutLike(error);
+    if (timeout) {
+      state.macroCooldownUntil = Date.now() + Math.max(5_000, COMPARE_SERIES_MACRO_TIMEOUT_COOLDOWN_MS);
+    }
+    return {
+      macroByRef: emptyMacroBuckets(),
+      degraded: optionalReferenceDegradation("macro", { timeout }),
+    };
+  }
+}
 
 function buildSyntheticServingPayloadFromRegistry(input: {
   fundId: string;
@@ -397,20 +451,8 @@ async function getCompareSeriesPayload(
 
   const anchor = startOfUtcDay(new Date());
   const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
-  const [macroByRef, servingUniverseResult] = await Promise.all([
-    withTimeout(fetchMacro(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro").catch((error) => {
-      const degraded = optionalReferenceDegradation("macro", { timeout: isTimeoutLike(error) });
-      degradedSources.push(degraded.degradedSource);
-      failureClass.push(degraded.failureClass);
-      return {
-        category: [],
-        bist100: [],
-        usdtry: [],
-        eurtry: [],
-        gold: [],
-        policy: [],
-      };
-    }),
+  const [macroResult, servingUniverseResult] = await Promise.all([
+    readOptionalMacroBuckets(anchor, fetchMacro),
     shouldBuildCategoryFromUniverse
       ? withTimeout(getUniverse(), COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS, "compare_series_category_universe").catch((error) => {
           const degraded = optionalReferenceDegradation("category_universe", { timeout: isTimeoutLike(error) });
@@ -420,6 +462,11 @@ async function getCompareSeriesPayload(
         })
       : Promise.resolve(null),
   ]);
+  const macroByRef = macroResult.macroByRef;
+  if (macroResult.degraded) {
+    degradedSources.push(macroResult.degraded.degradedSource);
+    failureClass.push(macroResult.degraded.failureClass);
+  }
 
   const fundSeries = [
     {

@@ -127,6 +127,12 @@ assertContains(
   "optionalReferenceDegradation",
   "macro/reference degradation must stay explicitly optional."
 );
+assertContains(
+  "src/app/api/funds/compare-series/route.ts",
+  compareSeriesRoute,
+  "macroCooldownUntil",
+  "compare-series macro timeout must use a cooldown so repeated optional enrichment failures do not slow user-critical series."
+);
 
 const scoresRoute = readProjectFile("src/app/api/funds/scores/route.ts");
 assertOrder(
