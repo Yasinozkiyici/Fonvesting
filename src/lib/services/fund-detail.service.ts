@@ -16,6 +16,7 @@ import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
 import {
   buildFundAlternatives,
   FUND_ALTERNATIVES_CANDIDATE_POOL,
+  FUND_ALTERNATIVES_MAX,
   type FundAlternativeCandidate,
 } from "@/lib/fund-detail-alternatives";
 import {
@@ -34,6 +35,10 @@ import {
   type FundDetailSectionState,
   type FundDetailSectionStates,
 } from "@/lib/fund-detail-section-status";
+import {
+  hasOptionalEnrichment as hasOptionalEnrichmentForSuccessContract,
+  needsPhase2OptionalRefresh as needsPhase2OptionalRefreshForSuccessContract,
+} from "@/lib/fund-detail-success-contract";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { detailEnrichmentDbFailureLogLevel } from "@/lib/operational-hardening";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
@@ -1258,16 +1263,28 @@ function hasRequiredCoreData(payload: FundDetailPageData): boolean {
 }
 
 function hasOptionalEnrichment(payload: FundDetailPageData): boolean {
-  return (
-    payload.similarFunds.length > 0 ||
-    payload.similarCategoryPeerDailyReturns.length > 0 ||
-    payload.categoryReturnAverages != null ||
-    payload.kiyasBlock != null
-  );
+  return hasOptionalEnrichmentForSuccessContract(payload);
 }
 
 function needsPhase2OptionalRefresh(payload: FundDetailPageData): boolean {
-  return payload.kiyasBlock == null;
+  return needsPhase2OptionalRefreshForSuccessContract(payload);
+}
+
+function normalizeSimilarFundsForRender(
+  currentCode: string,
+  funds: FundDetailSimilarFund[]
+): FundDetailSimilarFund[] {
+  const normalizedCurrent = currentCode.trim().toUpperCase();
+  const seen = new Set<string>();
+  const output: FundDetailSimilarFund[] = [];
+  for (const fund of funds) {
+    const code = fund.code?.trim().toUpperCase();
+    if (!code || code === normalizedCurrent || seen.has(code)) continue;
+    seen.add(code);
+    output.push({ ...fund, code });
+    if (output.length >= FUND_ALTERNATIVES_MAX) break;
+  }
+  return output;
 }
 
 function inferCacheKind(payload: FundDetailPageData): DetailCacheKind {
@@ -1281,7 +1298,10 @@ function inferCacheKind(payload: FundDetailPageData): DetailCacheKind {
     sectionStates.performance === "full" &&
     sectionStates.trends !== "no_data" &&
     payload.priceSeries.length >= DETAIL_CHART_PARTIAL_MIN_POINTS;
-  if (hasOptionalEnrichment(payload) && !payload.degraded?.active && coreHealthy) return "full_optional_enriched";
+  const optionalRefreshNeeded = needsPhase2OptionalRefresh(payload);
+  if (hasOptionalEnrichment(payload) && !optionalRefreshNeeded && !payload.degraded?.active && coreHealthy) {
+    return "full_optional_enriched";
+  }
   if (!coreHealthy) return "core_degraded";
   if (hasRequiredCoreData(payload)) return payload.degraded?.active ? "core_degraded" : "core_full";
   return "core_degraded";
@@ -5384,13 +5404,15 @@ async function getFundDetailPageDataUncached(
     },
     similarCandidates
   );
+  const normalizedBuiltAlternatives = normalizeSimilarFundsForRender(normalizedCode, builtSimilarFunds);
+  const normalizedSeedAlternatives = normalizeSimilarFundsForRender(normalizedCode, seedAlternatives);
   const similarFunds =
-    builtSimilarFunds.length > 0
-      ? builtSimilarFunds
-      : seedAlternatives.length > 0
-        ? seedAlternatives
-        : builtSimilarFunds;
-  if (builtSimilarFunds.length === 0 && seedAlternatives.length > 0) {
+    normalizedBuiltAlternatives.length > 0
+      ? normalizedBuiltAlternatives
+      : normalizedSeedAlternatives.length > 0
+        ? normalizedSeedAlternatives
+        : normalizedBuiltAlternatives;
+  if (normalizedBuiltAlternatives.length === 0 && normalizedSeedAlternatives.length > 0) {
     alternativesSource = "cache_seed";
     alternativesFallbackUsed = true;
     alternativesDegradedReason = "cache_seed";

@@ -310,6 +310,95 @@ export type NormalizedJsonFetchWithMeta<T> = {
   rawBytes: number;
 };
 
+type SharedScoresFetch = {
+  status: number;
+  headers: Array<[string, string]>;
+  text: string;
+  rawBytes: number;
+};
+
+const SHARED_SCORES_SETTLED_TTL_MS = 2_000;
+const sharedScoresFetches = new Map<string, Promise<SharedScoresFetch>>();
+const sharedScoresSettled = new Map<string, { value: SharedScoresFetch; updatedAt: number }>();
+
+function sharedScoresFetchKey(url: string, init?: RequestInit): string | null {
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (method !== "GET" || init?.body) return null;
+  const parsed = new URL(url, "http://localhost");
+  if (parsed.pathname !== "/api/funds/scores") return null;
+  const sortedParams = [...parsed.searchParams.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) => {
+    const keyCompare = leftKey.localeCompare(rightKey);
+    if (keyCompare !== 0) return keyCompare;
+    return leftValue.localeCompare(rightValue);
+  });
+  return `${parsed.pathname}?${new URLSearchParams(sortedParams).toString()}`;
+}
+
+function abortPromise(signal: AbortSignal | undefined): Promise<never> | null {
+  if (!signal) return null;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("request_aborted", "AbortError"));
+  }
+  return new Promise((_, reject) => {
+    signal.addEventListener(
+      "abort",
+      () => reject(new DOMException("request_aborted", "AbortError")),
+      { once: true }
+    );
+  });
+}
+
+function runSharedScoresFetch(
+  url: string,
+  label: string,
+  init: RequestInit | undefined,
+  timeoutMs: number
+): Promise<SharedScoresFetch> {
+  const key = sharedScoresFetchKey(url, init);
+  if (!key) {
+    return Promise.reject(new Error("not_shareable_scores_fetch"));
+  }
+  const settled = sharedScoresSettled.get(key);
+  if (settled && Date.now() - settled.updatedAt <= SHARED_SCORES_SETTLED_TTL_MS) {
+    return Promise.resolve(settled.value);
+  }
+  if (settled) sharedScoresSettled.delete(key);
+  const existing = sharedScoresFetches.get(key);
+  if (existing) return existing;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException(`request_timeout_${timeoutMs}ms`, "AbortError"));
+  }, timeoutMs);
+  const { signal: _signal, ...safeInit } = init ?? {};
+  const request = fetch(url, { ...safeInit, signal: controller.signal })
+    .then(async (response) => {
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`${label}: HTTP ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+      }
+      const value = {
+        status: response.status,
+        headers: [...response.headers.entries()],
+        text,
+        rawBytes: typeof TextEncoder !== "undefined" ? new TextEncoder().encode(text).length : text.length,
+      };
+      sharedScoresSettled.set(key, { value, updatedAt: Date.now() });
+      return value;
+    })
+    .catch((error) => {
+      if (controller.signal.aborted) {
+        throw new Error(`${label}: istek zaman aşımına uğradı (${timeoutMs}ms)`);
+      }
+      throw error;
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      sharedScoresFetches.delete(key);
+    });
+  sharedScoresFetches.set(key, request);
+  return request;
+}
+
 export async function fetchNormalizedJsonWithMeta<T>(
   url: string,
   label: string,
@@ -317,6 +406,30 @@ export async function fetchNormalizedJsonWithMeta<T>(
   init?: RequestInit,
   timeoutMs = 12_000
 ): Promise<NormalizedJsonFetchWithMeta<T>> {
+  const sharedKey = sharedScoresFetchKey(url, init);
+  if (sharedKey) {
+    const externalSignal = init?.signal ?? undefined;
+    const abort = abortPromise(externalSignal);
+    const shared = runSharedScoresFetch(url, label, init, timeoutMs);
+    const raw = await (abort ? Promise.race([shared, abort]) : shared);
+    let json: unknown;
+    try {
+      json = raw.text ? JSON.parse(raw.text) : null;
+    } catch {
+      throw new Error(`${label}: geçersiz JSON`);
+    }
+    const normalized = normalize(json);
+    if (normalized == null) {
+      throw new Error(`${label}: beklenen formatta değil`);
+    }
+    return {
+      data: normalized,
+      status: raw.status,
+      headers: new Headers(raw.headers),
+      rawBytes: raw.rawBytes,
+    };
+  }
+
   const externalSignal = init?.signal;
   const controller = new AbortController();
   const onExternalAbort = () => {

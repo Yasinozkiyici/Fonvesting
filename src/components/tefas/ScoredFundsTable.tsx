@@ -518,8 +518,11 @@ export default function ScoredFundsTable({
     const timeoutMs = scoresFetchTimeoutForMode(rankingMode);
     // Tema / kategori süzgeci istemcide uygulanıyorsa dar limit üst sıradaki fonlarda kalır → yanlış boş liste.
     const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category)) || Boolean(deferredSearch);
-    const modeLimitParam =
-      rankingMode === "HIGH_RETURN" && !needsWideScoresPayload ? "&limit=300" : "";
+    const modeLimitParam = activeTheme
+      ? "&limit=2500"
+      : rankingMode === "HIGH_RETURN" && !needsWideScoresPayload
+        ? "&limit=300"
+        : "";
     const categoryParam =
       enableCategoryFilter && category.trim()
         ? `&category=${encodeURIComponent(category.trim())}`
@@ -905,11 +908,12 @@ export default function ScoredFundsTable({
   useEffect(() => {
     if (!enableCategoryFilter || !category) return;
     if (categories.length === 0) return;
+    if (activeTheme && !payloadForCurrentScope) return;
     if (availableCategories.some((item) => item.code === category)) return;
     setCategory("");
     setPage(1);
     syncUrlState({ category: "" });
-  }, [availableCategories, categories.length, category, enableCategoryFilter, syncUrlState]);
+  }, [activeTheme, availableCategories, categories.length, category, enableCategoryFilter, payloadForCurrentScope, syncUrlState]);
 
   const serverScopedByCategory = Boolean(
     enableCategoryFilter &&
@@ -1228,7 +1232,15 @@ export default function ScoredFundsTable({
   ]);
 
   return (
-    <section className="table-container ds-surface-glass scored-funds-table-module overflow-hidden rounded-xl border">
+    <section
+      className="table-container ds-surface-glass scored-funds-table-module overflow-hidden rounded-xl border"
+      data-discovery-result-list="true"
+      data-discovery-scope={currentFetchScopeKey}
+      data-discovery-mode={rankingMode}
+      data-discovery-category={category || "all"}
+      data-discovery-theme={activeTheme ?? "none"}
+      data-discovery-visible-count={filteredFunds.length}
+    >
       <header
         className="fund-table-chrome border-b px-3 py-2 sm:px-4 sm:py-2.5 md:py-2.5"
         style={{
@@ -1539,11 +1551,11 @@ export default function ScoredFundsTable({
             </div>
           ))
         ) : error && paginatedFunds.length === 0 ? (
-          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="error">
             {error}
           </p>
         ) : paginatedFunds.length === 0 ? (
-          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="valid">
             {emptyListMessage}
           </p>
         ) : (
@@ -1613,13 +1625,13 @@ export default function ScoredFundsTable({
               ))
             ) : error && paginatedFunds.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="error">
                   {error}
                 </td>
               </tr>
             ) : paginatedFunds.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }}>
+                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="valid">
                   {emptyListMessage}
                 </td>
               </tr>

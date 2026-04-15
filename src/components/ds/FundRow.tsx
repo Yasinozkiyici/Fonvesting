@@ -53,7 +53,11 @@ export const FundRowMobile = memo(function FundRowMobile({ fund }: { fund: Score
   const secondaryLine = `${formatFundLastPrice(fund.lastPrice)} · ${formatCompactCurrency(fund.portfolioSize)} · ${formatCompactNumber(fund.investorCount)} yatırımcı`;
 
   return (
-    <div className="mobile-fund-card mobile-fund-card--scan mobile-fund-card--with-compare flex min-w-0 gap-0.5">
+    <div
+      className="mobile-fund-card mobile-fund-card--scan mobile-fund-card--with-compare flex min-w-0 gap-0.5"
+      data-discovery-row="true"
+      data-fund-code={fund.code}
+    >
       <Link href={fundDetailHref(fund.code)} prefetch={false} className="mobile-fund-card__link mobile-fund-card__link--with-compare min-w-0 flex-1">
         <div className="flex min-w-0 items-stretch gap-2.5">
           <FundLogoMark
@@ -179,7 +183,7 @@ export const FundDataTableRow = memo(function FundDataTableRow({ fund }: { fund:
   const typeTone = fundTypeChipToneClass(fund.fundType, typeLabel);
 
   return (
-    <tr className="table-row fund-data-row group">
+    <tr className="table-row fund-data-row group" data-discovery-row="true" data-fund-code={fund.code}>
       <td className="fund-col-name">
         <div className="flex min-w-0 items-center gap-1.5 py-0.5 md:gap-2">
           <Link

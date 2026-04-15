@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock3, LayoutGrid, Network, Scale, Shield, TrendingUp, type LucideIcon } from "lucide-react";
 import ScoredFundsTable from "@/components/tefas/ScoredFundsTable";
-import { fetchNormalizedJson, normalizeScoredResponse } from "@/lib/client-data";
+import { fetchNormalizedJsonWithMeta, normalizeScoredResponse } from "@/lib/client-data";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
 import type { RankingMode } from "@/lib/scoring";
 import type { FundIntentId } from "@/lib/fund-intents";
@@ -352,25 +352,26 @@ export function HomePageClient({
       return;
     }
     const ac = new AbortController();
-    const spotlightLimit = effectiveTheme ? 2500 : 300;
+    const hasScopedCategory = effectiveCategory.trim().length > 0;
+    const spotlightLimitParam = effectiveTheme ? "&limit=2500" : hasScopedCategory ? "" : "&limit=300";
     const spotlightCategory =
-      effectiveCategory.trim().length > 0
+      hasScopedCategory
         ? `&category=${encodeURIComponent(effectiveCategory.trim())}`
         : "";
     const spotlightTheme = effectiveTheme ? `&theme=${encodeURIComponent(effectiveTheme)}` : "";
-    const spotlightUrl = `/api/funds/scores?mode=${effectiveMode}&limit=${spotlightLimit}${spotlightCategory}${spotlightTheme}`;
+    const spotlightUrl = `/api/funds/scores?mode=${effectiveMode}${spotlightCategory}${spotlightTheme}${spotlightLimitParam}`;
     console.info(
       `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
         `request_url=${spotlightUrl} phase=requested`
     );
-    fetchNormalizedJson(
+    fetchNormalizedJsonWithMeta(
       spotlightUrl,
       "Fon API",
       normalizeScoredResponse,
       { signal: ac.signal },
       effectiveTheme || effectiveCategory.trim().length > 0 ? 12_000 : 8_000
     )
-      .then((payload) => {
+      .then(({ data: payload }) => {
         console.info(
           `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
             `server_rows=${payload.funds.length} universe_total=${payload.total} phase=response`
@@ -452,7 +453,15 @@ export function HomePageClient({
 
   return (
     <>
-      <section className="discovery-module relative mt-3 overflow-hidden rounded-xl border sm:mt-3.5" aria-label="Fon keşfi">
+      <section
+        className="discovery-module relative mt-3 overflow-hidden rounded-xl border sm:mt-3.5"
+        aria-label="Fon keşfi"
+        data-discovery-root="true"
+        data-discovery-primary={activePrimary ?? "none"}
+        data-discovery-secondary={secondaryId || "none"}
+        data-discovery-theme={effectiveTheme ?? "none"}
+        data-discovery-category={effectiveCategory || "all"}
+      >
         <div className="discovery-module-accent-rule pointer-events-none absolute bottom-3 left-0 top-3 w-px rounded-full opacity-90" aria-hidden />
         <div className="discovery-module-inner relative px-3 py-2 pl-3.5 sm:px-4 sm:py-3 sm:pl-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-3">
@@ -527,6 +536,7 @@ export function HomePageClient({
                   aria-pressed={match}
                   data-tone={preset.id}
                   data-active={match ? "true" : "false"}
+                  data-discovery-primary-option={preset.id}
                   onClick={() => onPresetCardClick(preset)}
                   className={`discovery-preset-card touch-manipulation group relative flex min-h-[4.35rem] w-[min(42vw,11.25rem)] shrink-0 snap-start flex-col rounded-[10px] border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow,transform] duration-150 sm:min-h-[4.85rem] sm:w-auto sm:px-3 sm:py-2.5 ${focusRing} ${
                     match ? "" : "sm:hover:-translate-y-px"
@@ -578,6 +588,7 @@ export function HomePageClient({
               disabled={categories.length === 0}
               data-tone="categories"
               data-active={categoriesCardActive ? "true" : "false"}
+              data-discovery-primary-option="categories"
               onClick={toggleCategoriesRailOnly}
               className={`discovery-preset-card touch-manipulation group relative flex min-h-[4.35rem] w-[min(42vw,11.25rem)] shrink-0 snap-start flex-col rounded-[10px] border px-2.5 py-2 text-left transition-[border-color,background-color,box-shadow,transform,opacity] duration-150 sm:min-h-[4.85rem] sm:w-auto sm:px-3 sm:py-2.5 ${focusRing} ${
                 categoriesCardActive ? "" : "sm:hover:-translate-y-px"
@@ -621,7 +632,10 @@ export function HomePageClient({
           </div>
 
           {showSecondaryRail ? (
-            <div className="discovery-rail mt-2.5 border-t border-dashed pt-2.5 sm:mt-3 sm:pt-3">
+            <div
+              className="discovery-rail mt-2.5 border-t border-dashed pt-2.5 sm:mt-3 sm:pt-3"
+              data-discovery-secondary-rail={activePrimary ?? "none"}
+            >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <p className="discovery-rail__title min-w-0 flex-1 text-[9.5px] font-semibold uppercase tracking-[0.1em] sm:text-[10px]">
                   {activePrimary ? railStepTitle(activePrimary) : ""}
@@ -650,6 +664,7 @@ export function HomePageClient({
                       type="button"
                       role="listitem"
                       data-active={picked ? "true" : "false"}
+                      data-discovery-secondary-option={chip.id}
                       onClick={() => onSecondaryChip(chip.id)}
                       className={`discovery-chip touch-manipulation shrink-0 rounded-full px-3 py-2 text-left text-[10px] font-semibold leading-snug transition-[background-color,color,box-shadow,border-color] duration-150 sm:px-3 sm:py-1.5 sm:text-[10px] ${focusRing}`}
                     >

@@ -6,7 +6,7 @@ import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-sna
 import { filterScoresPayloadByQuery } from "@/lib/services/fund-scores-compute.service";
 import { scoresApiCacheKey } from "@/lib/services/fund-scores-cache.service";
 import { prisma } from "@/lib/prisma";
-import { getFundsPage } from "@/lib/services/fund-list.service";
+import { getAllFundsCached, getFundsPage } from "@/lib/services/fund-list.service";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { fundMatchesTheme, parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
@@ -78,6 +78,23 @@ function getScoresRouteState(): ScoresRuntimeState {
 
 function baseScoresKey(mode: RankingMode, categoryCode: string, limit: number | null): string {
   return `${mode}|${categoryCode || "all"}|${limit ?? "all"}`;
+}
+
+function normalizeScoresScopePart(value: string): string {
+  return value.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+}
+
+function responseScoresKey(
+  mode: RankingMode,
+  categoryCode: string,
+  limit: number | null,
+  queryTrim: string,
+  theme: FundThemeId | null
+): string {
+  const base = baseScoresKey(mode, categoryCode, limit);
+  const normalizedQuery = normalizeScoresScopePart(queryTrim);
+  if (!normalizedQuery && !theme) return base;
+  return `${base}|theme:${theme ?? "none"}|q:${normalizedQuery || "none"}`;
 }
 
 function filterScoresPayloadByTheme(payload: ScoresApiPayload, theme: FundThemeId | null): ScoresApiPayload {
@@ -228,12 +245,13 @@ async function readLightSnapshotFallback(mode: RankingMode, categoryCode: string
 async function readFundsListFallback(
   mode: RankingMode,
   categoryCode: string,
-  queryTrim = ""
+  queryTrim = "",
+  limit = SCORES_LIGHT_FALLBACK_LIMIT
 ): Promise<ScoresApiPayload | null> {
   const page = await withTimeout(
     getFundsPage({
       page: 1,
-      pageSize: SCORES_LIGHT_FALLBACK_LIMIT,
+      pageSize: Math.min(MAX_LIMIT, Math.max(1, limit)),
       q: queryTrim,
       category: categoryCode || undefined,
       fundType: undefined,
@@ -261,6 +279,56 @@ async function readFundsListFallback(
       finalScore: null,
     })),
   };
+}
+
+async function readThemeFundsListFallback(
+  mode: RankingMode,
+  categoryCode: string,
+  theme: FundThemeId,
+  queryTrim = ""
+): Promise<ScoresApiPayload | null> {
+  const rows = await withTimeout(
+    getAllFundsCached(),
+    SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS
+  ).catch(() => []);
+  if (rows.length === 0) return null;
+  const basePayload: ScoresApiPayload = {
+    mode,
+    total: rows.length,
+    funds: rows
+      .filter((item) => (categoryCode ? item.category?.code === categoryCode : true))
+      .map((item) => ({
+        fundId: item.id,
+        code: item.code,
+        name: item.name,
+        shortName: item.shortName,
+        logoUrl: item.logoUrl,
+        lastPrice: item.lastPrice,
+        dailyReturn: item.dailyReturn,
+        portfolioSize: item.portfolioSize,
+        investorCount: item.investorCount,
+        category: item.category ? { code: item.category.code, name: item.category.name } : null,
+        fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
+        finalScore: null,
+      })),
+  };
+  const queryPayload = queryTrim ? filterScoresPayloadByQuery(basePayload, queryTrim) : basePayload;
+  const themed = filterScoresPayloadByTheme(queryPayload, theme);
+  if (!hasUsableScoresPayload(themed)) return null;
+  const funds = [...themed.funds].sort((a, b) => {
+    if (mode === "HIGH_RETURN") {
+      const daily = b.dailyReturn - a.dailyReturn;
+      if (daily !== 0) return daily;
+    }
+    if (mode === "LOW_RISK") {
+      const risk = Math.abs(a.dailyReturn) - Math.abs(b.dailyReturn);
+      if (risk !== 0) return risk;
+    }
+    const portfolio = b.portfolioSize - a.portfolioSize;
+    if (portfolio !== 0) return portfolio;
+    return a.code.localeCompare(b.code, "tr");
+  });
+  return { ...themed, total: funds.length, funds };
 }
 
 async function readPersistedAllScoresFilteredFallback(
@@ -432,7 +500,7 @@ export async function GET(request: NextRequest) {
   const queryTrim = (searchParams.get("q") ?? searchParams.get("query") ?? "").trim().slice(0, MAX_QUERY_LENGTH);
   const limit = parseLimit(searchParams);
   const isCriticalBestAllPath = mode === "BEST" && !categoryCode && !queryTrim && !theme;
-  const key = baseScoresKey(mode, categoryCode, limit);
+  const key = responseScoresKey(mode, categoryCode, limit, queryTrim, theme);
   const state = getScoresRouteState();
 
   let cacheState: "hit" | "miss" | "dedupe" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "miss";
@@ -448,9 +516,6 @@ export async function GET(request: NextRequest) {
     basePayload = payload;
     source = nextSource;
     cacheState = nextCacheState;
-    if (payload.funds.length > 0 && nextCacheState !== "stale") {
-      state.cache.set(key, { payload, updatedAt: Date.now() });
-    }
   };
   const logDbRouteFailure = (classified: ReturnType<typeof classifyDatabaseError>): void => {
     console.error("[db-route-failure]", {
@@ -685,10 +750,24 @@ export async function GET(request: NextRequest) {
   }
 
   const queryPayload = queryTrim ? filterScoresPayloadByQuery(basePayload, queryTrim) : basePayload;
-  const payload = filterScoresPayloadByTheme(queryPayload, theme);
+  let payload = filterScoresPayloadByTheme(queryPayload, theme);
+  if (theme && payload.funds.length === 0) {
+    const themeFallback = await readThemeFundsListFallback(mode, categoryCode, theme, queryTrim);
+    if (hasUsableScoresPayload(themeFallback)) {
+      payload = themeFallback;
+      source = "funds-list";
+      cacheState = "funds-list";
+      degradedReason = degradedReason
+        ? `${degradedReason}_theme_funds_list_fallback`
+        : "theme_funds_list_fallback";
+    }
+  }
   const durationMs = Date.now() - startedAt;
   const emptyResultKind =
     payload.funds.length === 0 ? (degradedReason ? "degraded" : "valid") : null;
+  if (payload.funds.length > 0 && String(cacheState) !== "stale") {
+    state.cache.set(key, { payload, updatedAt: Date.now() });
+  }
 
   console.info(
     `[scores-api] mode=${mode} category=${categoryCode || "all"} limit=${limit ?? "none"} q=${queryTrim ? "1" : "0"} ` +
