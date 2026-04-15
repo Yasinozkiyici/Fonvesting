@@ -377,7 +377,7 @@ export function FundDetailChart({ data }: Props) {
     compareAbortRef.current?.abort();
     const controller = new AbortController();
     compareAbortRef.current = controller;
-    const timeoutMs = 6_000;
+    const timeoutMs = 9_000;
     const timeoutId = setTimeout(() => {
       controller.abort(new DOMException(`compare_series_timeout_${timeoutMs}ms`, "AbortError"));
     }, timeoutMs);

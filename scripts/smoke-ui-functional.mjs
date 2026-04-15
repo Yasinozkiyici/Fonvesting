@@ -24,12 +24,22 @@ async function assertDetailUsable(page, code) {
   const response = await page.goto(`${baseUrl}/fund/${code}`, { waitUntil: "networkidle", timeout: timeoutMs });
   if (!response || response.status() >= 400) fail(`/fund/${code} status ${response?.status() ?? "none"}`);
   await page.waitForSelector("text=Getiri karşılaştırması", { timeout: timeoutMs });
+  await page
+    .waitForFunction(
+      () => {
+        const text = document.body.innerText;
+        return (
+          text.includes("ÖNCELİKLİ NET FARK") &&
+          !(text.includes("0 geçti •0 geride •0 başa baş") && text.includes("Veri yetersiz"))
+        );
+      },
+      null,
+      { timeout: timeoutMs }
+    )
+    .catch(() => fail(`/fund/${code} comparison rendered only product-useless rows`));
 
   const body = await visibleText(page);
   if (!body.includes("Karşılaştırma")) fail(`/fund/${code} missing comparison UI`);
-  if (body.includes("0 geçti •0 geride •0 başa baş") && body.includes("Veri yetersiz")) {
-    fail(`/fund/${code} comparison rendered only product-useless rows`);
-  }
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await page.waitForTimeout(250);
   const expandedBody = await visibleText(page);

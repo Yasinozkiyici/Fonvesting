@@ -22,6 +22,7 @@ import {
 } from "@/lib/compare-series-category";
 import { optionalReferenceDegradation } from "@/lib/operational-hardening";
 import { readActiveRegistryFundByCodeWithMeta, type RegistryRow } from "@/lib/services/fund-registry-read.service";
+import { getFundsPage } from "@/lib/services/fund-list.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,10 +33,26 @@ const DAY_MS = 86_400_000;
 const MAX_REF_SNAPSHOT_LAG_DAYS = 1;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERSION_TIMEOUT_MS ?? "1000");
-const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "1400");
+const COMPARE_SERIES_MACRO_TIMEOUT_MS = Math.max(
+  3_200,
+  Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "3600")
+);
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
-const COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS = Number(
-  process.env.COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS ?? "700"
+const COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS = Math.max(
+  2_400,
+  Number(process.env.COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS ?? "2800")
+);
+const COMPARE_SERIES_CATEGORY_FALLBACK_TIMEOUT_MS = Math.max(
+  1_400,
+  Number(process.env.COMPARE_SERIES_CATEGORY_FALLBACK_TIMEOUT_MS ?? "2200")
+);
+const COMPARE_SERIES_CATEGORY_FALLBACK_PAYLOAD_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.COMPARE_SERIES_CATEGORY_FALLBACK_PAYLOAD_TIMEOUT_MS ?? "1600")
+);
+const COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS = Math.max(
+  8,
+  Math.min(40, Number(process.env.COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS ?? "18"))
 );
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "2600");
 const COMPARE_SERIES_BASE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_TIMEOUT_MS ?? "3200");
@@ -85,6 +102,12 @@ type CompareUniverseLike = Awaited<ReturnType<typeof getFundDetailCoreServingUni
 type MacroBuckets = Awaited<ReturnType<typeof fetchKiyasMacroBuckets>>;
 type CompareSeriesOptionalState = {
   macroCooldownUntil: number;
+};
+
+type OptionalCategoryReferenceRead = {
+  records: FundDetailCoreServingPayload[];
+  degraded: { degradedSource: string; failureClass: string } | null;
+  fallbackSource: "universe" | "category_funds_list" | "none";
 };
 
 function getCompareSeriesOptionalState(): CompareSeriesOptionalState {
@@ -226,6 +249,105 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 function isTimeoutLike(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /timeout|timed out|aborted/i.test(message);
+}
+
+async function readCategoryServingPayloadsFromFundsList(input: {
+  baseFund: FundDetailCoreServingPayload;
+  readServing: CompareServingReader;
+}): Promise<FundDetailCoreServingPayload[]> {
+  const categoryCode = input.baseFund.fund.categoryCode;
+  if (!categoryCode) return [];
+
+  const page = await withTimeout(
+    getFundsPage({
+      page: 1,
+      pageSize: COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS + 4,
+      category: categoryCode,
+      sortField: "portfolioSize",
+      sortDir: "desc",
+    }),
+    COMPARE_SERIES_CATEGORY_FALLBACK_TIMEOUT_MS,
+    "compare_series_category_funds_list"
+  );
+  const baseCode = input.baseFund.fund.code.trim().toUpperCase();
+  const codes = page.items
+    .map((item) => item.code.trim().toUpperCase())
+    .filter((code) => code && code !== baseCode)
+    .slice(0, COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS);
+
+  const reads = await Promise.all(
+    codes.map(async (code) => {
+      try {
+        const read = await withTimeout(
+          readServingPayloadForCompareSeries(code, input.readServing),
+          COMPARE_SERIES_CATEGORY_FALLBACK_PAYLOAD_TIMEOUT_MS,
+          `compare_series_category_payload_${code}`
+        );
+        return read.payload;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return reads.filter((payload): payload is FundDetailCoreServingPayload => {
+    if (!payload) return false;
+    return payload.fund.categoryCode === categoryCode && pointsFromServingPayload(payload).length >= 2;
+  });
+}
+
+async function readOptionalCategoryReferencePayloads(input: {
+  baseFund: FundDetailCoreServingPayload;
+  getUniverse: () => Promise<CompareUniverseLike>;
+  readServing: CompareServingReader;
+}): Promise<OptionalCategoryReferenceRead> {
+  if (!input.baseFund.fund.categoryCode) {
+    return { records: [], degraded: null, fallbackSource: "none" };
+  }
+
+  let universeDegraded: { degradedSource: string; failureClass: string } | null = null;
+  const universeTask = (async (): Promise<OptionalCategoryReferenceRead> => {
+    const universe = await withTimeout(
+      input.getUniverse(),
+      COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS,
+      "compare_series_category_universe"
+    );
+    if (universe.records.length > 0) {
+      return { records: universe.records, degraded: null, fallbackSource: "universe" };
+    }
+    throw new Error("compare_series_category_universe_empty");
+  })().catch((error) => {
+    universeDegraded = optionalReferenceDegradation("category_universe", { timeout: isTimeoutLike(error) });
+    throw error;
+  });
+
+  const fallbackTask = (async (): Promise<OptionalCategoryReferenceRead> => {
+    const fallbackRecords = await readCategoryServingPayloadsFromFundsList({
+      baseFund: input.baseFund,
+      readServing: input.readServing,
+    });
+    if (fallbackRecords.length === 0) {
+      throw new Error("compare_series_category_fallback_empty");
+    }
+    return {
+      records: [input.baseFund, ...fallbackRecords],
+      degraded: { degradedSource: "category_universe_fallback", failureClass: "category_universe_fallback" },
+      fallbackSource: "category_funds_list",
+    };
+  })();
+
+  try {
+    return await Promise.any([universeTask, fallbackTask]);
+  } catch {
+    return {
+      records: [],
+      degraded: universeDegraded ?? {
+        degradedSource: "category_universe_optional",
+        failureClass: "category_universe_empty",
+      },
+      fallbackSource: "none",
+    };
+  }
 }
 
 type CompareServingRead = Awaited<ReturnType<typeof getFundDetailCoreServingCached>>;
@@ -377,22 +499,21 @@ async function getCompareSeriesPayload(
     });
 
   const anchor = startOfUtcDay(new Date());
-  const shouldBuildCategoryFromUniverse = Boolean(baseFund.fund.categoryCode);
-  const [macroResult, servingUniverseResult] = await Promise.all([
+  const shouldBuildCategoryReference = Boolean(baseFund.fund.categoryCode);
+  const [macroResult, categoryReferenceResult] = await Promise.all([
     readOptionalMacroBuckets(anchor, fetchMacro),
-    shouldBuildCategoryFromUniverse
-      ? withTimeout(getUniverse(), COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS, "compare_series_category_universe").catch((error) => {
-          const degraded = optionalReferenceDegradation("category_universe", { timeout: isTimeoutLike(error) });
-          degradedSources.push(degraded.degradedSource);
-          failureClass.push(degraded.failureClass);
-          return null;
-        })
+    shouldBuildCategoryReference
+      ? readOptionalCategoryReferencePayloads({ baseFund, getUniverse, readServing })
       : Promise.resolve(null),
   ]);
   const macroByRef = macroResult.macroByRef;
   if (macroResult.degraded) {
     degradedSources.push(macroResult.degraded.degradedSource);
     failureClass.push(macroResult.degraded.failureClass);
+  }
+  if (categoryReferenceResult?.degraded) {
+    degradedSources.push(categoryReferenceResult.degraded.degradedSource);
+    failureClass.push(categoryReferenceResult.degraded.failureClass);
   }
 
   const fundSeries = [
@@ -418,8 +539,8 @@ async function getCompareSeriesPayload(
     fundSeries,
     macroSeries: {
       category:
-        shouldBuildCategoryFromUniverse && servingUniverseResult
-          ? buildCategorySeriesFromServingPayloads(baseFund, servingUniverseResult.records)
+        shouldBuildCategoryReference && categoryReferenceResult
+          ? buildCategorySeriesFromServingPayloads(baseFund, categoryReferenceResult.records)
           : [],
       bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
       usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
