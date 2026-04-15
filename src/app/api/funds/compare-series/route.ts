@@ -3,6 +3,12 @@ import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl, readCompa
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchKiyasMacroBuckets } from "@/lib/services/fund-detail-kiyas.service";
 import {
+  normalizeBaseCode,
+  parseCompareCodes,
+  readServingPayloadForCompareSeries,
+  type CompareServingReaderLike,
+} from "@/lib/services/compare-series-resolution";
+import {
   getFundDetailCoreServingCached,
   getFundDetailCoreServingUniversePayloads,
   type FundDetailCoreServingPayload,
@@ -20,6 +26,7 @@ const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERS
 const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "1600");
+const COMPARE_SERIES_BASE_READ_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_READ_TIMEOUT_MS ?? "1800");
 
 type Point = { t: number; v: number };
 
@@ -70,17 +77,8 @@ function isTimeoutLike(error: unknown): boolean {
   return /timeout|timed out|aborted/i.test(message);
 }
 
-function parseCodes(raw: string | null): string[] {
-  if (!raw) return [];
-  return [
-    ...new Set(
-      raw
-        .split(/[,\s]+/)
-        .map((x) => x.trim().toUpperCase())
-        .filter((x) => CODE_RE.test(x))
-    ),
-  ].slice(0, MAX_CODES);
-}
+type CompareServingRead = Awaited<ReturnType<typeof getFundDetailCoreServingCached>>;
+type CompareServingReader = CompareServingReaderLike<FundDetailCoreServingPayload>;
 
 function normalizeHistoryDate(date: Date): Date {
   return startOfUtcDay(new Date(date.getTime() + 3 * 60 * 60 * 1000));
@@ -160,8 +158,23 @@ function buildCategorySeriesFromServingPayloads(
   return out;
 }
 
-async function getCompareSeriesPayload(baseCode: string, compareCodes: string[]) {
-  const baseRead = await getFundDetailCoreServingCached(baseCode, { preferFileOnly: true });
+async function getCompareSeriesPayload(
+  baseCode: string,
+  compareCodes: string[],
+  deps?: {
+    readServing?: CompareServingReader;
+    fetchMacro?: typeof fetchKiyasMacroBuckets;
+    readUniverse?: typeof getFundDetailCoreServingUniversePayloads;
+  }
+) {
+  const readServing = deps?.readServing ?? getFundDetailCoreServingCached;
+  const fetchMacro = deps?.fetchMacro ?? fetchKiyasMacroBuckets;
+  const readUniverse = deps?.readUniverse ?? getFundDetailCoreServingUniversePayloads;
+  const baseRead = await withTimeout(
+    readServingPayloadForCompareSeries(baseCode, readServing),
+    COMPARE_SERIES_BASE_READ_TIMEOUT_MS,
+    "compare_series_base_read"
+  ).catch(() => ({ payload: null } as CompareServingRead));
   if (!baseRead.payload) {
     return { error: "base_not_found" as const };
   }
@@ -173,7 +186,7 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
     compareCodes.map(async (code) => {
       try {
         return await withTimeout(
-          getFundDetailCoreServingCached(code, { preferFileOnly: true }),
+          readServingPayloadForCompareSeries(code, readServing),
           COMPARE_SERIES_SECONDARY_TIMEOUT_MS,
           "compare_series_secondary_read"
         );
@@ -205,7 +218,7 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
   const anchor = startOfUtcDay(new Date());
   const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
   const [macroByRef, servingUniverse] = await Promise.all([
-    withTimeout(fetchKiyasMacroBuckets(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro").catch((error) => {
+    withTimeout(fetchMacro(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro").catch((error) => {
       degradedSources.push("macro");
       failureClass.push(isTimeoutLike(error) ? "timeout" : "macro_failed");
       return {
@@ -219,7 +232,7 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
     }),
     shouldBuildCategoryFromUniverse
       ? withTimeout(
-        getFundDetailCoreServingUniversePayloads(),
+        readUniverse(),
         COMPARE_SERIES_UNIVERSE_TIMEOUT_MS,
         "compare_series_universe"
       ).catch((error) => {
@@ -281,12 +294,14 @@ async function getCompareSeriesPayload(baseCode: string, compareCodes: string[])
 
 export async function GET(req: NextRequest) {
   try {
-    const rawBaseCode = req.nextUrl.searchParams.get("base")?.trim().toUpperCase() ?? "";
-    const baseCode = CODE_RE.test(rawBaseCode) ? rawBaseCode : "";
+    const baseCode = normalizeBaseCode(req.nextUrl.searchParams.get("base"));
     if (!baseCode) {
       return NextResponse.json({ error: "base_required" }, { status: 400 });
     }
-    const compareCodes = parseCodes(req.nextUrl.searchParams.get("codes")).filter((c) => c !== baseCode);
+    const compareCodes = parseCompareCodes(req.nextUrl.searchParams.get("codes"), {
+      maxCodes: MAX_CODES,
+      codeRe: CODE_RE,
+    }).filter((c) => c !== baseCode);
 
     // Compare payload'da özellikle geçmiş backfill sonrası stale sonuç istemiyoruz.
     // Versiyon yine okunur; yanıt HTTP cache başlıklarıyla CDN katmanında korunur.
