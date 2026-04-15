@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  detailEnrichmentDbFailureLogLevel,
   filterExpectedHealthDiagnosticErrors,
   hasUsableCompareRows,
   healthDbPingFailureLogLevel,
@@ -84,5 +85,20 @@ test("light health DB diagnostic uses a bounded low-cost budget", () => {
       lightSoftBudgetMs: 900,
     }),
     3000
+  );
+});
+
+test("detail enrichment DB failures are warnings once shell is usable", () => {
+  assert.equal(
+    detailEnrichmentDbFailureLogLevel({ shellUsable: true, step: "price_history_query" }),
+    "warn"
+  );
+  assert.equal(
+    detailEnrichmentDbFailureLogLevel({ shellUsable: true, step: "core_meta_bundle_query" }),
+    "warn"
+  );
+  assert.equal(
+    detailEnrichmentDbFailureLogLevel({ shellUsable: false, step: "price_history_query" }),
+    "error"
   );
 });

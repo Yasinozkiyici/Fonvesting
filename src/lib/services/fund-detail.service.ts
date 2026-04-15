@@ -35,6 +35,7 @@ import {
   type FundDetailSectionStates,
 } from "@/lib/fund-detail-section-status";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { detailEnrichmentDbFailureLogLevel } from "@/lib/operational-hardening";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { shouldDropServingRowForUniverseLag } from "@/lib/services/fund-detail-serving-lag";
 
@@ -4585,11 +4586,15 @@ async function getFundDetailPageDataUncached(
         const classified = classifyDatabaseError(error);
         liveHistoryPathFailureReason = classified.category;
         priceHistoryFailureCategory = classified.category;
-        console.error(
+        const logLevel = detailEnrichmentDbFailureLogLevel({
+          shellUsable: Boolean(latestSnapshot),
+          step: "price_history_query",
+        });
+        console[logLevel](
           `[fund-detail-db-failure] code=${normalizedCode} step=price_history_query phase=${phase} ` +
             `class=${classified.category} prisma_code=${classified.prismaCode ?? "none"} retryable=${classified.retryable ? 1 : 0}`
         );
-        console.error("[fund-detail] price_history failed", error);
+        console[logLevel]("[fund-detail] price_history failed", error);
         failedSteps.push("price_history_query");
         degradedReasons.add("price_history_query_failed");
         steps.history_live_db_query_ms = steps.price_history_query ?? 0;
@@ -4838,11 +4843,15 @@ async function getFundDetailPageDataUncached(
       );
     } catch (error) {
       const classified = classifyDatabaseError(error);
-      console.error(
+      const logLevel = detailEnrichmentDbFailureLogLevel({
+        shellUsable: Boolean(latestSnapshot),
+        step: "core_meta_bundle_query",
+      });
+      console[logLevel](
         `[fund-detail-db-failure] code=${normalizedCode} step=core_meta_bundle_query phase=${phase} ` +
           `class=${classified.category} prisma_code=${classified.prismaCode ?? "none"} retryable=${classified.retryable ? 1 : 0}`
       );
-      console.error("[fund-detail] core_meta_bundle_query failed", error);
+      console[logLevel]("[fund-detail] core_meta_bundle_query failed", error);
       failedSteps.push("core_meta_bundle_query");
       degradedReasons.add("core_meta_bundle_query_failed");
       steps.derived_metrics_query = steps.derived_metrics_query ?? 0;

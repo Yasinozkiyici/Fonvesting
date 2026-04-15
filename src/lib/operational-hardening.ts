@@ -47,6 +47,19 @@ export function healthDbPingFailureLogLevel(input: {
   return "error";
 }
 
+export function detailEnrichmentDbFailureLogLevel(input: {
+  shellUsable: boolean;
+  step: string;
+}): "warn" | "error" {
+  if (
+    input.shellUsable &&
+    (input.step === "price_history_query" || input.step === "core_meta_bundle_query")
+  ) {
+    return "warn";
+  }
+  return "error";
+}
+
 export function resolveHealthDbPingSoftBudgetMs(input: {
   lightweight: boolean;
   defaultSoftBudgetMs: number;
