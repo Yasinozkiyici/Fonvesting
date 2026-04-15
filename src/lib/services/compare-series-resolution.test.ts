@@ -6,6 +6,7 @@ import {
   readServingPayloadForCompareSeries,
   isTransientCompareBaseMissReason,
   classifyCompareBaseAvailability,
+  classifyRegistryProofAvailability,
   type CompareServingReaderLike,
 } from "@/lib/services/compare-series-resolution";
 
@@ -111,4 +112,11 @@ test("base availability classification separates temporary failures from not_fou
     classifyCompareBaseAvailability({ hasPayload: false, matchedFromUniverse: false, missReason: "db_miss" }),
     "not_found"
   );
+});
+
+test("registry proof makes invalid base deterministic when a durable source answered", () => {
+  assert.equal(classifyRegistryProofAvailability({ rowExists: true, source: "rest" }), "ok");
+  assert.equal(classifyRegistryProofAvailability({ rowExists: false, source: "rest" }), "not_found");
+  assert.equal(classifyRegistryProofAvailability({ rowExists: false, source: "prisma" }), "not_found");
+  assert.equal(classifyRegistryProofAvailability({ rowExists: false, source: "none" }), "unknown");
 });

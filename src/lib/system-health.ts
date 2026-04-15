@@ -616,9 +616,11 @@ export async function getSystemHealthSnapshot(options?: {
       pingMs: dbPing.ms,
       targetIdentity,
     });
+    const lightReadPathOperational = lightweight && readPathOperational;
+
     return {
       checkedAt,
-      ok: false,
+      ok: lightReadPathOperational,
       status: readPathOperational ? "degraded" : "error",
       database: {
         configured: dbEnvStatus.configured,

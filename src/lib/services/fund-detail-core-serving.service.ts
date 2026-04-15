@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -330,6 +331,10 @@ type FundDailySnapshotServingRow = {
   metrics: Prisma.JsonValue;
 };
 
+type SupabaseScoresCachePayloadRow = {
+  payload: unknown;
+};
+
 type FundDetailCoreServingReadResult = {
   payload: FundDetailCoreServingPayload | null;
   source: "memory" | "file" | "db" | "ondemand" | "miss";
@@ -456,6 +461,29 @@ function isRelationMissingError(error: unknown): boolean {
 
 function coreServingCacheKey(code: string): string {
   return `${CORE_SERVING_KEY_PREFIX}:${code.trim().toUpperCase()}`;
+}
+
+async function readCoreServingPayloadFromRest(code: string): Promise<FundDetailCoreServingPayload | null> {
+  if (!hasSupabaseRestConfig()) return null;
+  const rows = await fetchSupabaseRestJson<SupabaseScoresCachePayloadRow[]>(
+    `ScoresApiCache?select=payload&cacheKey=eq.${encodeURIComponent(coreServingCacheKey(code))}&limit=1`,
+    { revalidate: 60, timeoutMs: 1_600, retries: 0, bypassCircuit: true, countFailureForCircuit: false }
+  );
+  return parseServingPayload(rows[0]?.payload);
+}
+
+async function readCoreServingUniverseFromRest(): Promise<FundDetailCoreServingPayload[]> {
+  if (!hasSupabaseRestConfig()) return [];
+  const rows = await fetchSupabaseRestJson<SupabaseScoresCachePayloadRow[]>(
+    `ScoresApiCache?select=payload&cacheKey=like.${encodeURIComponent(`${CORE_SERVING_KEY_PREFIX}:*`)}&limit=5000`,
+    { revalidate: 60, timeoutMs: 2_500, retries: 0, bypassCircuit: true, countFailureForCircuit: false }
+  );
+  const records: FundDetailCoreServingPayload[] = [];
+  for (const row of rows) {
+    const payload = parseServingPayload(row.payload);
+    if (payload) records.push(payload);
+  }
+  return records;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, tag: string): Promise<T> {
@@ -1292,6 +1320,20 @@ export async function getFundDetailCoreServingUniversePayloads(): Promise<{
   }
 
   try {
+    const records = await readCoreServingUniverseFromRest();
+    if (records.length > 0) {
+      const memory = getCoreServingMemory();
+      const cachedAt = Date.now();
+      for (const payload of records) {
+        memory.set(payload.fund.code.trim().toUpperCase(), { payload, cachedAt });
+      }
+      return { records, source: "db", missReason: null };
+    }
+  } catch {
+    // REST fallback başarısızsa Prisma cache fallback denenir.
+  }
+
+  try {
     const rows = await withTimeout(
       prisma.scoresApiCache.findMany({
         where: { cacheKey: { startsWith: `${CORE_SERVING_KEY_PREFIX}:` } },
@@ -2041,6 +2083,18 @@ export async function getFundDetailCoreServingCached(
       void startCoreServingBootstrap(missReason);
     }
     return { payload: null, source: "miss", readMs: Date.now() - startedAt, ageMs: null, missReason };
+  }
+
+  try {
+    const restPayload = await readCoreServingPayloadFromRest(normalizedCode);
+    if (restPayload) {
+      memory.set(normalizedCode, { payload: restPayload, cachedAt: Date.now() });
+      const generatedAt = Date.parse(restPayload.generatedAt);
+      const ageMs = Number.isFinite(generatedAt) ? Math.max(0, Date.now() - generatedAt) : null;
+      return { payload: restPayload, source: "db", readMs: Date.now() - startedAt, ageMs };
+    }
+  } catch {
+    // REST cache okunamazsa mevcut Prisma/ondemand zinciri devam eder.
   }
 
   try {

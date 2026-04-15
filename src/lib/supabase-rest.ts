@@ -3,6 +3,8 @@ type FetchJsonOptions = {
   headers?: Record<string, string>;
   timeoutMs?: number;
   retries?: number;
+  bypassCircuit?: boolean;
+  countFailureForCircuit?: boolean;
 };
 
 type SupabaseRestCircuitState = {
@@ -70,12 +72,14 @@ export async function fetchSupabaseRestResponse(pathAndQuery: string, options: F
     throw new Error("supabase_rest_not_configured");
   }
 
+  const useCircuit = options.bypassCircuit !== true;
+  const countFailureForCircuit = options.countFailureForCircuit !== false;
   const circuit = getCircuitState();
   const now = Date.now();
-  if (circuit.openUntil > now) {
+  if (useCircuit && circuit.openUntil > now) {
     throw new Error(`supabase_rest_circuit_open_${circuit.openUntil - now}ms`);
   }
-  if (circuit.openUntil !== 0 && circuit.openUntil <= now) {
+  if (useCircuit && circuit.openUntil !== 0 && circuit.openUntil <= now) {
     circuit.openUntil = 0;
   }
 
@@ -104,7 +108,7 @@ export async function fetchSupabaseRestResponse(pathAndQuery: string, options: F
       });
 
       if (response.ok) {
-        markSupabaseRestSuccess();
+        if (useCircuit) markSupabaseRestSuccess();
         return response;
       }
 
@@ -117,7 +121,7 @@ export async function fetchSupabaseRestResponse(pathAndQuery: string, options: F
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const retryable = message.includes("timeout") || message.includes("abort") || message.includes("fetch failed");
-      markSupabaseRestFailure();
+      if (useCircuit && countFailureForCircuit) markSupabaseRestFailure();
       if (attempt >= maxAttempts || !retryable) {
         throw (error instanceof Error ? error : new Error(String(error)));
       }

@@ -88,6 +88,10 @@ export async function GET(request: Request) {
     snapshot.issues[0]?.code ??
     snapshot.errors[0] ??
     "none";
+  const directDbFailureClass = snapshot.database.diagnostics.failureCategory ?? "none";
+  const readPathFailureClass = snapshot.database.diagnostics.readPathOperational
+    ? "none"
+    : directDbFailureClass;
   console.info(
     `[health-route] health_mode=${healthMode} full=${fullDetails ? 1 : 0} probes=${includeExternalProbes ? 1 : 0} ` +
       `health_db_probe_used=${dbProbeUsed} health_db_probe_ms=${snapshot.database.diagnostics.pingMs ?? -1} ` +
@@ -103,7 +107,8 @@ export async function GET(request: Request) {
     "X-System-Check-Reason": systemCheckReason,
     "X-Db-Env-Status": snapshot.database.envStatus.failureCategory ?? "ok",
     "X-Db-Connection-Mode": snapshot.database.connectionMode,
-    "X-Db-Failure-Class": snapshot.database.diagnostics.failureCategory ?? "none",
+    "X-Db-Failure-Class": readPathFailureClass,
+    "X-Health-Direct-Db-Failure-Class": directDbFailureClass,
     "X-Daily-Sync-Source-Status": snapshot.jobs.dailySyncStatus?.sourceStatus ?? "unknown",
     "X-Daily-Sync-Publish-Status": snapshot.jobs.dailySyncStatus?.publishStatus ?? "unknown",
     "X-Daily-Sync-Missed-Sla": snapshot.jobs.dailySyncStatus?.missedSlaToday ? "1" : "0",
@@ -119,6 +124,9 @@ export async function GET(request: Request) {
         status: snapshot.status,
         service: "fonvesting",
         timestamp: snapshot.checkedAt,
+        serviceLiveness: true,
+        readiness: snapshot.database.diagnostics.readPathOperational,
+        userCriticalReadiness: snapshot.database.diagnostics.readPathOperational,
         liveness: snapshot.database.canConnect,
         livenessDetail: snapshot.database.canConnect
           ? null

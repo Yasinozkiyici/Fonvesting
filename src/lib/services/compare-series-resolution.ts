@@ -59,3 +59,12 @@ export function classifyCompareBaseAvailability(input: {
   if (isTransientCompareBaseMissReason(input.missReason)) return "temporarily_unavailable";
   return "not_found";
 }
+
+export function classifyRegistryProofAvailability(input: {
+  rowExists: boolean;
+  source: "rest" | "prisma" | "none";
+}): "ok" | "not_found" | "unknown" {
+  if (input.rowExists) return "ok";
+  if (input.source === "rest" || input.source === "prisma") return "not_found";
+  return "unknown";
+}

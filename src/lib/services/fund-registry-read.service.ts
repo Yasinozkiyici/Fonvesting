@@ -4,7 +4,7 @@ import { buildFundCodeInClause } from "@/lib/services/fund-registry-read.util";
 
 const FUND_REGISTRY_READ_TIMEOUT_MS = Number(process.env.FUND_REGISTRY_READ_TIMEOUT_MS ?? "1800");
 
-type RegistryRow = {
+export type RegistryRow = {
   id: string;
   code: string;
   name: string;
@@ -16,6 +16,21 @@ type RegistryRow = {
   investorCount: number;
 };
 
+export type RegistryReadOutcome = {
+  row: RegistryRow | null;
+  source: "rest" | "prisma" | "none";
+  failureClass: "rest_failed" | "prisma_failed" | null;
+  failureDetail: string | null;
+};
+
+function normalizeRegistryCode(code: string): string {
+  return code.trim().toUpperCase();
+}
+
+function errorDetail(error: unknown): string {
+  return error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
+}
+
 async function readRegistryRowsFromRest(codes: string[]): Promise<RegistryRow[]> {
   if (!hasSupabaseRestConfig() || codes.length === 0) return [];
   const inClause = buildFundCodeInClause(codes);
@@ -25,6 +40,8 @@ async function readRegistryRowsFromRest(codes: string[]): Promise<RegistryRow[]>
       timeoutMs: FUND_REGISTRY_READ_TIMEOUT_MS,
       retries: 0,
       revalidate: 30,
+      bypassCircuit: true,
+      countFailureForCircuit: false,
     }
   );
   return rows ?? [];
@@ -66,6 +83,45 @@ export async function readActiveRegistryFundsByCodes(codes: string[]): Promise<R
 
 export async function readActiveRegistryFundByCode(code: string): Promise<RegistryRow | null> {
   const rows = await readActiveRegistryFundsByCodes([code]);
-  const normalized = code.trim().toUpperCase();
+  const normalized = normalizeRegistryCode(code);
   return rows.find((row) => row.code.trim().toUpperCase() === normalized) ?? null;
+}
+
+export async function readActiveRegistryFundByCodeWithMeta(code: string): Promise<RegistryReadOutcome> {
+  const normalized = normalizeRegistryCode(code);
+  if (!normalized) {
+    return { row: null, source: "none", failureClass: null, failureDetail: null };
+  }
+
+  let restFailureDetail: string | null = null;
+  if (hasSupabaseRestConfig()) {
+    try {
+      const rows = await readRegistryRowsFromRest([normalized]);
+      return {
+        row: rows.find((row) => normalizeRegistryCode(row.code) === normalized) ?? null,
+        source: "rest",
+        failureClass: null,
+        failureDetail: null,
+      };
+    } catch (error) {
+      restFailureDetail = errorDetail(error);
+    }
+  }
+
+  try {
+    const rows = await readRegistryRowsFromPrisma([normalized]);
+    return {
+      row: rows.find((row) => normalizeRegistryCode(row.code) === normalized) ?? null,
+      source: "prisma",
+      failureClass: restFailureDetail ? "rest_failed" : null,
+      failureDetail: restFailureDetail,
+    };
+  } catch (error) {
+    return {
+      row: null,
+      source: "none",
+      failureClass: "prisma_failed",
+      failureDetail: restFailureDetail ?? errorDetail(error),
+    };
+  }
 }

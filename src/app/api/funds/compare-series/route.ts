@@ -7,6 +7,7 @@ import {
   parseCompareCodes,
   readServingPayloadForCompareSeries,
   classifyCompareBaseAvailability,
+  classifyRegistryProofAvailability,
   type CompareServingReaderLike,
 } from "@/lib/services/compare-series-resolution";
 import {
@@ -14,7 +15,7 @@ import {
   getFundDetailCoreServingUniversePayloads,
   type FundDetailCoreServingPayload,
 } from "@/lib/services/fund-detail-core-serving.service";
-import { readActiveRegistryFundByCode } from "@/lib/services/fund-registry-read.service";
+import { readActiveRegistryFundByCodeWithMeta, type RegistryRow } from "@/lib/services/fund-registry-read.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,6 +31,9 @@ const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNI
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "2600");
 const COMPARE_SERIES_BASE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_TIMEOUT_MS ?? "3200");
 const COMPARE_SERIES_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_REGISTRY_TIMEOUT_MS ?? "2200");
+const COMPARE_SERIES_REGISTRY_PROOF_TIMEOUT_MS = Number(
+  process.env.COMPARE_SERIES_REGISTRY_PROOF_TIMEOUT_MS ?? "1600"
+);
 
 type Point = { t: number; v: number };
 
@@ -125,6 +129,20 @@ function buildSyntheticServingPayloadFromRegistry(input: {
       series: [],
     },
   };
+}
+
+function syntheticServingPayloadFromRegistryRow(row: RegistryRow): FundDetailCoreServingPayload {
+  return buildSyntheticServingPayloadFromRegistry({
+    fundId: row.id,
+    code: row.code,
+    name: row.name,
+    shortName: row.shortName,
+    logoUrl: row.logoUrl,
+    lastPrice: row.lastPrice,
+    dailyReturn: row.dailyReturn,
+    portfolioSize: row.portfolioSize,
+    investorCount: row.investorCount,
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -254,6 +272,26 @@ async function getCompareSeriesPayload(
     );
   };
 
+  const baseRegistryProof = await withTimeout(
+    readActiveRegistryFundByCodeWithMeta(baseCode),
+    COMPARE_SERIES_REGISTRY_PROOF_TIMEOUT_MS,
+    "compare_series_registry_base_proof"
+  ).catch((error) => ({
+    row: null,
+    source: "none" as const,
+    failureClass: isTimeoutLike(error) ? "registry_timeout" as const : "registry_failed" as const,
+    failureDetail: error instanceof Error ? error.message : String(error),
+  }));
+
+  if (
+    classifyRegistryProofAvailability({
+      rowExists: Boolean(baseRegistryProof.row),
+      source: baseRegistryProof.source,
+    }) === "not_found"
+  ) {
+    return { error: "base_not_found", failureClass: [] };
+  }
+
   const baseRead = await withTimeout(
     readServingPayloadForCompareSeries(baseCode, readServing),
     COMPARE_SERIES_BASE_TIMEOUT_MS,
@@ -273,24 +311,31 @@ async function getCompareSeriesPayload(
     }
   }
   if (!baseFund) {
-    const registryRow = await withTimeout(
-      readActiveRegistryFundByCode(baseCode),
-      COMPARE_SERIES_REGISTRY_TIMEOUT_MS,
-      "compare_series_registry_base"
-    ).catch(() => null);
-    if (registryRow) {
-      baseFund = buildSyntheticServingPayloadFromRegistry({
-        fundId: registryRow.id,
-        code: registryRow.code,
-        name: registryRow.name,
-        shortName: registryRow.shortName,
-        logoUrl: registryRow.logoUrl,
-        lastPrice: registryRow.lastPrice,
-        dailyReturn: registryRow.dailyReturn,
-        portfolioSize: registryRow.portfolioSize,
-        investorCount: registryRow.investorCount,
-      });
+    if (baseRegistryProof.row) {
+      baseFund = syntheticServingPayloadFromRegistryRow(baseRegistryProof.row);
       baseFromRegistryFallback = true;
+    } else if (baseRegistryProof.source === "none") {
+      const registryFallback = await withTimeout(
+        readActiveRegistryFundByCodeWithMeta(baseCode),
+        COMPARE_SERIES_REGISTRY_TIMEOUT_MS,
+        "compare_series_registry_base"
+      ).catch((error) => ({
+        row: null,
+        source: "none" as const,
+        failureClass: isTimeoutLike(error) ? "registry_timeout" as const : "registry_failed" as const,
+        failureDetail: error instanceof Error ? error.message : String(error),
+      }));
+      if (registryFallback.row) {
+        baseFund = syntheticServingPayloadFromRegistryRow(registryFallback.row);
+        baseFromRegistryFallback = true;
+      } else if (
+        classifyRegistryProofAvailability({
+          rowExists: Boolean(registryFallback.row),
+          source: registryFallback.source,
+        }) === "not_found"
+      ) {
+        return { error: "base_not_found", failureClass: [] };
+      }
     }
   }
   if (!baseFund) {
@@ -303,7 +348,9 @@ async function getCompareSeriesPayload(
       const missReason = (baseRead.missReason ?? "").trim();
       return {
         error: "base_temporarily_unavailable",
-        failureClass: [missReason === "read_timeout" ? "timeout" : "base_read_failed"],
+        failureClass: [
+          baseRegistryProof.failureClass ?? (missReason === "read_timeout" ? "timeout" : "base_read_failed"),
+        ],
       };
     }
     return { error: "base_not_found", failureClass: [] };

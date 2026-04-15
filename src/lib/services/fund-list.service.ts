@@ -64,6 +64,7 @@ export interface FundListPageResult {
   pageSize: number;
   total: number;
   totalPages: number;
+  source?: "rest" | "prisma";
 }
 
 type SupabaseSnapshotDateRow = { date: string };
@@ -153,7 +154,7 @@ async function computeAllFundsFromLatestSnapshotFromSupabaseRest(): Promise<Fund
 
   const latestRows = await fetchSupabaseRestJson<SupabaseSnapshotDateRow[]>(
     "FundDailySnapshot?select=date&order=date.desc&limit=1",
-    { revalidate: LIVE_DATA_CACHE_SEC }
+    { revalidate: LIVE_DATA_CACHE_SEC, timeoutMs: 1_500, retries: 0 }
   );
   const latestDate = latestRows[0]?.date;
   if (!latestDate) return [];
@@ -167,7 +168,7 @@ async function computeAllFundsFromLatestSnapshotFromSupabaseRest(): Promise<Fund
   });
   const rows = await fetchSupabaseRestJson<SupabaseFundSnapshotRow[]>(
     `FundDailySnapshot?${query.toString()}`,
-    { revalidate: LIVE_DATA_CACHE_SEC }
+    { revalidate: LIVE_DATA_CACHE_SEC, timeoutMs: 3_500, retries: 0 }
   );
 
   return rows.map(normalizeRestFundRow);
@@ -247,7 +248,23 @@ async function getCachedAllFunds(): Promise<FundListRow[]> {
   return loadCached();
 }
 
+async function getCachedAllFundsFromRest(): Promise<FundListRow[]> {
+  const loadCached = unstable_cache(
+    async () => computeAllFundsFromLatestSnapshotFromSupabaseRest(),
+    ["fund-list-all-rest-v1"],
+    { revalidate: LIVE_DATA_CACHE_SEC }
+  );
+  return loadCached();
+}
+
 export async function getAllFundsCached(): Promise<FundListRow[]> {
+  if (hasSupabaseRestConfig()) {
+    try {
+      return await getCachedAllFundsFromRest();
+    } catch (error) {
+      console.warn("[fund-list] rest all-funds fallback to prisma", error);
+    }
+  }
   return getCachedAllFunds();
 }
 
@@ -261,11 +278,11 @@ function parseSupabaseCountHeader(header: string | null): number {
 async function queryFundsPageFromSupabaseRest(input: FundListQueryInput): Promise<FundListPageResult> {
   const latestRows = await fetchSupabaseRestJson<SupabaseSnapshotDateRow[]>(
     "FundDailySnapshot?select=date&order=date.desc&limit=1",
-    { revalidate: LIVE_DATA_CACHE_SEC }
+    { revalidate: LIVE_DATA_CACHE_SEC, timeoutMs: 1_500, retries: 0 }
   );
   const latestDate = latestRows[0]?.date;
   if (!latestDate) {
-    return { items: [], page: input.page, pageSize: input.pageSize, total: 0, totalPages: 1 };
+    return { items: [], page: input.page, pageSize: input.pageSize, total: 0, totalPages: 1, source: "rest" };
   }
 
   const offset = (input.page - 1) * input.pageSize;
@@ -292,6 +309,8 @@ async function queryFundsPageFromSupabaseRest(input: FundListQueryInput): Promis
 
   const response = await fetchSupabaseRestResponse(`FundDailySnapshot?${params.toString()}`, {
     revalidate: LIVE_DATA_CACHE_SEC,
+    timeoutMs: 2_500,
+    retries: 0,
     headers: { Prefer: "count=exact" },
   });
   const rows = (await response.json()) as SupabaseFundSnapshotRow[];
@@ -303,6 +322,7 @@ async function queryFundsPageFromSupabaseRest(input: FundListQueryInput): Promis
     pageSize: input.pageSize,
     total,
     totalPages: Math.max(1, Math.ceil(total / input.pageSize)),
+    source: "rest",
   };
 }
 
@@ -327,7 +347,14 @@ function sortAndFilterFunds(items: FundListRow[], input: FundListQueryInput): Fu
 }
 
 export async function getFundsPage(input: FundListQueryInput): Promise<FundListPageResult> {
-  const allFunds = await getAllFundsCached();
+  if (hasSupabaseRestConfig()) {
+    try {
+      return await queryFundsPageFromSupabaseRest(input);
+    } catch (error) {
+      console.warn("[fund-list] rest page fallback to prisma", error);
+    }
+  }
+  const allFunds = await getCachedAllFunds();
   const items = sortAndFilterFunds(allFunds, input);
   const total = items.length;
   return {
@@ -336,6 +363,7 @@ export async function getFundsPage(input: FundListQueryInput): Promise<FundListP
     pageSize: input.pageSize,
     total,
     totalPages: Math.max(1, Math.ceil(total / input.pageSize)),
+    source: "prisma",
   };
 }
 

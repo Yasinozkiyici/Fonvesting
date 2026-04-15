@@ -261,6 +261,7 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "hit",
+          "X-Funds-Source": "memory",
           "X-Db-Failure-Class": "none",
           ...dbHeaders,
         },
@@ -275,6 +276,7 @@ export async function GET(req: NextRequest) {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "light",
+            "X-Funds-Source": "snapshot-light",
             "X-Db-Failure-Class": "none",
             ...dbHeaders,
           },
@@ -285,6 +287,7 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": servingPayload.items.length > 0 ? "serving-light" : "empty",
+          "X-Funds-Source": servingPayload.items.length > 0 ? "serving" : "empty",
           "X-Db-Failure-Class": "none",
           ...dbHeaders,
         },
@@ -324,6 +327,7 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "miss",
+          "X-Funds-Source": result.source ?? "unknown",
           "X-Db-Failure-Class": "none",
           ...dbHeaders,
         },
@@ -352,6 +356,7 @@ export async function GET(req: NextRequest) {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "stale",
+          "X-Funds-Source": "memory",
           "X-Db-Failure-Class": "none",
           ...dbHeaders,
         },
@@ -367,6 +372,7 @@ export async function GET(req: NextRequest) {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "light-fast",
+            "X-Funds-Source": "snapshot-light",
             "X-Funds-Degraded": classified.category,
             "X-Db-Failure-Class": classified.category,
             ...dbHeaders,
@@ -380,6 +386,7 @@ export async function GET(req: NextRequest) {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "serving-fast",
+            "X-Funds-Source": "serving",
             "X-Funds-Degraded": classified.category,
             "X-Db-Failure-Class": classified.category,
             ...dbHeaders,
@@ -398,6 +405,7 @@ export async function GET(req: NextRequest) {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Funds-Cache": "empty-fast",
+            "X-Funds-Source": "empty",
             "X-Funds-Degraded": classified.category,
             "X-Db-Failure-Class": classified.category,
             ...dbHeaders,
@@ -424,6 +432,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
         "X-Funds-Cache": fallback.items.length > 0 ? "light-fallback" : "empty",
+        "X-Funds-Source": fallback.items.length > 0 ? "snapshot-light" : "empty",
         "X-Db-Failure-Class": classified.category,
         ...dbHeaders,
       },
