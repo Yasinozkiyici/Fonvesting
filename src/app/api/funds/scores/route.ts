@@ -125,6 +125,10 @@ function buildEmptyPayload(mode: RankingMode): ScoresApiPayload {
   return { mode, total: 0, funds: [] };
 }
 
+function hasUsableScoresPayload(payload: ScoresApiPayload | null | undefined): payload is ScoresApiPayload {
+  return Boolean(payload && Array.isArray(payload.funds) && payload.funds.length > 0);
+}
+
 function sanitizePersistedPayload(mode: RankingMode, payload: unknown): ScoresApiPayload | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const candidate = payload as ScoresApiPayload;
@@ -143,6 +147,7 @@ function pickFreshCache(state: ScoresRuntimeState, key: string): ScoresApiPayloa
   const hit = state.cache.get(key);
   if (!hit) return null;
   if (Date.now() - hit.updatedAt > SCORES_FRESH_TTL_MS) return null;
+  if (!hasUsableScoresPayload(hit.payload)) return null;
   return hit.payload;
 }
 
@@ -150,6 +155,7 @@ function pickStaleCache(state: ScoresRuntimeState, key: string): ScoresApiPayloa
   const hit = state.cache.get(key);
   if (!hit) return null;
   if (Date.now() - hit.updatedAt > SCORES_STALE_TTL_MS) return null;
+  if (!hasUsableScoresPayload(hit.payload)) return null;
   return hit.payload;
 }
 
@@ -213,12 +219,16 @@ async function readLightSnapshotFallback(mode: RankingMode, categoryCode: string
   return payload ?? null;
 }
 
-async function readFundsListFallback(mode: RankingMode, categoryCode: string): Promise<ScoresApiPayload | null> {
+async function readFundsListFallback(
+  mode: RankingMode,
+  categoryCode: string,
+  queryTrim = ""
+): Promise<ScoresApiPayload | null> {
   const page = await withTimeout(
     getFundsPage({
       page: 1,
       pageSize: SCORES_LIGHT_FALLBACK_LIMIT,
-      q: "",
+      q: queryTrim,
       category: categoryCode || undefined,
       fundType: undefined,
       sortField: "portfolioSize",
@@ -355,7 +365,9 @@ async function resolveBasePayload(
     if (!payload) {
       throw new Error("scores_snapshot_unavailable");
     }
-    state.cache.set(key, { payload, updatedAt: Date.now() });
+    if (hasUsableScoresPayload(payload)) {
+      state.cache.set(key, { payload, updatedAt: Date.now() });
+    }
     return payload;
   });
 
@@ -467,10 +479,67 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  if (!handledByCriticalPath && categoryCode) {
+    const fresh = pickFreshCache(state, key);
+    if (fresh) {
+      applyResolvedPayload(fresh, "memory", "hit");
+      handledByCriticalPath = true;
+    }
+    const stale = handledByCriticalPath ? null : pickStaleCache(state, key);
+    if (stale) {
+      applyResolvedPayload(stale, "stale", "stale");
+      handledByCriticalPath = true;
+    }
+    if (!handledByCriticalPath) {
+      const persisted = await readPersistedScoresPayload(mode, categoryCode);
+      if (hasUsableScoresPayload(persisted)) {
+        applyResolvedPayload(persisted, "db-cache", "db-cache");
+        handledByCriticalPath = true;
+      }
+    }
+    if (!handledByCriticalPath) {
+      const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
+      if (hasUsableScoresPayload(servingFallback)) {
+        applyResolvedPayload(servingFallback, "light", "light");
+        handledByCriticalPath = true;
+      }
+    }
+    if (!handledByCriticalPath) {
+      const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
+      if (hasUsableScoresPayload(fundsListFallback)) {
+        applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+        handledByCriticalPath = true;
+      }
+    }
+  }
+
+  if (!handledByCriticalPath && queryTrim && !theme) {
+    const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
+    if (hasUsableScoresPayload(fundsListFallback)) {
+      applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+      handledByCriticalPath = true;
+    }
+  }
+
   if (!handledByCriticalPath) {
     try {
       const resolved = await resolveBasePayload(mode, categoryCode, limit);
       applyResolvedPayload(resolved.payload, "snapshot", resolved.cacheState);
+      if (categoryCode && basePayload.funds.length === 0) {
+        const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
+        const fundsListFallback = hasUsableScoresPayload(servingFallback)
+          ? null
+          : await readFundsListFallback(mode, categoryCode, queryTrim);
+        const repaired = hasUsableScoresPayload(servingFallback) ? servingFallback : fundsListFallback;
+        if (hasUsableScoresPayload(repaired)) {
+          applyResolvedPayload(
+            repaired,
+            hasUsableScoresPayload(servingFallback) ? "light" : "funds-list",
+            hasUsableScoresPayload(servingFallback) ? "light" : "funds-list"
+          );
+          degradedReason = "empty_snapshot_repaired";
+        }
+      }
     } catch (error) {
       const classified = classifyDatabaseError(error);
       logDbRouteFailure(classified);
@@ -497,7 +566,7 @@ export async function GET(request: NextRequest) {
               ? `timeout_core_serving_fallback_${classified.category}`
               : `error_core_serving_fallback_${classified.category}`;
           } else {
-            const fundsListFallback = await readFundsListFallback(mode, categoryCode);
+            const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
             if (fundsListFallback) {
               applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
               degradedReason = isTimeoutError(error)
@@ -527,7 +596,7 @@ export async function GET(request: NextRequest) {
             applyResolvedPayload(light, "light", "light");
             degradedReason = isTimeoutError(error) ? "timeout_light_fallback" : "error_light_fallback";
           } else {
-            const fundsListFallback = await readFundsListFallback(mode, categoryCode);
+            const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
             if (fundsListFallback) {
               applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
               degradedReason = isTimeoutError(error) ? "timeout_funds_list_fallback" : "error_funds_list_fallback";

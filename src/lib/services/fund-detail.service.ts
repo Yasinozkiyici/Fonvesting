@@ -38,6 +38,7 @@ import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { detailEnrichmentDbFailureLogLevel } from "@/lib/operational-hardening";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { shouldDropServingRowForUniverseLag } from "@/lib/services/fund-detail-serving-lag";
+import { getFundsPage } from "@/lib/services/fund-list.service";
 
 const DAY_MS = 86400000;
 const DETAIL_HISTORY_LOOKBACK_DAYS = parseEnvMs("FUND_DETAIL_HISTORY_LOOKBACK_DAYS", 1095, 120, 1095);
@@ -74,6 +75,12 @@ const DETAIL_CORE_SNAPSHOT_FALLBACK_TIMEOUT_MS = parseEnvMs(
   2_600,
   400,
   4_000
+);
+const DETAIL_ALTERNATIVES_FUNDS_LIST_FALLBACK_TIMEOUT_MS = parseEnvMs(
+  "FUND_DETAIL_ALTERNATIVES_FUNDS_LIST_FALLBACK_TIMEOUT_MS",
+  1_100,
+  400,
+  3_000
 );
 const DETAIL_CORE_SNAPSHOT_FALLBACK_LIMIT = parseEnvMs("FUND_DETAIL_CORE_SNAPSHOT_FALLBACK_LIMIT", 420, 32, 720);
 const DETAIL_PHASE1_HISTORY_UPGRADE_ENABLED = process.env.FUND_DETAIL_PHASE1_HISTORY_UPGRADE === "1";
@@ -966,6 +973,45 @@ async function loadCategoryReturnAverages(
     avgMonthlyReturn: agg._avg.monthlyReturn,
     avgYearlyReturn: agg._avg.yearlyReturn,
   };
+}
+
+async function listFundDetailFundsListAlternatives(
+  currentCode: string,
+  categoryCode: string | null | undefined,
+  limit: number
+): Promise<FundAlternativeCandidate[]> {
+  const normalizedCode = currentCode.trim().toUpperCase();
+  const normalizedCategory = (categoryCode ?? "").trim();
+  if (!normalizedCode || !normalizedCategory) return [];
+  const page = await withTimeout(
+    getFundsPage({
+      page: 1,
+      pageSize: Math.max(limit + 1, FUND_ALTERNATIVES_CANDIDATE_POOL + 1),
+      q: "",
+      category: normalizedCategory,
+      fundType: undefined,
+      sortField: "portfolioSize",
+      sortDir: "desc",
+    }),
+    DETAIL_ALTERNATIVES_FUNDS_LIST_FALLBACK_TIMEOUT_MS,
+    "fund_detail_alternatives_funds_list_fallback"
+  ).catch(() => null);
+  if (!page?.items?.length) return [];
+  return page.items
+    .filter((row) => row.code.trim().toUpperCase() !== normalizedCode)
+    .slice(0, limit)
+    .map((row) => ({
+      code: row.code,
+      name: row.name,
+      shortName: row.shortName,
+      lastPrice: row.lastPrice,
+      dailyReturn: row.dailyReturn,
+      logoUrl: getFundLogoUrlForUi(row.id, row.code, row.logoUrl, row.name),
+      portfolioSize: row.portfolioSize,
+      investorCount: row.investorCount,
+      monthlyReturn: row.monthlyReturn,
+      yearlyReturn: row.yearlyReturn,
+    }));
 }
 
 export type FundDetailPageData = {
@@ -3780,10 +3826,11 @@ async function getFundDetailPageDataUncached(
         degradedReasons,
         failedSteps
       );
-      let phase1AlternativesSource: "serving_file" | "serving_memory" | "none" = "none";
+      let phase1AlternativesSource: "serving_file" | "serving_memory" | "funds_list" | "none" = "none";
       let phase1AlternativesFallbackUsed = false;
       let phase1AlternativesReason = "none";
-      if (payload.similarFunds.length === 0 && payload.fund.category?.code) {
+      const phase1CategoryCode = payload.fund.category?.code ?? null;
+      if (payload.similarFunds.length === 0 && phase1CategoryCode) {
         const servingAlternatives = await listFundDetailCoreServingAlternatives(
           normalizedCode,
           FUND_ALTERNATIVES_CANDIDATE_POOL
@@ -3822,6 +3869,34 @@ async function getFundDetailPageDataUncached(
           phase1AlternativesFallbackUsed = true;
         } else {
           phase1AlternativesReason = servingAlternatives.missReason ?? "cache_empty";
+        }
+        if (payload.similarFunds.length === 0) {
+          const fundsListCandidates = await listFundDetailFundsListAlternatives(
+            normalizedCode,
+            phase1CategoryCode,
+            FUND_ALTERNATIVES_CANDIDATE_POOL
+          );
+          if (fundsListCandidates.length > 0) {
+            payload = {
+              ...payload,
+              similarFunds: buildFundAlternatives(
+                {
+                  portfolioSize: payload.fund.portfolioSize,
+                  investorCount: payload.fund.investorCount,
+                  dailyReturn: payload.fund.dailyReturn,
+                  monthlyReturn: payload.fund.monthlyReturn,
+                  yearlyReturn: payload.fund.yearlyReturn,
+                },
+                fundsListCandidates
+              ),
+              similarCategoryPeerDailyReturns: fundsListCandidates
+                .map((candidate) => candidate.dailyReturn)
+                .filter((value) => Number.isFinite(value)),
+            };
+            phase1AlternativesSource = "funds_list";
+            phase1AlternativesFallbackUsed = true;
+            phase1AlternativesReason = "funds_list_fallback";
+          }
         }
       }
       let chosenSeriesSource: "history" | "snapshot_fallback" | "approx" | "serving" = "serving";
@@ -4978,6 +5053,7 @@ async function getFundDetailPageDataUncached(
     | "fund_rescue_query"
     | "serving_file"
     | "serving_memory"
+    | "funds_list"
     | "cache_seed"
     | "none" = "none";
   let alternativesFallbackUsed = false;
@@ -5256,6 +5332,32 @@ async function getFundDetailPageDataUncached(
       alternativesDegradedReason = "serving_fallback";
     } else if (alternativesDegradedReason === "none") {
       alternativesDegradedReason = servingAlternatives.missReason ?? "serving_fallback_empty";
+    }
+  }
+
+  if (similarSnapshotRows.length === 0) {
+    const fundsListCandidates = await listFundDetailFundsListAlternatives(
+      normalizedCode,
+      phase2Context.categoryCode,
+      FUND_ALTERNATIVES_CANDIDATE_POOL
+    );
+    if (fundsListCandidates.length > 0) {
+      similarSnapshotRows = fundsListCandidates.map((row) => ({
+        fundId: row.code,
+        code: row.code,
+        name: row.name,
+        shortName: row.shortName,
+        lastPrice: row.lastPrice,
+        dailyReturn: row.dailyReturn,
+        logoUrl: row.logoUrl,
+        portfolioSize: row.portfolioSize,
+        investorCount: row.investorCount,
+        monthlyReturn: row.monthlyReturn,
+        yearlyReturn: row.yearlyReturn,
+      }));
+      alternativesSource = "funds_list";
+      alternativesFallbackUsed = true;
+      alternativesDegradedReason = "funds_list_fallback";
     }
   }
 

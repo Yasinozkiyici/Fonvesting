@@ -8,6 +8,7 @@ import {
   fetchSupabaseRestResponse,
   hasSupabaseRestConfig,
 } from "@/lib/supabase-rest";
+import { fundSearchMatches } from "@/lib/fund-search";
 
 export interface FundListRow {
   id: string;
@@ -327,16 +328,11 @@ async function queryFundsPageFromSupabaseRest(input: FundListQueryInput): Promis
 }
 
 function sortAndFilterFunds(items: FundListRow[], input: FundListQueryInput): FundListRow[] {
-  const q = (input.q ?? "").trim().toLocaleLowerCase("tr-TR");
+  const q = (input.q ?? "").trim();
   const filtered = items.filter((fund) => {
     if (input.category && fund.category?.code !== input.category) return false;
     if (input.fundType && String(fund.fundType?.code ?? "") !== input.fundType) return false;
-    if (!q) return true;
-    return (
-      fund.code.toLocaleLowerCase("tr-TR").includes(q) ||
-      fund.name.toLocaleLowerCase("tr-TR").includes(q) ||
-      (fund.shortName?.toLocaleLowerCase("tr-TR") ?? "").includes(q)
-    );
+    return fundSearchMatches(q, [fund.code, fund.name, fund.shortName ?? null]);
   });
 
   return filtered.sort((a, b) => {
@@ -349,7 +345,18 @@ function sortAndFilterFunds(items: FundListRow[], input: FundListQueryInput): Fu
 export async function getFundsPage(input: FundListQueryInput): Promise<FundListPageResult> {
   if (hasSupabaseRestConfig()) {
     try {
-      return await queryFundsPageFromSupabaseRest(input);
+      const restResult = await queryFundsPageFromSupabaseRest(input);
+      if (!input.q?.trim() || restResult.total > 0) return restResult;
+      const normalizedItems = sortAndFilterFunds(await getAllFundsCached(), input);
+      if (normalizedItems.length === 0) return restResult;
+      return {
+        items: normalizedItems.slice((input.page - 1) * input.pageSize, input.page * input.pageSize),
+        page: input.page,
+        pageSize: input.pageSize,
+        total: normalizedItems.length,
+        totalPages: Math.max(1, Math.ceil(normalizedItems.length / input.pageSize)),
+        source: "prisma",
+      };
     } catch (error) {
       console.warn("[fund-list] rest page fallback to prisma", error);
     }

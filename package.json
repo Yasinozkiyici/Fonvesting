@@ -14,6 +14,7 @@
     "test:unit": "tsx --test $(find src -name '*.test.ts' -print)",
     "smoke:routes": "node scripts/smoke-routes.mjs",
     "smoke:data": "node scripts/smoke-data.mjs",
+    "smoke:ui-functional": "node scripts/smoke-ui-functional.mjs",
     "smoke:prod-db": "node scripts/smoke-production-db.mjs",
     "verify:critical-routes": "node scripts/verify-critical-routes.mjs",
     "verify:release-critical": "VERIFY_REQUIRE_SCENARIOS=1 node scripts/verify-critical-routes.mjs && VERIFY_SCENARIO=degraded VERIFY_REQUIRE_SCENARIOS=1 node scripts/verify-critical-routes.mjs",

@@ -32,6 +32,7 @@ import {
   resolveFundIntentCategory,
   type FundIntentId,
 } from "@/lib/fund-intents";
+import { fundSearchMatches, normalizeFundSearchText } from "@/lib/fund-search";
 
 export type { ScoredFund, ScoredResponse };
 
@@ -54,10 +55,12 @@ type StoredLastGoodPayload = { payload: ScoredResponse; scopeKey: string | null 
 function buildScoresScopeKey(
   mode: RankingMode,
   category: string,
-  theme: FundThemeId | null
+  theme: FundThemeId | null,
+  query = ""
 ): string {
   const normalizedCategory = category.trim().toUpperCase();
-  return `${mode}|${normalizedCategory || "all"}|${theme ?? "none"}`;
+  const normalizedQuery = normalizeFundSearchText(query);
+  return `${mode}|${normalizedCategory || "all"}|${theme ?? "none"}|q:${normalizedQuery || "none"}`;
 }
 
 function rankingModeLabel(mode: RankingMode): string {
@@ -251,7 +254,8 @@ export default function ScoredFundsTable({
   const initialScopeKey = buildScoresScopeKey(
     initialMode,
     enableCategoryFilter ? initialCategory : "",
-    initialTheme
+    initialTheme,
+    initialQuery
   );
   const [rankingMode, setRankingMode] = useState<RankingMode>(initialMode);
   const [modePayloads, setModePayloads] = useState<Partial<Record<RankingMode, ScoredResponse>>>(() =>
@@ -311,7 +315,8 @@ export default function ScoredFundsTable({
   const currentFetchScopeKey = buildScoresScopeKey(
     rankingMode,
     enableCategoryFilter ? category : "",
-    activeTheme
+    activeTheme,
+    deferredSearch
   );
   const payloadScopeKeyForCurrentMode = modePayloadScopes[rankingMode] ?? null;
   const payloadForCurrentMode = modePayloads[rankingMode] ?? null;
@@ -512,7 +517,7 @@ export default function ScoredFundsTable({
     setDegradedNotice(null);
     const timeoutMs = scoresFetchTimeoutForMode(rankingMode);
     // Tema / kategori süzgeci istemcide uygulanıyorsa dar limit üst sıradaki fonlarda kalır → yanlış boş liste.
-    const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category));
+    const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category)) || Boolean(deferredSearch);
     const modeLimitParam =
       rankingMode === "HIGH_RETURN" && !needsWideScoresPayload ? "&limit=300" : "";
     const categoryParam =
@@ -520,7 +525,8 @@ export default function ScoredFundsTable({
         ? `&category=${encodeURIComponent(category.trim())}`
         : "";
     const themeParam = activeTheme ? `&theme=${encodeURIComponent(activeTheme)}` : "";
-    const requestUrl = `/api/funds/scores?mode=${rankingMode}${categoryParam}${themeParam}${modeLimitParam}`;
+    const queryParam = deferredSearch ? `&q=${encodeURIComponent(deferredSearch)}` : "";
+    const requestUrl = `/api/funds/scores?mode=${rankingMode}${categoryParam}${themeParam}${queryParam}${modeLimitParam}`;
     const startedAt = Date.now();
     const previousRowsBeforeFetch = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
     const fallbackRowsBeforeFetch = lastGoodPayload?.funds.length ?? 0;
@@ -539,12 +545,12 @@ export default function ScoredFundsTable({
       );
     };
     console.info(
-      `[scores-table] transition_requested mode=${rankingMode} category=${category || "all"} q=${search.trim() ? "1" : "0"} ` +
+      `[scores-table] transition_requested mode=${rankingMode} category=${category || "all"} q=${deferredSearch ? "1" : "0"} ` +
         `intent=${activeIntent ?? "none"} theme=${activeTheme ?? "none"} timeout_ms=${timeoutMs} url=${requestUrl}`
     );
     console.info(
       `[discover-filter-input] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
-        `intent=${activeIntent ?? "none"} q=${search.trim() ? "1" : "0"} server_url=${requestUrl}`
+        `intent=${activeIntent ?? "none"} q=${deferredSearch ? "1" : "0"} server_url=${requestUrl}`
     );
 
     let scoresResolved = false;
@@ -759,7 +765,7 @@ export default function ScoredFundsTable({
         setBootstrapAttemptCount(0);
         setError(cause instanceof Error ? cause.message : "Veri yüklenemedi");
         console.error(
-          `[scores-table] transition_failed mode=${rankingMode} category=${category || "all"} q=${search.trim() ? "1" : "0"} ` +
+          `[scores-table] transition_failed mode=${rankingMode} category=${category || "all"} q=${deferredSearch ? "1" : "0"} ` +
             `timeout_like=${timeoutLike ? 1 : 0} prev_rows=${previousRows} fallback_rows=${fallbackRows}`,
           cause
         );
@@ -780,6 +786,7 @@ export default function ScoredFundsTable({
     bootstrapRetryTick,
     category,
     currentFetchScopeKey,
+    deferredSearch,
     enableCategoryFilter,
     initialDataIsPartial,
     initialMode,
@@ -787,7 +794,6 @@ export default function ScoredFundsTable({
     lastGoodScopeKey,
     lastGoodPayload,
     rankingMode,
-    search,
     seededInitialData,
     seededInitialDataLooksPartial,
     storageHydrated,
@@ -913,7 +919,6 @@ export default function ScoredFundsTable({
   );
 
   const filteredFunds = useMemo(() => {
-    const query = deferredSearch.toLocaleLowerCase("tr-TR");
     const list = themeScopedFunds.filter((fund) => {
       if (
         enableCategoryFilter &&
@@ -922,8 +927,7 @@ export default function ScoredFundsTable({
         fund.category?.code !== category
       )
         return false;
-      if (!query) return true;
-      return fund.code.toLocaleLowerCase("tr-TR").includes(query) || fund.name.toLocaleLowerCase("tr-TR").includes(query);
+      return fundSearchMatches(deferredSearch, [fund.code, fund.name, fund.shortName ?? null]);
     });
 
     return [...list].sort((a, b) => {

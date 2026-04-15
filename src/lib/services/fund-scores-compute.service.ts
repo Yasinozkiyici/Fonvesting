@@ -16,6 +16,7 @@ import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
 import { getScoresPayloadFromDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
 import type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
+import { fundSearchMatches } from "@/lib/fund-search";
 
 export type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
 
@@ -218,10 +219,10 @@ export async function computeScoresPayload(
 }
 
 export function filterScoresPayloadByQuery(payload: ScoresApiPayload, q: string): ScoresApiPayload {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return { ...payload, appliedQuery: undefined };
+  const trimmed = q.trim();
+  if (!trimmed) return { ...payload, appliedQuery: undefined };
   const funds = payload.funds.filter(
-    (f) => f.code.toLowerCase().includes(needle) || f.name.toLowerCase().includes(needle)
+    (f) => fundSearchMatches(trimmed, [f.code, f.name, f.shortName ?? null])
   );
-  return { ...payload, total: funds.length, funds, appliedQuery: q.trim() };
+  return { ...payload, total: funds.length, funds, appliedQuery: trimmed };
 }

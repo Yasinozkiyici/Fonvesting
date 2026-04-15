@@ -118,6 +118,12 @@ const CORE_SERVING_REBUILD_HISTORY_FOR_SNAPSHOT_POINTS_BELOW = parseEnvInt(
   720
 );
 const CORE_SERVING_MEMORY_TTL_MS = parseEnvInt("FUND_DETAIL_CORE_SERVING_MEMORY_TTL_MS", 180_000, 1_000, 30 * 60_000);
+const CORE_SERVING_UNIVERSE_MEMORY_MIN_RECORDS = parseEnvInt(
+  "FUND_DETAIL_CORE_SERVING_UNIVERSE_MEMORY_MIN_RECORDS",
+  500,
+  20,
+  10_000
+);
 const CORE_SERVING_FILE_REFRESH_MS = parseEnvInt("FUND_DETAIL_CORE_SERVING_FILE_REFRESH_MS", 15_000, 1_000, 10 * 60_000);
 const CORE_SERVING_ON_DEMAND_ENABLED = process.env.FUND_DETAIL_CORE_SERVING_ON_DEMAND !== "0";
 const CORE_SERVING_ON_DEMAND_ROWS = parseEnvInt("FUND_DETAIL_CORE_SERVING_ON_DEMAND_ROWS", 120, 20, 360);
@@ -1310,7 +1316,7 @@ export async function getFundDetailCoreServingUniversePayloads(): Promise<{
   const memoryRecords = [...getCoreServingMemory().values()]
     .filter((entry) => now - entry.cachedAt <= CORE_SERVING_MEMORY_TTL_MS)
     .map((entry) => entry.payload);
-  if (memoryRecords.length > 0) {
+  if (memoryRecords.length >= CORE_SERVING_UNIVERSE_MEMORY_MIN_RECORDS) {
     return { records: memoryRecords, source: "memory", missReason: null };
   }
   const fileProbe = await getFundDetailCoreServingFromFile("__UNIVERSE__");

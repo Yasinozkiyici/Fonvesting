@@ -95,6 +95,14 @@ function pickBenchmarkMacroSeries(
     .map(([t, v]) => ({ t, v }));
 }
 
+function kiyasBlockHasComparableRows(data: FundDetailPageData): boolean {
+  const rowsByRef = data.kiyasBlock?.rowsByRef;
+  if (!rowsByRef) return false;
+  return Object.values(rowsByRef).some((rows) =>
+    rows.some((row) => Number.isFinite(row.fundPct) && Number.isFinite(row.refPct))
+  );
+}
+
 const COMPARISON_VISUALS: Record<
   string,
   {
@@ -320,6 +328,7 @@ export function FundDetailChart({ data }: Props) {
   const compareAutoPrefetchAttemptRef = useRef(0);
   const [isNarrowViewport, setIsNarrowViewport] = useState(false);
   const behavior = useMemo(() => deriveFundDetailBehaviorContract(data), [data]);
+  const serverKiyasHasComparableRows = useMemo(() => kiyasBlockHasComparableRows(data), [data]);
   const compareDebugRenderCountRef = useRef(0);
 
   useEffect(() => {
@@ -429,7 +438,7 @@ export function FundDetailChart({ data }: Props) {
   }, [data.fund.code, loadCompareData]);
 
   useEffect(() => {
-    if (data.kiyasBlock) return;
+    if (serverKiyasHasComparableRows) return;
     if (compareData || compareLoading) return;
     if (compareAutoPrefetchAttemptRef.current >= 2) return;
     compareAutoPrefetchAttemptRef.current += 1;
@@ -438,7 +447,7 @@ export function FundDetailChart({ data }: Props) {
       void loadCompareData();
     }, waitMs);
     return () => clearTimeout(timer);
-  }, [compareData, compareLoading, data.kiyasBlock, loadCompareData]);
+  }, [compareData, compareLoading, loadCompareData, serverKiyasHasComparableRows]);
 
   const handleCurrentFundCompareToggle = () => {
     if (fundOnCompare) {

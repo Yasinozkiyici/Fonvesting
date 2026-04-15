@@ -15,6 +15,11 @@ import {
   getFundDetailCoreServingUniversePayloads,
   type FundDetailCoreServingPayload,
 } from "@/lib/services/fund-detail-core-serving.service";
+import {
+  buildCategorySeriesFromServingPayloads,
+  normalizeCompareHistoryDate,
+  pointsFromServingPayload,
+} from "@/lib/compare-series-category";
 import { optionalReferenceDegradation } from "@/lib/operational-hardening";
 import { readActiveRegistryFundByCodeWithMeta, type RegistryRow } from "@/lib/services/fund-registry-read.service";
 
@@ -226,84 +231,6 @@ function isTimeoutLike(error: unknown): boolean {
 type CompareServingRead = Awaited<ReturnType<typeof getFundDetailCoreServingCached>>;
 type CompareServingReader = CompareServingReaderLike<FundDetailCoreServingPayload>;
 
-function normalizeHistoryDate(date: Date): Date {
-  return startOfUtcDay(new Date(date.getTime() + 3 * 60 * 60 * 1000));
-}
-
-function dedupePriceRows(rows: Array<{ date: Date; price: number }>): Point[] {
-  const map = new Map<number, number>();
-  for (const row of rows) {
-    if (!Number.isFinite(row.price) || row.price <= 0) continue;
-    map.set(normalizeHistoryDate(row.date).getTime(), row.price);
-  }
-  return [...map.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([t, v]) => ({ t, v }));
-}
-
-function buildCategorySeries(rows: Array<{ date: Date; _avg: { dailyReturn: number | null } }>): Point[] {
-  let index = 100;
-  const out: Point[] = [];
-  for (const row of rows) {
-    const d = row._avg.dailyReturn;
-    if (d == null || !Number.isFinite(d)) continue;
-    index *= 1 + d / 100;
-    out.push({ t: normalizeHistoryDate(row.date).getTime(), v: index });
-  }
-  return out;
-}
-
-function pointsFromServingPayload(payload: FundDetailCoreServingPayload): Point[] {
-  const rows = payload.chartHistory?.points ?? [];
-  const map = new Map<number, number>();
-  for (const row of rows) {
-    if (!Number.isFinite(row?.t) || !Number.isFinite(row?.p) || row.p <= 0) continue;
-    map.set(normalizeHistoryDate(new Date(row.t)).getTime(), row.p);
-  }
-  return [...map.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([t, v]) => ({ t, v }));
-}
-
-function buildCategorySeriesFromServingPayloads(
-  base: FundDetailCoreServingPayload,
-  universe: FundDetailCoreServingPayload[]
-): Point[] {
-  const categoryCode = base.fund.categoryCode;
-  if (!categoryCode) return [];
-  const baseCode = base.fund.code.trim().toUpperCase();
-  const byDate = new Map<number, { sum: number; count: number }>();
-  let contributors = 0;
-  for (const payload of universe) {
-    if (payload.fund.code.trim().toUpperCase() === baseCode) continue;
-    if (payload.fund.categoryCode !== categoryCode) continue;
-    const series = pointsFromServingPayload(payload);
-    if (series.length < 2) continue;
-    contributors += 1;
-    for (let index = 1; index < series.length; index += 1) {
-      const prev = series[index - 1]!;
-      const curr = series[index]!;
-      if (!(prev.v > 0)) continue;
-      const dailyReturnPct = ((curr.v - prev.v) / prev.v) * 100;
-      if (!Number.isFinite(dailyReturnPct)) continue;
-      const slot = byDate.get(curr.t) ?? { sum: 0, count: 0 };
-      slot.sum += dailyReturnPct;
-      slot.count += 1;
-      byDate.set(curr.t, slot);
-    }
-  }
-  if (contributors === 0 || byDate.size === 0) return [];
-  const sorted = [...byDate.entries()].sort((a, b) => a[0] - b[0]);
-  let index = 100;
-  const out: Point[] = [];
-  for (const [t, agg] of sorted) {
-    if (agg.count <= 0) continue;
-    index *= 1 + agg.sum / agg.count / 100;
-    out.push({ t, v: index });
-  }
-  return out;
-}
-
 async function getCompareSeriesPayload(
   baseCode: string,
   compareCodes: string[],
@@ -450,7 +377,7 @@ async function getCompareSeriesPayload(
     });
 
   const anchor = startOfUtcDay(new Date());
-  const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
+  const shouldBuildCategoryFromUniverse = Boolean(baseFund.fund.categoryCode);
   const [macroResult, servingUniverseResult] = await Promise.all([
     readOptionalMacroBuckets(anchor, fetchMacro),
     shouldBuildCategoryFromUniverse
@@ -494,11 +421,11 @@ async function getCompareSeriesPayload(
         shouldBuildCategoryFromUniverse && servingUniverseResult
           ? buildCategorySeriesFromServingPayloads(baseFund, servingUniverseResult.records)
           : [],
-      bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
-      usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
-      eurtry: (macroByRef.eurtry ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
-      gold: (macroByRef.gold ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
-      policy: (macroByRef.policy ?? []).map((x) => ({ t: normalizeHistoryDate(x.date).getTime(), v: x.value })),
+      bist100: (macroByRef.bist100 ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
+      usdtry: (macroByRef.usdtry ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
+      eurtry: (macroByRef.eurtry ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
+      gold: (macroByRef.gold ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
+      policy: (macroByRef.policy ?? []).map((x) => ({ t: normalizeCompareHistoryDate(x.date).getTime(), v: x.value })),
     },
     labels: {
       category: "Kategori Ortalaması",
