@@ -4,6 +4,7 @@ import {
   normalizeBaseCode,
   parseCompareCodes,
   readServingPayloadForCompareSeries,
+  isTransientCompareBaseMissReason,
   type CompareServingReaderLike,
 } from "@/lib/services/compare-series-resolution";
 
@@ -83,4 +84,11 @@ test("file-only miss falls back to durable read path", async () => {
     { code: "VGA", preferFileOnly: true },
     { code: "VGA", preferFileOnly: false },
   ]);
+});
+
+test("transient base miss reason classification is deterministic", () => {
+  assert.equal(isTransientCompareBaseMissReason("read_timeout"), true);
+  assert.equal(isTransientCompareBaseMissReason("ondemand_failed"), true);
+  assert.equal(isTransientCompareBaseMissReason("db_miss"), false);
+  assert.equal(isTransientCompareBaseMissReason(null), false);
 });

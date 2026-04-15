@@ -3,11 +3,12 @@ import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/
 import { prisma } from "@/lib/prisma";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
-import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
+import { getFundDetailCoreServingCached } from "@/lib/services/fund-detail-core-serving.service";
 import {
   loadCompareContext,
   type CompareContextDto,
 } from "@/lib/services/compare-reference.service";
+import { readServingPayloadForCompareSeries } from "@/lib/services/compare-series-resolution";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,7 @@ const MAX = 4;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "2500");
 const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "3000");
+const COMPARE_SERVING_READ_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_READ_TIMEOUT_MS ?? "4200");
 
 type CompareFundRow = {
   fundId: string;
@@ -163,26 +165,38 @@ async function loadRowsFromSnapshot(codes: string[]): Promise<CompareFundRow[]> 
 }
 
 async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
-  const listed = await listFundDetailCoreServingRows(500);
-  const requested = new Set(codes.map((code) => code.trim().toUpperCase()));
-  return listed.rows
-    .filter((row) => requested.has(row.code.trim().toUpperCase()))
-    .map((row) => ({
-      fundId: row.fundId,
-      code: row.code,
-      name: row.name,
-      shortName: row.shortName,
-      logoUrl: row.logoUrl,
-      lastPrice: row.lastPrice,
-      dailyReturn: row.dailyReturn,
-      monthlyReturn: row.monthlyReturn,
-      yearlyReturn: row.yearlyReturn,
-      portfolioSize: row.portfolioSize,
-      investorCount: row.investorCount,
-      categoryCode: row.categoryCode,
-      categoryName: row.categoryName,
-      fundTypeCode: row.fundTypeCode,
-      fundTypeName: row.fundTypeName,
+  const reads = await Promise.all(
+    codes.map(async (code) => {
+      try {
+        return await withTimeout(
+          readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached),
+          COMPARE_SERVING_READ_TIMEOUT_MS,
+          "compare_serving_read"
+        );
+      } catch {
+        return { payload: null };
+      }
+    })
+  );
+  return reads
+    .map((read) => read.payload)
+    .filter((payload): payload is NonNullable<(typeof reads)[number]["payload"]> => payload != null)
+    .map((payload) => ({
+      fundId: payload.fund.fundId,
+      code: payload.fund.code,
+      name: payload.fund.name,
+      shortName: payload.fund.shortName,
+      logoUrl: payload.fund.logoUrl,
+      lastPrice: payload.latestPrice,
+      dailyReturn: payload.dailyChangePct,
+      monthlyReturn: payload.monthlyReturn,
+      yearlyReturn: payload.yearlyReturn,
+      portfolioSize: payload.portfolioSummary.current,
+      investorCount: payload.investorSummary.current,
+      categoryCode: payload.fund.categoryCode,
+      categoryName: payload.fund.categoryName,
+      fundTypeCode: payload.fund.fundTypeCode,
+      fundTypeName: payload.fund.fundTypeName,
       categoryId: null,
       isActive: true,
       fallbackOnly: true,

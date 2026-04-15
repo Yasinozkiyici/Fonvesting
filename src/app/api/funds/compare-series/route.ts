@@ -6,6 +6,7 @@ import {
   normalizeBaseCode,
   parseCompareCodes,
   readServingPayloadForCompareSeries,
+  isTransientCompareBaseMissReason,
   type CompareServingReaderLike,
 } from "@/lib/services/compare-series-resolution";
 import {
@@ -26,7 +27,7 @@ const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERS
 const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "1600");
-const COMPARE_SERIES_BASE_READ_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_READ_TIMEOUT_MS ?? "1800");
+const COMPARE_SERIES_BASE_READ_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_READ_TIMEOUT_MS ?? "4200");
 
 type Point = { t: number; v: number };
 
@@ -54,6 +55,11 @@ type CompareSeriesBuildResult = {
   payload: CompareSeriesPayload;
   degraded: boolean;
   degradedSources: string[];
+  failureClass: string[];
+};
+
+type CompareSeriesBaseError = {
+  error: "base_not_found" | "base_temporarily_unavailable";
   failureClass: string[];
 };
 
@@ -166,7 +172,7 @@ async function getCompareSeriesPayload(
     fetchMacro?: typeof fetchKiyasMacroBuckets;
     readUniverse?: typeof getFundDetailCoreServingUniversePayloads;
   }
-) {
+): Promise<CompareSeriesBuildResult | CompareSeriesBaseError> {
   const readServing = deps?.readServing ?? getFundDetailCoreServingCached;
   const fetchMacro = deps?.fetchMacro ?? fetchKiyasMacroBuckets;
   const readUniverse = deps?.readUniverse ?? getFundDetailCoreServingUniversePayloads;
@@ -174,9 +180,19 @@ async function getCompareSeriesPayload(
     readServingPayloadForCompareSeries(baseCode, readServing),
     COMPARE_SERIES_BASE_READ_TIMEOUT_MS,
     "compare_series_base_read"
-  ).catch(() => ({ payload: null } as CompareServingRead));
+  ).catch((error) => ({
+    payload: null,
+    missReason: isTimeoutLike(error) ? "read_timeout" : "read_failed",
+  }));
   if (!baseRead.payload) {
-    return { error: "base_not_found" as const };
+    const missReason = baseRead.missReason ?? "";
+    if (isTransientCompareBaseMissReason(missReason)) {
+      return {
+        error: "base_temporarily_unavailable",
+        failureClass: [missReason === "read_timeout" ? "timeout" : "base_read_failed"],
+      };
+    }
+    return { error: "base_not_found", failureClass: [] };
   }
   const baseFund = baseRead.payload;
   const failureClass: string[] = [];
@@ -309,7 +325,16 @@ export async function GET(req: NextRequest) {
     const result = await getCompareSeriesPayload(baseCode, compareCodes);
 
     if ("error" in result) {
-      return NextResponse.json({ error: "base_not_found" }, { status: 404 });
+      const status = result.error === "base_not_found" ? 404 : 503;
+      return NextResponse.json(
+        { error: result.error },
+        {
+          status,
+          headers: result.failureClass.length
+            ? { "X-Compare-Series-Failure-Class": result.failureClass.join(",") }
+            : undefined,
+        }
+      );
     }
 
     return NextResponse.json(

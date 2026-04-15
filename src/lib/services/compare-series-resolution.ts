@@ -1,6 +1,7 @@
 const DEFAULT_CODE_RE = /^[A-Z0-9]{2,12}$/;
 const DEFAULT_MAX_CODES = 3;
 const FILE_ONLY_MISS_REASONS = new Set(["file_missing", "file_empty", "file_parse_error"]);
+const TRANSIENT_COMPARE_BASE_MISS_REASONS = new Set(["read_timeout", "read_failed", "ondemand_failed"]);
 
 export type CompareServingReadLike<TPayload> = {
   payload: TPayload | null;
@@ -43,4 +44,8 @@ export async function readServingPayloadForCompareSeries<TPayload>(
   if (!FILE_ONLY_MISS_REASONS.has(fileOnlyRead.missReason ?? "")) return fileOnlyRead;
   const durableRead = await readFn(code, { preferFileOnly: false });
   return durableRead.payload ? durableRead : fileOnlyRead;
+}
+
+export function isTransientCompareBaseMissReason(reason: string | null | undefined): boolean {
+  return TRANSIENT_COMPARE_BASE_MISS_REASONS.has((reason ?? "").trim());
 }
