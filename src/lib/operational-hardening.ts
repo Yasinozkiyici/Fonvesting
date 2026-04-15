@@ -71,3 +71,10 @@ export function resolveHealthDbPingSoftBudgetMs(input: {
   if (!Number.isFinite(light)) return Math.min(fallback, 900);
   return Math.max(250, Math.min(fallback, light));
 }
+
+export function shouldRunExternalDbFailureProbes(input: {
+  includeExternalProbes: boolean;
+  lightweight: boolean;
+}): boolean {
+  return input.includeExternalProbes || !input.lightweight;
+}

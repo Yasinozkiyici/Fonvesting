@@ -128,6 +128,28 @@ assertContains(
   "macro/reference degradation must stay explicitly optional."
 );
 
+const scoresRoute = readProjectFile("src/app/api/funds/scores/route.ts");
+assertOrder(
+  "src/app/api/funds/scores/route.ts",
+  scoresRoute,
+  "readPersistedScoresPayloadFromRest",
+  "prisma.scoresApiCache.findUnique",
+  "scores persisted cache must try REST before direct Prisma."
+);
+assertOrder(
+  "src/app/api/funds/scores/route.ts",
+  scoresRoute,
+  "const servingFallback = await readCoreServingScoresFallback",
+  "const fundsListFallback = await readFundsListFallback",
+  "scores critical fallback must try serving/core cache before funds-list DB fallback."
+);
+assertContains(
+  "src/app/api/funds/scores/route.ts",
+  scoresRoute,
+  'source: "snapshot" | "memory" | "stale" | "db-cache" | "light" | "funds-list" | "empty"',
+  "scores source headers must expose memory/serving/cache fallback source."
+);
+
 const healthRoute = readProjectFile("src/app/api/health/route.ts");
 assertContains(
   "src/app/api/health/route.ts",
@@ -148,6 +170,28 @@ assertContains(
   detailService,
   'process.env.FUND_DETAIL_CORE_SERVING_FILE_ONLY === "1"',
   "detail serving must not default to local file-only cache in production."
+);
+
+const systemHealth = readProjectFile("src/lib/system-health.ts");
+assertContains(
+  "src/lib/system-health.ts",
+  systemHealth,
+  "shouldRunExternalDbFailureProbes({ includeExternalProbes, lightweight })",
+  "light health must not run DNS/TCP probes after an expected direct DB diagnostic miss."
+);
+assertContains(
+  "src/lib/system-health.ts",
+  systemHealth,
+  'dbPing.source !== "cache_failed"',
+  "cached direct DB diagnostic failures must not spam health degraded logs."
+);
+
+const prismaClient = readProjectFile("src/lib/prisma.ts");
+assertContains(
+  "src/lib/prisma.ts",
+  prismaClient,
+  '{ emit: "event", level: "error" }',
+  "production Prisma errors must use normalized event logging instead of raw prisma:error stdout."
 );
 
 console.log("Predeploy check başarılı.");

@@ -7,6 +7,7 @@ import {
   healthDbPingFailureLogLevel,
   optionalReferenceDegradation,
   resolveHealthDbPingSoftBudgetMs,
+  shouldRunExternalDbFailureProbes,
   shouldUseFastCompareContextFallback,
 } from "@/lib/operational-hardening";
 
@@ -101,4 +102,10 @@ test("detail enrichment DB failures are warnings once shell is usable", () => {
     detailEnrichmentDbFailureLogLevel({ shellUsable: false, step: "price_history_query" }),
     "error"
   );
+});
+
+test("light health skips external DB probes unless explicitly requested", () => {
+  assert.equal(shouldRunExternalDbFailureProbes({ lightweight: true, includeExternalProbes: false }), false);
+  assert.equal(shouldRunExternalDbFailureProbes({ lightweight: false, includeExternalProbes: false }), true);
+  assert.equal(shouldRunExternalDbFailureProbes({ lightweight: true, includeExternalProbes: true }), true);
 });

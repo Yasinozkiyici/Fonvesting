@@ -23,6 +23,7 @@ const checks = [
   },
   {
     path: "/api/funds/scores?mode=BEST&limit=150",
+    maxMs: 5000,
     validate(payload) {
       return typeof payload === "object" && payload !== null && Array.isArray(payload.funds) && payload.funds.length > 0;
     },
@@ -35,6 +36,7 @@ const checks = [
   },
   {
     path: "/api/funds/compare?codes=VGA,TI1",
+    maxMs: 5000,
     validate(payload) {
       return typeof payload === "object" && payload !== null && Array.isArray(payload.funds) && payload.funds.length >= 2;
     },
@@ -139,6 +141,18 @@ for (const check of checks) {
       if (attempt < RETRY_COUNT) {
         console.warn(
           `[smoke:data] ${check.path} retrying after unexpected shape (attempt ${attempt + 1}/${RETRY_COUNT + 1})`
+        );
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+      break;
+    }
+
+    if (check.maxMs && durationMs > check.maxMs) {
+      lastError = `latency ${durationMs}ms > ${check.maxMs}ms`;
+      if (attempt < RETRY_COUNT) {
+        console.warn(
+          `[smoke:data] ${check.path} retrying after slow response (attempt ${attempt + 1}/${RETRY_COUNT + 1}): ${lastError}`
         );
         await sleep(RETRY_DELAY_MS);
         continue;

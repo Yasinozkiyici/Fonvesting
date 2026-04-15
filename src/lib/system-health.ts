@@ -17,6 +17,7 @@ import {
   filterExpectedHealthDiagnosticErrors,
   healthDbPingFailureLogLevel,
   resolveHealthDbPingSoftBudgetMs,
+  shouldRunExternalDbFailureProbes,
 } from "@/lib/operational-hardening";
 
 export type SystemHealthStatus = "ok" | "degraded" | "error";
@@ -29,11 +30,11 @@ type HealthDbPingSource =
   | "cache_failed";
 
 const HEALTH_DB_PING_CACHE_TTL_MS = Number(process.env.HEALTH_DB_PING_CACHE_TTL_MS ?? "25000");
-const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_TTL_MS ?? "30000");
+const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_TTL_MS ?? "60000");
 const HEALTH_DB_PING_MAX_WAIT_MS = Number(process.env.HEALTH_DB_PING_MAX_WAIT_MS ?? "900");
 const HEALTH_DB_PING_TX_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_TX_TIMEOUT_MS ?? "1800");
 const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "3000");
-const HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS ?? "900");
+const HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS ?? "650");
 
 export interface SystemHealthIssue {
   code: string;
@@ -215,6 +216,11 @@ function getHealthPingState(): HealthPingState {
 async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPingResult> {
   const state = getHealthPingState();
   const now = Date.now();
+  const softBudgetMs = resolveHealthDbPingSoftBudgetMs({
+    lightweight,
+    defaultSoftBudgetMs: HEALTH_DB_PING_SOFT_TIMEOUT_MS,
+    lightSoftBudgetMs: HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS,
+  });
   const cached = state.cached;
   if (cached) {
     const ttl = cached.result.ok
@@ -230,13 +236,8 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
 
   if (state.inFlight) {
     const inflightElapsedMs = now - state.inFlight.startedAt;
-    const softBudgetMs = resolveHealthDbPingSoftBudgetMs({
-      lightweight,
-      defaultSoftBudgetMs: HEALTH_DB_PING_SOFT_TIMEOUT_MS,
-      lightSoftBudgetMs: HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS,
-    });
-    const inflightBudgetMs = Math.max(250, softBudgetMs - inflightElapsedMs);
-    if (inflightBudgetMs <= 0) {
+    const remainingBudgetMs = softBudgetMs - inflightElapsedMs;
+    if (remainingBudgetMs <= 0) {
       return {
         ok: false,
         ms: inflightElapsedMs,
@@ -245,6 +246,7 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
         failureDetail: `health_db_ping_inflight_timeout_${softBudgetMs}ms`,
       };
     }
+    const inflightBudgetMs = Math.max(100, remainingBudgetMs);
     const inflight = await Promise.race<HealthPingResult>([
       state.inFlight.promise,
       new Promise<HealthPingResult>((resolve) => {
@@ -269,7 +271,14 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
   const task = (async (): Promise<HealthPingResult> => {
     const startedAt = probeStartedAt;
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      const txMaxWaitMs = Math.max(100, Math.min(HEALTH_DB_PING_MAX_WAIT_MS, Math.floor(softBudgetMs / 2)));
+      const txTimeoutMs = Math.max(250, Math.min(HEALTH_DB_PING_TX_TIMEOUT_MS, softBudgetMs));
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT 1`;
+        },
+        { maxWait: txMaxWaitMs, timeout: txTimeoutMs }
+      );
       return {
         ok: true,
         ms: Date.now() - startedAt,
@@ -301,11 +310,6 @@ async function probeDatabaseConnectivity(lightweight: boolean): Promise<HealthPi
       }
     });
 
-  const softBudgetMs = resolveHealthDbPingSoftBudgetMs({
-    lightweight,
-    defaultSoftBudgetMs: HEALTH_DB_PING_SOFT_TIMEOUT_MS,
-    lightSoftBudgetMs: HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS,
-  });
   const result = await Promise.race<HealthPingResult>([
     task,
     new Promise<HealthPingResult>((resolve) => {
@@ -558,7 +562,12 @@ export async function getSystemHealthSnapshot(options?: {
     if (!dbPing.ok) throw new Error(dbPing.failureDetail ?? "database_ping_failed");
   } catch (error) {
     errors.push(`database_ping: ${formatError(error)}`);
-    if (!includeExternalProbes && effectiveHost && effectivePort) {
+    if (
+      shouldRunExternalDbFailureProbes({ includeExternalProbes, lightweight }) &&
+      !includeExternalProbes &&
+      effectiveHost &&
+      effectivePort
+    ) {
       dnsProbe = await probeDns(effectiveHost, 1200);
       tcpProbe = await probeTcp(effectiveHost, effectivePort, 1200);
     }
@@ -632,9 +641,10 @@ export async function getSystemHealthSnapshot(options?: {
       targetIdentity,
       readPathOperational,
     };
-    if (healthDbPingFailureLogLevel({ readPathOperational, failureCategory }) === "error") {
+    const healthLogLevel = healthDbPingFailureLogLevel({ readPathOperational, failureCategory });
+    if (healthLogLevel === "error") {
       console.error("[health][database_ping_failed]", logPayload);
-    } else {
+    } else if (dbPing.source !== "cache_failed") {
       console.info("[health][database_ping_degraded]", logPayload);
     }
     const lightReadPathOperational = lightweight && readPathOperational;

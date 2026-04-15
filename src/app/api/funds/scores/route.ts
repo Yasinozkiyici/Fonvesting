@@ -11,6 +11,7 @@ import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { fundMatchesTheme, parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
 import { getFundDetailCoreServingUniversePayloads } from "@/lib/services/fund-detail-core-serving.service";
+import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,12 +27,13 @@ const SCORES_STALE_TTL_MS = parseEnvMs("SCORES_ROUTE_STALE_TTL_MS", 10 * 60_000,
 const SCORES_PERSISTED_CACHE_TIMEOUT_MS = parseEnvMs("SCORES_PERSISTED_CACHE_TIMEOUT_MS", 1_000, 400, 5_000);
 const SCORES_PERSISTED_CACHE_TIMEOUT_BEST_ALL_MS = parseEnvMs(
   "SCORES_PERSISTED_CACHE_TIMEOUT_BEST_ALL_MS",
-  2_200,
+  900,
   600,
   8_000
 );
+const SCORES_PERSISTED_REST_CACHE_TIMEOUT_MS = parseEnvMs("SCORES_PERSISTED_REST_CACHE_TIMEOUT_MS", 1_000, 1_000, 5_000);
 const SCORES_LIGHT_FALLBACK_TIMEOUT_MS = parseEnvMs("SCORES_LIGHT_FALLBACK_TIMEOUT_MS", 1_500, 600, 6_000);
-const SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS = parseEnvMs("SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS", 3_500, 500, 6_000);
+const SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS = parseEnvMs("SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS", 2_000, 500, 6_000);
 const SCORES_LIGHT_FALLBACK_LIMIT = 300;
 
 type ScoresCacheEntry = {
@@ -42,6 +44,10 @@ type ScoresCacheEntry = {
 type ScoresRuntimeState = {
   cache: Map<string, ScoresCacheEntry>;
   inflight: Map<string, Promise<ScoresApiPayload>>;
+};
+
+type ScoresApiCacheRestRow = {
+  payload: unknown;
 };
 
 type GlobalWithScoresRouteState = typeof globalThis & {
@@ -149,6 +155,8 @@ function pickStaleCache(state: ScoresRuntimeState, key: string): ScoresApiPayloa
 
 async function readPersistedScoresPayload(mode: RankingMode, categoryCode: string): Promise<ScoresApiPayload | null> {
   const cacheKey = scoresApiCacheKey(mode, categoryCode, "");
+  const restPayload = await readPersistedScoresPayloadFromRest(mode, cacheKey);
+  if (restPayload) return restPayload;
   const row = await withTimeout(
     prisma.scoresApiCache.findUnique({
       where: { cacheKey },
@@ -162,6 +170,8 @@ async function readPersistedScoresPayload(mode: RankingMode, categoryCode: strin
 
 async function readPersistedScoresPayloadBestAll(mode: RankingMode): Promise<ScoresApiPayload | null> {
   const cacheKey = scoresApiCacheKey(mode, "", "");
+  const restPayload = await readPersistedScoresPayloadFromRest(mode, cacheKey);
+  if (restPayload) return restPayload;
   const row = await withTimeout(
     prisma.scoresApiCache.findUnique({
       where: { cacheKey },
@@ -171,6 +181,25 @@ async function readPersistedScoresPayloadBestAll(mode: RankingMode): Promise<Sco
   ).catch(() => null);
   if (!row?.payload) return null;
   return sanitizePersistedPayload(mode, row.payload);
+}
+
+async function readPersistedScoresPayloadFromRest(
+  mode: RankingMode,
+  cacheKey: string
+): Promise<ScoresApiPayload | null> {
+  if (!hasSupabaseRestConfig()) return null;
+  const encodedKey = encodeURIComponent(cacheKey);
+  const rows = await fetchSupabaseRestJson<ScoresApiCacheRestRow[]>(
+    `ScoresApiCache?select=payload&cacheKey=eq.${encodedKey}&limit=1`,
+    {
+      revalidate: 60,
+      timeoutMs: SCORES_PERSISTED_REST_CACHE_TIMEOUT_MS,
+      retries: 0,
+      countFailureForCircuit: false,
+    }
+  ).catch(() => null);
+  const payload = rows?.[0]?.payload;
+  return sanitizePersistedPayload(mode, payload);
 }
 
 async function readLightSnapshotFallback(mode: RankingMode, categoryCode: string): Promise<ScoresApiPayload | null> {
@@ -357,7 +386,7 @@ export async function GET(request: NextRequest) {
   const state = getScoresRouteState();
 
   let cacheState: "hit" | "miss" | "dedupe" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "miss";
-  let source: "snapshot" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "snapshot";
+  let source: "snapshot" | "memory" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "snapshot";
   let degradedReason: string | null = null;
   let failureClass: string | null = null;
   let basePayload: ScoresApiPayload = buildEmptyPayload(mode);
@@ -369,6 +398,9 @@ export async function GET(request: NextRequest) {
     basePayload = payload;
     source = nextSource;
     cacheState = nextCacheState;
+    if (payload.funds.length > 0 && nextCacheState !== "stale") {
+      state.cache.set(key, { payload, updatedAt: Date.now() });
+    }
   };
   const logDbRouteFailure = (classified: ReturnType<typeof classifyDatabaseError>): void => {
     console.error("[db-route-failure]", {
@@ -391,7 +423,12 @@ export async function GET(request: NextRequest) {
 
   let handledByCriticalPath = false;
   if (isCriticalBestAllPath) {
-    const stale = pickStaleCache(state, key);
+    const fresh = pickFreshCache(state, key);
+    if (fresh && fresh.funds.length > 0) {
+      applyResolvedPayload(fresh, "memory", "hit");
+      handledByCriticalPath = true;
+    }
+    const stale = handledByCriticalPath ? null : pickStaleCache(state, key);
     if (stale && stale.funds.length > 0) {
       applyResolvedPayload(stale, "stale", "stale");
       handledByCriticalPath = true;
@@ -401,14 +438,14 @@ export async function GET(request: NextRequest) {
         applyResolvedPayload(persisted, "db-cache", "db-cache");
         handledByCriticalPath = true;
       } else {
-        const fundsListFallback = await readFundsListFallback(mode, categoryCode);
-        if (fundsListFallback && fundsListFallback.funds.length > 0) {
-          applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
+        const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
+        if (servingFallback && servingFallback.funds.length > 0) {
+          applyResolvedPayload(servingFallback, "light", "light");
           handledByCriticalPath = true;
         } else {
-          const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
-          if (servingFallback && servingFallback.funds.length > 0) {
-            applyResolvedPayload(servingFallback, "light", "light");
+          const fundsListFallback = await readFundsListFallback(mode, categoryCode);
+          if (fundsListFallback && fundsListFallback.funds.length > 0) {
+            applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
             handledByCriticalPath = true;
           } else {
             try {

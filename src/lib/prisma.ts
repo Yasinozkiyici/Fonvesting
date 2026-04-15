@@ -80,7 +80,10 @@ function createPrismaClient(): PrismaClient {
         url: getEffectiveDatabaseUrl(),
       },
     },
-    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+    log:
+      process.env.NODE_ENV === "development"
+        ? ["query", "warn", { emit: "event", level: "error" }]
+        : [{ emit: "event", level: "error" }],
   });
   const globalForPrismaLogs = global as unknown as {
     __dbRuntimeLastErrorLog?: { key: string; at: number };

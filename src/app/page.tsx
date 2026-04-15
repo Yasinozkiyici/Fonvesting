@@ -19,12 +19,12 @@ import type { ScoredResponse } from "@/types/scored-funds";
 
 export const revalidate = LIVE_DATA_PAGE_REVALIDATE_SEC;
 export const dynamic = "force-dynamic";
-const HOME_SSR_SCORES_TIMEOUT_MS = parseEnvMs("HOME_SSR_SCORES_TIMEOUT_MS", 2_800, 1_200, 10_000);
+const HOME_SSR_SCORES_TIMEOUT_MS = parseEnvMs("HOME_SSR_SCORES_TIMEOUT_MS", 1_600, 1_200, 10_000);
 const HOME_SSR_SCORES_LIMIT = parseEnvMs("HOME_SSR_SCORES_LIMIT", 180, 60, 600);
 const HOME_SSR_CORE_ROWS_TIMEOUT_MS = parseEnvMs("HOME_SSR_CORE_ROWS_TIMEOUT_MS", 700, 250, 5_000);
 const HOME_SSR_CORE_ROWS_LIMIT = parseEnvMs("HOME_SSR_CORE_ROWS_LIMIT", 180, 30, 500);
 const HOME_SSR_CATEGORY_TIMEOUT_MS = parseEnvMs("HOME_SSR_CATEGORY_TIMEOUT_MS", 1_200, 250, 8_000);
-const HOME_SSR_MARKET_TIMEOUT_MS = parseEnvMs("HOME_SSR_MARKET_TIMEOUT_MS", 2_200, 250, 8_000);
+const HOME_SSR_MARKET_TIMEOUT_MS = parseEnvMs("HOME_SSR_MARKET_TIMEOUT_MS", 1_500, 250, 8_000);
 // Launch-readiness için ana sayfada gerçek evren/özet metriklerini SSR'da zorunlu yükle.
 const HOME_SSR_DB_SCORES_ENABLED = true;
 const HOME_SSR_MARKET_ENABLED = true;
@@ -222,16 +222,18 @@ export default async function Page({
   const initialQuery = readSearchParam(searchParams, "q", "query");
   const initialIntent = parseFundIntentParam(readSearchParam(searchParams, "intent"));
   const initialTheme = parseFundThemeParam(readSearchParam(searchParams, "theme"));
-  const servingRows = await withSoftTimeout(
+  const servingRowsTask = withSoftTimeout(
     listFundDetailCoreServingRows(HOME_SSR_CORE_ROWS_LIMIT),
     HOME_SSR_CORE_ROWS_TIMEOUT_MS,
     { rows: [], source: "none" as const, missReason: "cache_empty" as const }
   );
+  const marketDataRawTask = HOME_SSR_MARKET_ENABLED
+    ? withSoftTimeout(getMarketSummaryFromDailySnapshotSafe(), HOME_SSR_MARKET_TIMEOUT_MS, null)
+    : Promise.resolve(null);
+  const servingRows = await servingRowsTask;
   const servingCategories = categoriesFromServingRows(servingRows);
   const [marketDataRaw, categories] = await Promise.all([
-    HOME_SSR_MARKET_ENABLED
-      ? withSoftTimeout(getMarketSummaryFromDailySnapshotSafe(), HOME_SSR_MARKET_TIMEOUT_MS, null)
-      : Promise.resolve(null),
+    marketDataRawTask,
     servingCategories.length > 0
       ? Promise.resolve(servingCategories)
       : withSoftTimeout(getCategorySummariesFromDailySnapshotSafe(), HOME_SSR_CATEGORY_TIMEOUT_MS, []),

@@ -607,7 +607,7 @@ export async function fetchKiyasMacroBuckets(
       state.macroCache.set(cacheKey, { updatedAt: Date.now(), data: macroByRef });
       return macroByRef;
     } catch (error) {
-      console.error("[fund-detail-kiyas] supabase-rest macro fetch failed", error);
+      console.warn("[fund-detail-kiyas] supabase-rest macro fetch degraded", error);
     }
   }
 
@@ -794,10 +794,10 @@ export async function buildFundKiyasBlock(input: {
     categoryResult.status === "fulfilled" ? categoryResult.value : null;
 
   if (macroResult.status === "rejected") {
-    console.error("[fund-detail-kiyas] macro buckets failed", macroResult.reason);
+    console.warn("[fund-detail-kiyas] macro buckets degraded", macroResult.reason);
   }
   if (categoryResult.status === "rejected") {
-    console.error("[fund-detail-kiyas] category averages failed", categoryResult.reason);
+    console.warn("[fund-detail-kiyas] category averages degraded", categoryResult.reason);
   }
 
   const rowsByRef: Record<string, KiyasPeriodRow[]> = {};

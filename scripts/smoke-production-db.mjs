@@ -1,8 +1,55 @@
 const baseUrl = (process.env.SMOKE_BASE_URL || "https://www.yatirim.io").replace(/\/+$/, "");
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
 const compareMaxMs = Number(process.env.SMOKE_COMPARE_MAX_MS || 5000);
+const pageMaxMs = Number(process.env.SMOKE_PAGE_MAX_MS || 6000);
+const scoresMaxMs = Number(process.env.SMOKE_SCORES_MAX_MS || 4500);
 
 const checks = [
+  {
+    name: "homepage",
+    path: "/",
+    type: "text",
+    maxMs: pageMaxMs,
+    validateText(body) {
+      return body.includes("Yatirim.io") && body.includes("Fonlar") && body.includes("/_next/static/");
+    },
+  },
+  {
+    name: "fund-vga",
+    path: "/fund/VGA",
+    type: "text",
+    maxMs: pageMaxMs,
+    validateText(body) {
+      return body.includes("Fon detayı") && body.includes("Son fiyat");
+    },
+  },
+  {
+    name: "fund-ti1",
+    path: "/fund/TI1",
+    type: "text",
+    maxMs: pageMaxMs,
+    validateText(body) {
+      return body.includes("Fon detayı") && body.includes("Son fiyat");
+    },
+  },
+  {
+    name: "fund-zp8",
+    path: "/fund/ZP8",
+    type: "text",
+    maxMs: pageMaxMs,
+    validateText(body) {
+      return body.includes("Fon detayı") && body.includes("Son fiyat");
+    },
+  },
+  {
+    name: "compare-page",
+    path: "/compare",
+    type: "text",
+    maxMs: pageMaxMs,
+    validateText(body) {
+      return body.includes("Karşılaştır") && body.includes("/_next/static/");
+    },
+  },
   {
     name: "health-light",
     path: "/api/health?mode=light",
@@ -26,6 +73,7 @@ const checks = [
   {
     name: "scores",
     path: "/api/funds/scores?mode=BEST",
+    maxMs: scoresMaxMs,
     validate(payload) {
       return Array.isArray(payload?.funds) && payload.funds.length > 0;
     },
@@ -118,10 +166,12 @@ for (const check of checks) {
   const marketDegraded = headers.get("x-market-degraded");
   const fundsDegraded = headers.get("x-funds-degraded");
   let payload = null;
-  try {
-    payload = body ? JSON.parse(body) : null;
-  } catch {
-    // handled by validate below
+  if (check.type !== "text") {
+    try {
+      payload = body ? JSON.parse(body) : null;
+    } catch {
+      // handled by validate below
+    }
   }
   const expectedStatus = check.expectedStatus ?? 200;
   const failureClasses = [dbFailure, compareFailure, compareSeriesFailure].filter(Boolean);
@@ -132,7 +182,12 @@ for (const check of checks) {
       .split(",")
       .every((item) => allowedFailureClasses.has(item));
   });
-  const shapeOk = typeof check.validate === "function" ? check.validate(payload, response) : true;
+  const shapeOk =
+    typeof check.validateText === "function"
+      ? check.validateText(body, response)
+      : typeof check.validate === "function"
+        ? check.validate(payload, response)
+        : true;
   const latencyOk = !check.maxMs || durationMs <= check.maxMs;
 
   const unhealthy =

@@ -1,11 +1,11 @@
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 
 const routeChecks = [
-  { path: "/", mustInclude: ["Yatirim.io", "Fonlar"] },
-  { path: "/compare", mustInclude: ["Karşılaştır"] },
-  { path: "/fund/VGA", mustInclude: ["Fon detayı", "Son fiyat", "Portföy"] },
-  { path: "/fund/TI1", mustInclude: ["Fon detayı", "Son fiyat"] },
-  { path: "/fund/ZP8", mustInclude: ["Fon detayı", "Son fiyat"] },
+  { path: "/", mustInclude: ["Yatirim.io", "Fonlar"], maxMs: 6000 },
+  { path: "/compare", mustInclude: ["Karşılaştır"], maxMs: 5000 },
+  { path: "/fund/VGA", mustInclude: ["Fon detayı", "Son fiyat", "Portföy"], maxMs: 6000 },
+  { path: "/fund/TI1", mustInclude: ["Fon detayı", "Son fiyat"], maxMs: 6000 },
+  { path: "/fund/ZP8", mustInclude: ["Fon detayı", "Son fiyat"], maxMs: 6000 },
 ];
 
 const FETCH_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
@@ -40,6 +40,11 @@ for (const check of routeChecks) {
       console.error(`[smoke:routes] ${check.path} missing token: ${token}`);
       failed = true;
     }
+  }
+  if (check.maxMs && durationMs > check.maxMs) {
+    console.error(`[smoke:routes] ${check.path} exceeded latency budget: ${durationMs}ms > ${check.maxMs}ms`);
+    failed = true;
+    continue;
   }
   console.log(`[smoke:routes] ${check.path} ok in ${durationMs}ms`);
 }

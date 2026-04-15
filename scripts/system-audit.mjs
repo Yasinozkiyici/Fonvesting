@@ -21,6 +21,8 @@ const checks = [
   { kind: "page", path: "/", maxMs: 5000, mustInclude: ["Yatirim.io", "Fonlar"], retry: 1 },
   { kind: "page", path: "/compare", maxMs: 5000, mustInclude: ["Karşılaştır"], retry: 1 },
   { kind: "page", path: "/fund/VGA", maxMs: 6000, mustInclude: ["Fon detayı", "Son fiyat"], retry: 1 },
+  { kind: "page", path: "/fund/TI1", maxMs: 6000, mustInclude: ["Fon detayı", "Son fiyat"], retry: 1 },
+  { kind: "page", path: "/fund/ZP8", maxMs: 6000, mustInclude: ["Fon detayı", "Son fiyat"], retry: 1 },
   // Edge case: invalid mode should degrade gracefully (not 5xx).
   { kind: "api", path: "/api/funds/scores?mode=INVALID_MODE&limit=150", maxMs: 5000, allow4xx: true, retry: 1 },
 ];
