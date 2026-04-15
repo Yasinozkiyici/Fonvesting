@@ -15,6 +15,7 @@ import {
   getFundDetailCoreServingUniversePayloads,
   type FundDetailCoreServingPayload,
 } from "@/lib/services/fund-detail-core-serving.service";
+import { optionalReferenceDegradation } from "@/lib/operational-hardening";
 import { readActiveRegistryFundByCodeWithMeta, type RegistryRow } from "@/lib/services/fund-registry-read.service";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +27,11 @@ const DAY_MS = 86_400_000;
 const MAX_REF_SNAPSHOT_LAG_DAYS = 1;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_SERIES_VERSION_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_VERSION_TIMEOUT_MS ?? "1000");
-const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "2200");
+const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_TIMEOUT_MS ?? "700");
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
+const COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS = Number(
+  process.env.COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS ?? "700"
+);
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "2600");
 const COMPARE_SERIES_BASE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_TIMEOUT_MS ?? "3200");
 const COMPARE_SERIES_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_REGISTRY_TIMEOUT_MS ?? "2200");
@@ -395,8 +399,9 @@ async function getCompareSeriesPayload(
   const shouldBuildCategoryFromUniverse = compareCodes.length > 0;
   const [macroByRef, servingUniverseResult] = await Promise.all([
     withTimeout(fetchMacro(anchor), COMPARE_SERIES_MACRO_TIMEOUT_MS, "compare_series_macro").catch((error) => {
-      degradedSources.push("macro");
-      failureClass.push(isTimeoutLike(error) ? "timeout" : "macro_failed");
+      const degraded = optionalReferenceDegradation("macro", { timeout: isTimeoutLike(error) });
+      degradedSources.push(degraded.degradedSource);
+      failureClass.push(degraded.failureClass);
       return {
         category: [],
         bist100: [],
@@ -407,9 +412,10 @@ async function getCompareSeriesPayload(
       };
     }),
     shouldBuildCategoryFromUniverse
-      ? getUniverse().catch((error) => {
-          degradedSources.push("category_universe");
-          failureClass.push(isTimeoutLike(error) ? "timeout" : "universe_failed");
+      ? withTimeout(getUniverse(), COMPARE_SERIES_CATEGORY_UNIVERSE_TIMEOUT_MS, "compare_series_category_universe").catch((error) => {
+          const degraded = optionalReferenceDegradation("category_universe", { timeout: isTimeoutLike(error) });
+          degradedSources.push(degraded.degradedSource);
+          failureClass.push(degraded.failureClass);
           return null;
         })
       : Promise.resolve(null),

@@ -12,6 +12,10 @@ import {
   type CompareContextDto,
 } from "@/lib/services/compare-reference.service";
 import { readServingPayloadForCompareSeries } from "@/lib/services/compare-series-resolution";
+import {
+  hasUsableCompareRows,
+  shouldUseFastCompareContextFallback,
+} from "@/lib/operational-hardening";
 import { readActiveRegistryFundsByCodes } from "@/lib/services/fund-registry-read.service";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +23,11 @@ export const runtime = "nodejs";
 
 const MAX = 4;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
-const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "2500");
-const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "3000");
-const COMPARE_SERVING_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_UNIVERSE_TIMEOUT_MS ?? "2500");
-const COMPARE_SERVING_CODE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_CODE_TIMEOUT_MS ?? "2200");
-const COMPARE_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_REGISTRY_TIMEOUT_MS ?? "2200");
+const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "1400");
+const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "900");
+const COMPARE_SERVING_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_UNIVERSE_TIMEOUT_MS ?? "1400");
+const COMPARE_SERVING_CODE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_CODE_TIMEOUT_MS ?? "1800");
+const COMPARE_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_REGISTRY_TIMEOUT_MS ?? "1800");
 
 type CompareFundRow = {
   fundId: string;
@@ -172,36 +176,6 @@ async function loadRowsFromSnapshot(codes: string[]): Promise<CompareFundRow[]> 
 
 async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
   const requested = new Set(codes.map((code) => code.trim().toUpperCase()));
-  const universe = await withTimeout(
-    getFundDetailCoreServingUniversePayloads(),
-    COMPARE_SERVING_UNIVERSE_TIMEOUT_MS,
-    "compare_serving_universe"
-  ).catch(() => null);
-  const rowsFromUniverse =
-    universe?.records
-      .filter((payload) => requested.has(payload.fund.code.trim().toUpperCase()))
-      .map((payload) => ({
-        fundId: payload.fund.fundId,
-        code: payload.fund.code,
-        name: payload.fund.name,
-        shortName: payload.fund.shortName,
-        logoUrl: payload.fund.logoUrl,
-        lastPrice: payload.latestPrice,
-        dailyReturn: payload.dailyChangePct,
-        monthlyReturn: payload.monthlyReturn,
-        yearlyReturn: payload.yearlyReturn,
-        portfolioSize: payload.portfolioSummary.current,
-        investorCount: payload.investorSummary.current,
-        categoryCode: payload.fund.categoryCode,
-        categoryName: payload.fund.categoryName,
-        fundTypeCode: payload.fund.fundTypeCode,
-        fundTypeName: payload.fund.fundTypeName,
-        categoryId: null,
-        isActive: true,
-        fallbackOnly: true,
-      })) ?? [];
-  if (rowsFromUniverse.length > 0) return rowsFromUniverse;
-
   const reads = await Promise.all(
     codes.map(async (code) => {
       try {
@@ -215,7 +189,7 @@ async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
       }
     })
   );
-  return reads
+  const rowsFromCodeReads = reads
     .map((read) => read.payload)
     .filter((payload): payload is NonNullable<(typeof reads)[number]["payload"]> => payload != null)
     .map((payload) => ({
@@ -238,6 +212,40 @@ async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
       isActive: true,
       fallbackOnly: true,
     }));
+  if (rowsFromCodeReads.length >= Math.min(codes.length, MAX)) return rowsFromCodeReads;
+
+  const foundCodes = new Set(rowsFromCodeReads.map((row) => row.code.trim().toUpperCase()));
+  const universe = await withTimeout(
+    getFundDetailCoreServingUniversePayloads(),
+    COMPARE_SERVING_UNIVERSE_TIMEOUT_MS,
+    "compare_serving_universe"
+  ).catch(() => null);
+  const rowsFromUniverse =
+    universe?.records
+      .filter((payload) => requested.has(payload.fund.code.trim().toUpperCase()))
+      .filter((payload) => !foundCodes.has(payload.fund.code.trim().toUpperCase()))
+      .map((payload) => ({
+        fundId: payload.fund.fundId,
+        code: payload.fund.code,
+        name: payload.fund.name,
+        shortName: payload.fund.shortName,
+        logoUrl: payload.fund.logoUrl,
+        lastPrice: payload.latestPrice,
+        dailyReturn: payload.dailyChangePct,
+        monthlyReturn: payload.monthlyReturn,
+        yearlyReturn: payload.yearlyReturn,
+        portfolioSize: payload.portfolioSummary.current,
+        investorCount: payload.investorSummary.current,
+        categoryCode: payload.fund.categoryCode,
+        categoryName: payload.fund.categoryName,
+        fundTypeCode: payload.fund.fundTypeCode,
+        fundTypeName: payload.fund.fundTypeName,
+        categoryId: null,
+        isActive: true,
+        fallbackOnly: true,
+      })) ?? [];
+
+  return [...rowsFromCodeReads, ...rowsFromUniverse];
 }
 
 async function loadRowsFromFundRegistry(codes: string[]): Promise<CompareFundRow[]> {
@@ -316,11 +324,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    let rows = await loadRowsFromSnapshot(codes).catch(() => []);
+    let rows = await loadRowsFromServing(codes).catch(() => []);
     let degradedSource: string | null = null;
+    if (rows.length > 0) degradedSource = "serving";
     if (rows.length === 0) {
-      rows = await loadRowsFromServing(codes).catch(() => []);
-      if (rows.length > 0) degradedSource = "serving";
+      rows = await loadRowsFromSnapshot(codes).catch(() => []);
     }
     if (rows.length === 0) {
       rows = await loadRowsFromFundRegistry(codes).catch(() => []);
@@ -330,10 +338,18 @@ export async function GET(req: NextRequest) {
     const activeRows = rows.filter((row) => row.isActive);
     const byCode = new Map(activeRows.map((row) => [row.code.trim().toUpperCase(), row]));
     const ordered = codes.map((code) => byCode.get(code)).filter(Boolean) as CompareFundRow[];
-    const contextOutcome = await loadContextForRows(ordered);
+    const contextOutcome = shouldUseFastCompareContextFallback(ordered)
+      ? {
+          compare: buildDegradedCompareContext(ordered.map((row) => row.code.trim().toUpperCase())),
+          extrasById: {},
+          degraded: true,
+          failureClass: "context_optional_skipped",
+        }
+      : await loadContextForRows(ordered);
     const compare = contextOutcome.compare;
     const extrasById = contextOutcome.extrasById;
     if (contextOutcome.degraded && !degradedSource) degradedSource = "context_fallback";
+    if (!hasUsableCompareRows(ordered)) degradedSource = degradedSource ?? "empty_or_unusable";
 
     const funds = ordered.map((it) => {
       const ex = extrasById[it.fundId] ?? {

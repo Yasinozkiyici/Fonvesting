@@ -3879,7 +3879,7 @@ async function getFundDetailPageDataUncached(
               }
             }
           } catch (error) {
-            console.error("[fund-detail] core_snapshot_series_query failed (serving upgrade)", error);
+            console.warn("[fund-detail] core_snapshot_series_query degraded (serving upgrade)", error);
             failedSteps.push("core_snapshot_series_query");
             degradedReasons.add("core_snapshot_series_query_failed");
           }
@@ -3979,7 +3979,7 @@ async function getFundDetailPageDataUncached(
           degradedReasons.add("core_snapshot_series_empty");
         }
       } catch (error) {
-        console.error("[fund-detail] core_snapshot_series_query failed", error);
+        console.warn("[fund-detail] core_snapshot_series_query degraded", error);
         failedSteps.push("core_snapshot_series_query");
         degradedReasons.add("core_snapshot_series_query_failed");
       }
@@ -4265,7 +4265,7 @@ async function getFundDetailPageDataUncached(
         steps.latest_snapshot_checkout_wait_ms = 0;
       }
     } catch (error) {
-      console.error("[fund-detail] latest_snapshot_query failed", error);
+      console.warn("[fund-detail] latest_snapshot_query degraded", error);
       failedSteps.push("latest_snapshot_query");
       degradedReasons.add("latest_snapshot_query_failed");
     }
@@ -4491,7 +4491,7 @@ async function getFundDetailPageDataUncached(
         historyFallbackUsed = true;
         historyServingSource = "miss";
         historyServingStalenessMs = -1;
-        console.error("[fund-detail] history_serving_read failed", error);
+        console.warn("[fund-detail] history_serving_read degraded", error);
         failedSteps.push("history_serving_read");
         degradedReasons.add("history_serving_read_failed");
       }

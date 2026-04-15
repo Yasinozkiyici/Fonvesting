@@ -13,6 +13,10 @@ import { resolveHealthDbFailureCategory } from "@/lib/health-db-diagnostics";
 import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
 import { getFundDetailCoreServingReadiness } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
+import {
+  filterExpectedHealthDiagnosticErrors,
+  healthDbPingFailureLogLevel,
+} from "@/lib/operational-hardening";
 
 export type SystemHealthStatus = "ok" | "degraded" | "error";
 export type SystemHealthIssueSeverity = "warning" | "error";
@@ -24,7 +28,7 @@ type HealthDbPingSource =
   | "cache_failed";
 
 const HEALTH_DB_PING_CACHE_TTL_MS = Number(process.env.HEALTH_DB_PING_CACHE_TTL_MS ?? "25000");
-const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_TTL_MS ?? "7000");
+const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_TTL_MS ?? "30000");
 const HEALTH_DB_PING_MAX_WAIT_MS = Number(process.env.HEALTH_DB_PING_MAX_WAIT_MS ?? "900");
 const HEALTH_DB_PING_TX_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_TX_TIMEOUT_MS ?? "1800");
 const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "3000");
@@ -608,15 +612,22 @@ export async function getSystemHealthSnapshot(options?: {
       classifiedFailureCategory: classifyDatabaseError(error).category,
     });
     const failureDetail = sanitizeFailureDetail(dbPing.failureDetail ?? formatError(error));
-    console.error("[health][database_ping_failed]", {
+    const logPayload = {
       failureCategory,
       failureDetail,
       envStatus: dbEnvStatus,
       pingSource: dbPing.source,
       pingMs: dbPing.ms,
       targetIdentity,
-    });
+      readPathOperational,
+    };
+    if (healthDbPingFailureLogLevel({ readPathOperational, failureCategory }) === "error") {
+      console.error("[health][database_ping_failed]", logPayload);
+    } else {
+      console.info("[health][database_ping_degraded]", logPayload);
+    }
     const lightReadPathOperational = lightweight && readPathOperational;
+    const returnedErrors = filterExpectedHealthDiagnosticErrors({ errors, readPathOperational });
 
     return {
       checkedAt,
@@ -694,7 +705,7 @@ export async function getSystemHealthSnapshot(options?: {
         dailySyncStatus: null,
       },
       issues,
-      errors,
+      errors: returnedErrors,
     };
   }
 
