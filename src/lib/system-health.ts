@@ -522,14 +522,12 @@ export async function getSystemHealthSnapshot(options?: {
       lastError: null,
     },
   };
-  if (!lightweight) {
-    try {
-      detailCoreServingReadiness = await getFundDetailCoreServingReadiness({
-        includeDbCacheCount: true,
-      });
-    } catch (error) {
-      errors.push(`detail_core_serving_readiness: ${formatError(error)}`);
-    }
+  try {
+    detailCoreServingReadiness = await getFundDetailCoreServingReadiness({
+      includeDbCacheCount: !lightweight,
+    });
+  } catch (error) {
+    errors.push(`detail_core_serving_readiness: ${formatError(error)}`);
   }
 
   let dbPing: HealthPingResult = {

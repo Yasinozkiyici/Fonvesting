@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl, readCompareDataVersion } from "@/lib/data-freshness";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchKiyasMacroBuckets } from "@/lib/services/fund-detail-kiyas.service";
@@ -28,6 +29,7 @@ const COMPARE_SERIES_MACRO_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_MACRO_
 const COMPARE_SERIES_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_UNIVERSE_TIMEOUT_MS ?? "2200");
 const COMPARE_SERIES_SECONDARY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SECONDARY_TIMEOUT_MS ?? "2600");
 const COMPARE_SERIES_BASE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_BASE_TIMEOUT_MS ?? "3200");
+const COMPARE_SERIES_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_REGISTRY_TIMEOUT_MS ?? "2200");
 
 type Point = { t: number; v: number };
 
@@ -64,6 +66,66 @@ type CompareSeriesBaseError = {
 };
 
 type CompareUniverseLike = Awaited<ReturnType<typeof getFundDetailCoreServingUniversePayloads>>;
+
+function buildSyntheticServingPayloadFromRegistry(input: {
+  fundId: string;
+  code: string;
+  name: string;
+  shortName: string | null;
+  logoUrl: string | null;
+  lastPrice: number;
+  dailyReturn: number;
+  portfolioSize: number;
+  investorCount: number;
+}): FundDetailCoreServingPayload {
+  const nowIso = new Date().toISOString();
+  return {
+    version: 1,
+    generatedAt: nowIso,
+    sourceDate: null,
+    fund: {
+      fundId: input.fundId,
+      code: input.code,
+      name: input.name,
+      shortName: input.shortName,
+      logoUrl: input.logoUrl,
+      categoryCode: null,
+      categoryName: null,
+      fundTypeCode: null,
+      fundTypeName: null,
+    },
+    latestSnapshotDate: null,
+    latestPrice: input.lastPrice,
+    dailyChangePct: input.dailyReturn,
+    monthlyReturn: 0,
+    yearlyReturn: 0,
+    snapshotAlpha: null,
+    riskLevel: null,
+    snapshotMetrics: {},
+    miniPriceSeries: [],
+    chartHistory: {
+      mode: "registry_fallback",
+      lookbackDays: LOOKBACK_DAYS,
+      minDate: null,
+      maxDate: null,
+      points: [],
+    },
+    investorSummary: {
+      current: Math.max(0, Math.round(input.investorCount)),
+      delta: null,
+      min: null,
+      max: null,
+      series: [],
+    },
+    portfolioSummary: {
+      current: input.portfolioSize > 0 ? input.portfolioSize : 0,
+      delta: null,
+      min: null,
+      max: null,
+      series: [],
+    },
+  };
+}
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -202,11 +264,46 @@ async function getCompareSeriesPayload(
   }));
 
   let baseFund: FundDetailCoreServingPayload | null = baseRead.payload;
+  let baseFromRegistryFallback = false;
   if (!baseFund) {
     try {
       baseFund = findFromUniverse(baseCode, await getUniverse());
     } catch {
       // universe read failure below transient class branch'inde ele alınır
+    }
+  }
+  if (!baseFund) {
+    const registryRow = await withTimeout(
+      prisma.fund.findFirst({
+        where: { code: baseCode, isActive: true },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          shortName: true,
+          logoUrl: true,
+          lastPrice: true,
+          dailyReturn: true,
+          portfolioSize: true,
+          investorCount: true,
+        },
+      }),
+      COMPARE_SERIES_REGISTRY_TIMEOUT_MS,
+      "compare_series_registry_base"
+    ).catch(() => null);
+    if (registryRow) {
+      baseFund = buildSyntheticServingPayloadFromRegistry({
+        fundId: registryRow.id,
+        code: registryRow.code,
+        name: registryRow.name,
+        shortName: registryRow.shortName,
+        logoUrl: registryRow.logoUrl,
+        lastPrice: registryRow.lastPrice,
+        dailyReturn: registryRow.dailyReturn,
+        portfolioSize: registryRow.portfolioSize,
+        investorCount: registryRow.investorCount,
+      });
+      baseFromRegistryFallback = true;
     }
   }
   if (!baseFund) {
@@ -225,7 +322,7 @@ async function getCompareSeriesPayload(
     return { error: "base_not_found", failureClass: [] };
   }
   const failureClass: string[] = [];
-  const degradedSources: string[] = [];
+  const degradedSources: string[] = baseFromRegistryFallback ? ["base_registry"] : [];
   const baseSnapshotMs = Date.parse(baseFund.latestSnapshotDate ?? "");
   const selectedReads = await Promise.all(
     compareCodes.map(async (code) => {

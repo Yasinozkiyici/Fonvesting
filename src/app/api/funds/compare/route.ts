@@ -22,6 +22,7 @@ const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? 
 const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "3000");
 const COMPARE_SERVING_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_UNIVERSE_TIMEOUT_MS ?? "2500");
 const COMPARE_SERVING_CODE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_CODE_TIMEOUT_MS ?? "2200");
+const COMPARE_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_REGISTRY_TIMEOUT_MS ?? "2200");
 
 type CompareFundRow = {
   fundId: string;
@@ -238,6 +239,50 @@ async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
     }));
 }
 
+async function loadRowsFromFundRegistry(codes: string[]): Promise<CompareFundRow[]> {
+  const rows = await withTimeout(
+    prisma.fund.findMany({
+      where: {
+        code: { in: codes },
+        isActive: true,
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        shortName: true,
+        logoUrl: true,
+        lastPrice: true,
+        dailyReturn: true,
+        portfolioSize: true,
+        investorCount: true,
+      },
+    }),
+    COMPARE_REGISTRY_TIMEOUT_MS,
+    "compare_registry_rows"
+  ).catch(() => []);
+  return rows.map((row) => ({
+    fundId: row.id,
+    code: row.code,
+    name: row.name,
+    shortName: row.shortName,
+    logoUrl: row.logoUrl,
+    lastPrice: row.lastPrice,
+    dailyReturn: row.dailyReturn,
+    monthlyReturn: 0,
+    yearlyReturn: 0,
+    portfolioSize: row.portfolioSize,
+    investorCount: row.investorCount,
+    categoryCode: null,
+    categoryName: null,
+    fundTypeCode: null,
+    fundTypeName: null,
+    categoryId: null,
+    isActive: true,
+    fallbackOnly: true,
+  }));
+}
+
 async function loadContextForRows(rows: CompareFundRow[]): Promise<ContextLoadOutcome> {
   const orderedCodes = rows.map((row) => row.code.trim().toUpperCase());
   const internal = rows.map((it) => ({
@@ -291,6 +336,10 @@ export async function GET(req: NextRequest) {
     if (rows.length === 0) {
       rows = await loadRowsFromServing(codes).catch(() => []);
       if (rows.length > 0) degradedSource = "serving";
+    }
+    if (rows.length === 0) {
+      rows = await loadRowsFromFundRegistry(codes).catch(() => []);
+      if (rows.length > 0) degradedSource = "registry";
     }
 
     const activeRows = rows.filter((row) => row.isActive);

@@ -43,7 +43,11 @@ export function getEffectiveDatabaseUrl(): string {
     // - üretimde kontrollü (serverless connection storm riskini azaltmak için)
     const limit = (process.env.DATABASE_CONNECTION_LIMIT ?? "").trim();
     const desiredDefault =
-      process.env.NODE_ENV === "development" ? "12" : isSupabasePooler ? "10" : "6";
+      process.env.NODE_ENV === "development"
+        ? "12"
+        : isSupabasePooler
+          ? "3"
+          : "5";
     const desired = limit || desiredDefault;
     const current = url.searchParams.get("connection_limit")?.trim();
     if (!current) {
@@ -53,12 +57,12 @@ export function getEffectiveDatabaseUrl(): string {
     // Fail-fast: health/jobs endpoint'leri event-loop'u kilitlemesin.
     // URL'de daha uzun süre tanımlıysa override ederiz.
     const connectTimeout = Number(url.searchParams.get("connect_timeout") ?? "");
-    if (!Number.isFinite(connectTimeout) || connectTimeout <= 0 || connectTimeout > 6) {
-      url.searchParams.set("connect_timeout", "6");
+    if (!Number.isFinite(connectTimeout) || connectTimeout <= 0 || connectTimeout > 15) {
+      url.searchParams.set("connect_timeout", "10");
     }
     const poolTimeout = Number(url.searchParams.get("pool_timeout") ?? "");
-    if (!Number.isFinite(poolTimeout) || poolTimeout <= 0 || poolTimeout > 8) {
-      url.searchParams.set("pool_timeout", "8");
+    if (!Number.isFinite(poolTimeout) || poolTimeout <= 0 || poolTimeout > 20) {
+      url.searchParams.set("pool_timeout", "15");
     }
 
     return url.toString();
