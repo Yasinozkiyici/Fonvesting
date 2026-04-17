@@ -287,6 +287,7 @@ export default function ScoredFundsTable({
   const [bootstrapRetryTick, setBootstrapRetryTick] = useState(0);
   const firstRowsProbeRef = useRef<{ mode: RankingMode; startedAt: number; logged: boolean } | null>(null);
   const initialScopeRefreshDoneRef = useRef(false);
+  const latestRequestIdRef = useRef(0);
   const [lastScoresMeta, setLastScoresMeta] = useState<{
     degraded: string;
     source: string;
@@ -295,6 +296,13 @@ export default function ScoredFundsTable({
     degraded: "",
     source: "",
     emptyResult: "",
+  });
+  const [lastDiscoveryHealth, setLastDiscoveryHealth] = useState({
+    overall: "unknown",
+    scope: "unknown",
+    completeness: "unknown",
+    freshness: "unknown",
+    request: "unknown",
   });
   const [bootstrapSource, setBootstrapSource] = useState<BootstrapSource>(() => {
     if (seededInitialData && seededInitialData.funds.length > 0) return "ssr";
@@ -510,6 +518,9 @@ export default function ScoredFundsTable({
       return;
     }
     const controller = new AbortController();
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+    const isLatestRequest = (): boolean => latestRequestIdRef.current === requestId;
     if (!cachedMatchesScope) setLoading(true);
     setError(null);
     setBootstrapFallbackActive(false);
@@ -567,7 +578,7 @@ export default function ScoredFundsTable({
         SCORES_CORE_ROWS_FALLBACK_TIMEOUT_MS
       )
         .then(({ data }) => {
-          if (controller.signal.aborted || scoresResolved) return;
+          if (controller.signal.aborted || scoresResolved || !isLatestRequest()) return;
           if (!data || !Array.isArray(data.items) || data.items.length === 0) return;
           const corePayload = mapFundsPayloadToScoredResponse(rankingMode, data);
           setModePayloads((previous) => {
@@ -611,6 +622,12 @@ export default function ScoredFundsTable({
       timeoutMs
     )
       .then(({ data: json, headers, status, rawBytes }) => {
+        if (!isLatestRequest()) {
+          console.info(
+            `[scores-table] stale_response_discarded mode=${rankingMode} request_id=${requestId} latest_request_id=${latestRequestIdRef.current}`
+          );
+          return;
+        }
         scoresResolved = true;
         const previousRows = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
         const fallbackRows = lastGoodPayload?.funds.length ?? 0;
@@ -621,6 +638,20 @@ export default function ScoredFundsTable({
         const emptyResultHeader = headerValue(headers, "x-scores-empty-result");
         const discoverServerCount = headerValue(headers, "x-discover-server-result-count");
         const discoverUniverseTotal = headerValue(headers, "x-discover-universe-total");
+        const responseRequestKey = headerValue(headers, "x-discovery-request-key");
+        if (responseRequestKey && responseRequestKey !== currentFetchScopeKey) {
+          console.info(
+            `[scores-table] scope_mismatch_discarded mode=${rankingMode} request_key=${responseRequestKey} expected=${currentFetchScopeKey}`
+          );
+          return;
+        }
+        setLastDiscoveryHealth({
+          overall: headerValue(headers, "x-discovery-overall-health") || "unknown",
+          scope: headerValue(headers, "x-discovery-scope-health") || "unknown",
+          completeness: headerValue(headers, "x-discovery-completeness-health") || "unknown",
+          freshness: headerValue(headers, "x-discovery-freshness-health") || "unknown",
+          request: headerValue(headers, "x-discovery-request-health") || "unknown",
+        });
         setLastScoresMeta({
           degraded: degradedHeader,
           source: sourceHeader,
@@ -721,6 +752,7 @@ export default function ScoredFundsTable({
       })
       .catch((cause) => {
         if (cause instanceof DOMException && cause.name === "AbortError") return;
+        if (!isLatestRequest()) return;
         scoresResolved = true;
         const previousRows = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
         const fallbackRows = lastGoodPayload?.funds.length ?? 0;
@@ -774,6 +806,7 @@ export default function ScoredFundsTable({
         );
       })
       .finally(() => {
+        if (!isLatestRequest()) return;
         if (!controller.signal.aborted) {
           if (needsInitialScopeRefresh) initialScopeRefreshDoneRef.current = true;
           setLoading(false);
@@ -1240,6 +1273,11 @@ export default function ScoredFundsTable({
       data-discovery-category={category || "all"}
       data-discovery-theme={activeTheme ?? "none"}
       data-discovery-visible-count={filteredFunds.length}
+      data-discovery-overall-health={lastDiscoveryHealth.overall}
+      data-discovery-scope-health={lastDiscoveryHealth.scope}
+      data-discovery-completeness-health={lastDiscoveryHealth.completeness}
+      data-discovery-freshness-health={lastDiscoveryHealth.freshness}
+      data-discovery-request-health={lastDiscoveryHealth.request}
     >
       <header
         className="fund-table-chrome border-b px-3 py-2 sm:px-4 sm:py-2.5 md:py-2.5"

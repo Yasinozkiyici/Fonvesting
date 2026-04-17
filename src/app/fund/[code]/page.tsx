@@ -109,6 +109,12 @@ export default async function FundDetailPage({ params }: Props) {
       <Header />
 
       <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 pb-20 max-md:pb-[max(6.75rem,calc(5.25rem+env(safe-area-inset-bottom,0px)))] sm:px-6 sm:py-5 md:pb-9 lg:px-8 lg:pb-10">
+        <div
+          className="sr-only"
+          data-detail-overall-health={data.overallDetailHealth?.overallDetailHealth ?? "unknown"}
+          data-detail-reliability-class={data.overallDetailHealth?.reliabilityClass ?? data.degraded?.reliabilityClass ?? "unknown"}
+          data-detail-trust-final={data.overallDetailHealth?.trustAsFinal ? "1" : "0"}
+        />
         <FundDetailAutoRecover
           fundCode={data.fund.code}
           degraded={Boolean(data.degraded?.active)}

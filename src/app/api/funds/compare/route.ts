@@ -56,6 +56,15 @@ type ContextLoadOutcome = {
   degraded: boolean;
   failureClass: string | null;
 };
+function deriveCompareHealth(input: {
+  rowsUsable: boolean;
+  degradedSource: string | null;
+  contextDegraded: boolean;
+}): { compareHealth: "healthy" | "degraded" | "invalid"; trustAsFinal: boolean } {
+  if (!input.rowsUsable) return { compareHealth: "invalid", trustAsFinal: false };
+  if (input.degradedSource || input.contextDegraded) return { compareHealth: "degraded", trustAsFinal: false };
+  return { compareHealth: "healthy", trustAsFinal: true };
+}
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -349,7 +358,13 @@ export async function GET(req: NextRequest) {
     const compare = contextOutcome.compare;
     const extrasById = contextOutcome.extrasById;
     if (contextOutcome.degraded && !degradedSource) degradedSource = "context_fallback";
-    if (!hasUsableCompareRows(ordered)) degradedSource = degradedSource ?? "empty_or_unusable";
+    const rowsUsable = hasUsableCompareRows(ordered);
+    if (!rowsUsable) degradedSource = degradedSource ?? "empty_or_unusable";
+    const compareHealth = deriveCompareHealth({
+      rowsUsable,
+      degradedSource,
+      contextDegraded: contextOutcome.degraded,
+    });
 
     const funds = ordered.map((it) => {
       const ex = extrasById[it.fundId] ?? {
@@ -389,6 +404,8 @@ export async function GET(req: NextRequest) {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           ...(degradedSource ? { "X-Compare-Degraded-Source": degradedSource } : {}),
           ...(contextOutcome.failureClass ? { "X-Compare-Failure-Class": contextOutcome.failureClass } : {}),
+          "X-Compare-Health": compareHealth.compareHealth,
+          "X-Compare-Trust-Final": compareHealth.trustAsFinal ? "1" : "0",
         },
       }
     );

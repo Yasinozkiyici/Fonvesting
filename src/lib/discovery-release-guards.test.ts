@@ -28,6 +28,11 @@ test("scores route runtime cache key is scoped by query and theme", () => {
     /if \(payload\.funds\.length > 0 && nextCacheState !== "stale"\) {\s*state\.cache\.set\(key/s,
     "scoped fallback payloads must not be written before final query/theme filtering"
   );
+  assert.match(source, /X-Discovery-Reliability-Class/);
+  assert.match(source, /X-Discovery-Scope-Aligned/);
+  assert.match(source, /deriveDiscoveryHealth\(/);
+  assert.match(source, /X-Discovery-Overall-Health/);
+  assert.match(source, /X-Discovery-Request-Key/);
 });
 
 test("scores route does not short-circuit filtered requests to funds-list fallback before snapshot", () => {
@@ -54,6 +59,7 @@ test("discovery UI exposes stable invisible hooks for release smoke", () => {
   assert.match(home, /data-discovery-secondary-option=/);
   assert.match(table, /data-discovery-result-list="true"/);
   assert.match(table, /data-discovery-empty-state=/);
+  assert.match(table, /scope_mismatch_discarded/);
   assert.match(row, /data-discovery-row="true"/);
 });
 

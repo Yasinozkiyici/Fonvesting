@@ -44,6 +44,16 @@ import { detailEnrichmentDbFailureLogLevel } from "@/lib/operational-hardening";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { shouldDropServingRowForUniverseLag } from "@/lib/services/fund-detail-serving-lag";
 import { getFundsPage } from "@/lib/services/fund-list.service";
+import { orchestrateDetailPayload } from "@/lib/services/fund-detail-orchestrator";
+import {
+  type FundDataReliabilityClass,
+} from "@/lib/fund-data-reliability";
+import {
+  inferDetailCacheKind,
+  resolveDetailCachePolicy,
+  shouldWriteDetailCache,
+  withDetailDegradedPayload,
+} from "@/lib/services/fund-detail-cache-policy";
 
 const DAY_MS = 86400000;
 const DETAIL_HISTORY_LOOKBACK_DAYS = parseEnvMs("FUND_DETAIL_HISTORY_LOOKBACK_DAYS", 1095, 120, 1095);
@@ -1072,6 +1082,22 @@ export type FundDetailPageData = {
     reasons: string[];
     failedSteps: string[];
     generatedAt: string;
+    reliabilityClass?: FundDataReliabilityClass;
+    canTrustAsFinal?: boolean;
+    sourceTier?: "canonical" | "serving" | "snapshot" | "fallback";
+  };
+  detailHealth?: {
+    chartHealth: "healthy" | "degraded" | "invalid";
+    investorTrendHealth: "healthy" | "degraded" | "invalid";
+    fundSizeTrendHealth: "healthy" | "degraded" | "invalid";
+    compareHealth: "healthy" | "degraded" | "invalid";
+    alternativesHealth: "healthy" | "degraded" | "invalid";
+  };
+  overallDetailHealth?: {
+    overallDetailHealth: "healthy" | "degraded" | "invalid";
+    trustAsFinal: boolean;
+    reliabilityClass: FundDataReliabilityClass;
+    reasons: string[];
   };
 };
 
@@ -1238,13 +1264,15 @@ function pickStaleDetailCache(code: string): DetailCacheEntry | null {
 }
 
 function resolveCachePolicy(kind: DetailCacheKind): { freshTtlMs: number; staleTtlMs: number } {
-  if (kind === "emergency") {
-    return { freshTtlMs: DETAIL_EMERGENCY_FRESH_TTL_MS, staleTtlMs: DETAIL_EMERGENCY_STALE_TTL_MS };
-  }
-  if (kind === "core_degraded") {
-    return { freshTtlMs: DETAIL_DEGRADED_FRESH_TTL_MS, staleTtlMs: DETAIL_DEGRADED_STALE_TTL_MS };
-  }
-  return { freshTtlMs: DETAIL_FRESH_TTL_MS, staleTtlMs: DETAIL_STALE_TTL_MS };
+  return resolveDetailCachePolicy(kind, {
+    freshTtlMs: DETAIL_FRESH_TTL_MS,
+    staleTtlMs: DETAIL_STALE_TTL_MS,
+    degradedFreshTtlMs: DETAIL_DEGRADED_FRESH_TTL_MS,
+    degradedStaleTtlMs: DETAIL_DEGRADED_STALE_TTL_MS,
+    emergencyFreshTtlMs: DETAIL_EMERGENCY_FRESH_TTL_MS,
+    emergencyStaleTtlMs: DETAIL_EMERGENCY_STALE_TTL_MS,
+    chartPartialMinPoints: DETAIL_CHART_PARTIAL_MIN_POINTS,
+  });
 }
 
 function hasRequiredCoreData(payload: FundDetailPageData): boolean {
@@ -1261,6 +1289,15 @@ function hasRequiredCoreData(payload: FundDetailPageData): boolean {
     payload.trendSeries.investorCount.length >= 2 &&
     payload.trendSeries.portfolioSize.length >= 2
   );
+}
+
+function hasMeaningfulAlternatives(payload: FundDetailPageData): boolean {
+  const ownCode = payload.fund.code.trim().toUpperCase();
+  return payload.similarFunds.some((item) => {
+    const code = item.code?.trim().toUpperCase();
+    if (!code || code === ownCode) return false;
+    return Boolean(item.name?.trim() || item.shortName?.trim());
+  });
 }
 
 function hasOptionalEnrichment(payload: FundDetailPageData): boolean {
@@ -1289,23 +1326,14 @@ function normalizeSimilarFundsForRender(
 }
 
 function inferCacheKind(payload: FundDetailPageData): DetailCacheKind {
-  const reasons = payload.degraded?.reasons ?? [];
-  const hasEmergencyReason = reasons.some((reason) => reason.includes("emergency"));
-  if (hasEmergencyReason || (!payload.snapshotDate && payload.priceSeries.length === 0)) {
-    return "emergency";
-  }
-  const sectionStates = deriveFundDetailSectionStates(payload);
-  const coreHealthy =
-    sectionStates.performance === "full" &&
-    sectionStates.trends !== "no_data" &&
-    payload.priceSeries.length >= DETAIL_CHART_PARTIAL_MIN_POINTS;
-  const optionalRefreshNeeded = needsPhase2OptionalRefresh(payload);
-  if (hasOptionalEnrichment(payload) && !optionalRefreshNeeded && !payload.degraded?.active && coreHealthy) {
-    return "full_optional_enriched";
-  }
-  if (!coreHealthy) return "core_degraded";
-  if (hasRequiredCoreData(payload)) return payload.degraded?.active ? "core_degraded" : "core_full";
-  return "core_degraded";
+  return inferDetailCacheKind(
+    payload,
+    {
+      hasOptionalEnrichment,
+      needsPhase2OptionalRefresh,
+    },
+    { chartPartialMinPoints: DETAIL_CHART_PARTIAL_MIN_POINTS }
+  );
 }
 
 function writeDetailCache(
@@ -1368,25 +1396,7 @@ function shouldWriteCache(
   incoming: DetailCacheKind,
   incomingPayload: FundDetailPageData
 ): boolean {
-  if (!existing) return true;
-  const incomingSnapshotTs = incomingPayload.snapshotDate ? new Date(incomingPayload.snapshotDate).getTime() : Number.NaN;
-  const existingSnapshotTs = existing.payload.snapshotDate ? new Date(existing.payload.snapshotDate).getTime() : Number.NaN;
-  const incomingSnapshotOk = Number.isFinite(incomingSnapshotTs);
-  const existingSnapshotOk = Number.isFinite(existingSnapshotTs);
-  // Aynı kalite sınıfında dahi daha güncel snapshot her zaman kazanmalı.
-  if (incomingSnapshotOk && existingSnapshotOk) {
-    if (incomingSnapshotTs > existingSnapshotTs) return true;
-    if (incomingSnapshotTs < existingSnapshotTs) return false;
-  } else if (incomingSnapshotOk && !existingSnapshotOk) {
-    return true;
-  } else if (!incomingSnapshotOk && existingSnapshotOk) {
-    return false;
-  }
-  const incomingPriority = cacheKindPriority(incoming);
-  const existingPriority = cacheKindPriority(existing.kind);
-  if (incomingPriority > existingPriority) return true;
-  if (incomingPriority < existingPriority) return false;
-  return payloadCacheQualityScore(incomingPayload) >= payloadCacheQualityScore(existing.payload);
+  return shouldWriteDetailCache(existing, incoming, incomingPayload);
 }
 
 /**
@@ -1419,18 +1429,7 @@ function withDegradedPayload(
   payload: FundDetailPageData,
   input: { stale: boolean; partial: boolean; reasons: string[]; failedSteps: string[] }
 ): FundDetailPageData {
-  const material = hasMaterialDetailDegradeSignals(input.reasons, input.failedSteps);
-  return {
-    ...payload,
-    degraded: {
-      active: material,
-      stale: input.stale,
-      partial: material && input.partial,
-      reasons: input.reasons,
-      failedSteps: input.failedSteps,
-      generatedAt: new Date().toISOString(),
-    },
-  };
+  return withDetailDegradedPayload(payload, input);
 }
 
 function shouldLogFundDetailDebug(code: string): boolean {
@@ -5814,6 +5813,15 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
   const fresh = pickFreshDetailCache(normalizedCode);
   const stale = pickStaleDetailCache(normalizedCode);
   const cacheReadMs = Date.now() - cacheReadStartedAt;
+  const finalizePayload = (payload: FundDetailPageData | null): FundDetailPageData | null => {
+    if (!payload) return null;
+    const orchestrated = orchestrateDetailPayload(payload);
+    return {
+      ...orchestrated.payload,
+      detailHealth: orchestrated.sectionHealth,
+      overallDetailHealth: orchestrated.overall,
+    } as FundDetailPageData;
+  };
 
   const startBackgroundRefresh = (trigger: string, refreshPhase: "phase1" | "phase2"): void => {
     const now = Date.now();
@@ -5950,7 +5958,7 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
       `[fund-detail-cache] code=${normalizedCode} hit=fresh read_ms=${cacheReadMs} ` +
         `served_cache_kind=${servedKind} cache_ttl_used=${fresh.freshTtlMs}/${fresh.staleTtlMs} total_ms=${Date.now() - startedAt}`
     );
-    return fresh.payload;
+    return finalizePayload(fresh.payload);
   }
 
   const now = Date.now();
@@ -6017,7 +6025,7 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
         `cooldown_ms=${Math.max(0, blockedUntil - now)} served_cache_kind=${servedKind} ` +
         `cache_ttl_used=${stale.freshTtlMs}/${stale.staleTtlMs} total_ms=${Date.now() - startedAt}`
     );
-    return payload;
+    return finalizePayload(payload);
   }
 
   if (existingInFlight) {
@@ -6041,7 +6049,7 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
         `[fund-detail-cache] code=${normalizedCode} hit=inflight-budget-emergency timeout_ms=${DETAIL_TOTAL_BUDGET_MS} total_ms=${Date.now() - startedAt}`
       );
     }
-    return result;
+    return finalizePayload(result);
   }
 
   const loader = createLoader();
@@ -6066,5 +6074,5 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
       `[fund-detail-cache] code=${normalizedCode} hit=budget-emergency timeout_ms=${DETAIL_TOTAL_BUDGET_MS} total_ms=${Date.now() - startedAt}`
     );
   }
-  return result;
+  return finalizePayload(result);
 }

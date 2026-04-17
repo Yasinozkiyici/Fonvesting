@@ -92,12 +92,19 @@ type CompareSeriesBuildResult = {
   degraded: boolean;
   degradedSources: string[];
   failureClass: string[];
+  health: {
+    baseSeriesHealth: "healthy" | "invalid";
+    compareSeriesHealth: "healthy" | "degraded" | "invalid";
+    trustAsFinal: boolean;
+  };
 };
 
 type CompareSeriesBaseError = {
   error: "base_not_found" | "base_temporarily_unavailable";
   failureClass: string[];
 };
+const MIN_BASE_SERIES_POINTS = 30;
+const MIN_SECONDARY_SERIES_POINTS = 8;
 
 type CompareUniverseLike = Awaited<ReturnType<typeof getFundDetailCoreServingUniversePayloads>>;
 type MacroBuckets = Awaited<ReturnType<typeof fetchKiyasMacroBuckets>>;
@@ -623,11 +630,25 @@ async function getCompareSeriesPayload(
       policy: "Faiz / Para Piyasası Eşiği",
     },
   };
+  const baseSeriesPoints = payload.fundSeries[0]?.series.length ?? 0;
+  const secondaryPointSet = payload.fundSeries.slice(1).map((item) => item.series.length);
+  const lowSecondary = secondaryPointSet.some((count) => count < MIN_SECONDARY_SERIES_POINTS);
+  const baseHealthy = baseSeriesPoints >= MIN_BASE_SERIES_POINTS;
+  const compareSeriesHealth: "healthy" | "degraded" | "invalid" = !baseHealthy
+    ? "invalid"
+    : lowSecondary || degradedSources.length > 0 || failureClass.length > 0
+      ? "degraded"
+      : "healthy";
   return {
     payload,
     degraded: degradedSources.length > 0 || failureClass.length > 0,
     degradedSources: [...new Set(degradedSources)],
     failureClass: [...new Set(failureClass)],
+    health: {
+      baseSeriesHealth: baseHealthy ? "healthy" : "invalid",
+      compareSeriesHealth,
+      trustAsFinal: compareSeriesHealth === "healthy",
+    },
   } as CompareSeriesBuildResult;
 }
 
@@ -675,6 +696,9 @@ export async function GET(req: NextRequest) {
           ...(result.failureClass.length
             ? { "X-Compare-Series-Failure-Class": result.failureClass.join(",") }
             : {}),
+          "X-Compare-Series-Base-Health": result.health.baseSeriesHealth,
+          "X-Compare-Series-Health": result.health.compareSeriesHealth,
+          "X-Compare-Series-Trust-Final": result.health.trustAsFinal ? "1" : "0",
         },
       }
     );

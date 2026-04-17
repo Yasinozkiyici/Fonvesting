@@ -12,6 +12,11 @@ import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { fundMatchesTheme, parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
 import { getFundDetailCoreServingUniversePayloads } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
+import {
+  evaluateDiscoveryReliability,
+  reliabilitySourceFromDiscoverySource,
+} from "@/lib/fund-data-reliability";
+import { deriveDiscoveryHealth } from "@/lib/discovery-orchestrator";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -95,6 +100,17 @@ function responseScoresKey(
   const normalizedQuery = normalizeScoresScopePart(queryTrim);
   if (!normalizedQuery && !theme) return base;
   return `${base}|theme:${theme ?? "none"}|q:${normalizedQuery || "none"}`;
+}
+
+function requestScopeKey(
+  mode: RankingMode,
+  categoryCode: string,
+  queryTrim: string,
+  theme: FundThemeId | null
+): string {
+  return `${mode}|${categoryCode.trim().toUpperCase() || "all"}|${theme ?? "none"}|q:${
+    normalizeScoresScopePart(queryTrim) || "none"
+  }`;
 }
 
 function filterScoresPayloadByTheme(payload: ScoresApiPayload, theme: FundThemeId | null): ScoresApiPayload {
@@ -501,6 +517,7 @@ export async function GET(request: NextRequest) {
   const limit = parseLimit(searchParams);
   const isCriticalBestAllPath = mode === "BEST" && !categoryCode && !queryTrim && !theme;
   const key = responseScoresKey(mode, categoryCode, limit, queryTrim, theme);
+  const scopeRequestKey = requestScopeKey(mode, categoryCode, queryTrim, theme);
   const state = getScoresRouteState();
 
   let cacheState: "hit" | "miss" | "dedupe" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "miss";
@@ -730,6 +747,30 @@ export async function GET(request: NextRequest) {
   const durationMs = Date.now() - startedAt;
   const emptyResultKind =
     payload.funds.length === 0 ? (degradedReason ? "degraded" : "valid") : null;
+  const discoveryHealth = deriveDiscoveryHealth({
+    payload,
+    scope: {
+      mode,
+      categoryCode,
+      theme,
+      queryTrim,
+    },
+    source,
+    degradedReason,
+    failureClass,
+    stale: (degradedReason ?? "").includes("stale"),
+    requestConsistent: true,
+  });
+  const scopeAligned = discoveryHealth.scopeHealth === "healthy";
+  const reliability = evaluateDiscoveryReliability({
+    sourceTier: reliabilitySourceFromDiscoverySource(source),
+    stale: (degradedReason ?? "").includes("stale"),
+    rows: payload.funds.length,
+    total: payload.total,
+    scopeAligned,
+    degradedReason,
+    failureClass,
+  });
   if (payload.funds.length > 0 && String(cacheState) !== "stale") {
     state.cache.set(key, { payload, updatedAt: Date.now() });
   }
@@ -766,6 +807,17 @@ export async function GET(request: NextRequest) {
       ...(emptyResultKind ? { "X-Scores-Empty-Result": emptyResultKind } : {}),
       ...(degradedReason ? { "X-Scores-Degraded": degradedReason } : {}),
       ...(failureClass ? { "X-Scores-Failure-Class": failureClass } : {}),
+      "X-Discovery-Reliability-Class": discoveryHealth.reliabilityClass,
+      "X-Discovery-Trust-Final": discoveryHealth.trustAsFinal ? "1" : "0",
+      "X-Discovery-Scope-Aligned": scopeAligned ? "1" : "0",
+      "X-Discovery-Source-Tier": reliability.sourceTier,
+      "X-Discovery-Reliability-Reasons": discoveryHealth.reasons.join(",") || "none",
+      "X-Discovery-Scope-Health": discoveryHealth.scopeHealth,
+      "X-Discovery-Completeness-Health": discoveryHealth.resultCompletenessHealth,
+      "X-Discovery-Freshness-Health": discoveryHealth.freshnessHealth,
+      "X-Discovery-Request-Health": discoveryHealth.requestConsistencyHealth,
+      "X-Discovery-Overall-Health": discoveryHealth.overallDiscoveryHealth,
+      "X-Discovery-Request-Key": scopeRequestKey,
     },
   });
 }
