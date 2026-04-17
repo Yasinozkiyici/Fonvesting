@@ -88,7 +88,8 @@ const DETAIL_ALTERNATIVES_FUNDS_LIST_FALLBACK_TIMEOUT_MS = parseEnvMs(
   3_000
 );
 const DETAIL_CORE_SNAPSHOT_FALLBACK_LIMIT = parseEnvMs("FUND_DETAIL_CORE_SNAPSHOT_FALLBACK_LIMIT", 420, 32, 720);
-const DETAIL_PHASE1_HISTORY_UPGRADE_ENABLED = process.env.FUND_DETAIL_PHASE1_HISTORY_UPGRADE === "1";
+// Varsayılan açık: kısa/stale snapshot fallback serileri history ile toparlanabilsin.
+const DETAIL_PHASE1_HISTORY_UPGRADE_ENABLED = process.env.FUND_DETAIL_PHASE1_HISTORY_UPGRADE !== "0";
 const DETAIL_PHASE1_HISTORY_UPGRADE_TIMEOUT_MS = parseEnvMs(
   "FUND_DETAIL_PHASE1_HISTORY_UPGRADE_TIMEOUT_MS",
   1_350,
@@ -4564,18 +4565,12 @@ async function getFundDetailPageDataUncached(
           historyServingSnapshotLagDays != null &&
           historyServingSnapshotLagDays > DETAIL_CORE_SERVING_MAX_SNAPSHOT_LAG_DAYS
         ) {
-          historyFallbackUsed = true;
+          // Stale serving artefact'ı tamamen atmak bazı fonlarda 1Y/3Y yerine birkaç günlük pencereye düşürüyor.
+          // Bu durumda serving'i degrade işaretleyip aday havuzunda tutuyoruz.
           degradedReasons.add("core_serving_snapshot_stale");
-          historyServingSource = "miss";
-          historyServingPoints = 0;
-          historyServingRange = "none..none";
-          historyDownsampleMode = "none";
-          servingRowsForFallback = [];
-          servingSyntheticRowsForFallback = [];
-          servingInvestorTrendFallback = [];
-          servingPortfolioTrendFallback = [];
-        } else {
-          if (historyServingRead.payload) {
+          degradedReasons.add(`core_serving_snapshot_stale_${historyServingSnapshotLagDays}d`);
+        }
+        if (historyServingRead.payload) {
             const investorSummarySeries = Array.isArray(historyServingRead.payload.investorSummary?.series)
               ? historyServingRead.payload.investorSummary.series
               : [];
@@ -4666,7 +4661,6 @@ async function getFundDetailPageDataUncached(
             if (historyServingRead.payload && !servingCoverageEnough) degradedReasons.add("history_serving_insufficient_coverage");
             if (historyServingRead.payload && !servingPointsEnough) degradedReasons.add("history_serving_insufficient_points");
           }
-        }
       } catch (error) {
         historyFallbackUsed = true;
         historyServingSource = "miss";
