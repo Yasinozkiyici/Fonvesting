@@ -4085,6 +4085,85 @@ async function getFundDetailPageDataUncached(
     }
 
     if (snapshotFallbackPayload) {
+      let snapshotAlternativesSource: "serving_file" | "serving_memory" | "funds_list" | "none" = "none";
+      let snapshotAlternativesFallbackUsed = false;
+      let snapshotAlternativesReason = "none";
+      const snapshotCategoryCode = snapshotFallbackPayload.fund.category?.code ?? null;
+      if (snapshotFallbackPayload.similarFunds.length === 0 && snapshotCategoryCode) {
+        const servingAlternatives = await listFundDetailCoreServingAlternatives(
+          normalizedCode,
+          FUND_ALTERNATIVES_CANDIDATE_POOL
+        );
+        if (servingAlternatives.rows.length > 0) {
+          const candidates: FundAlternativeCandidate[] = servingAlternatives.rows.map((row) => ({
+            code: row.code,
+            name: row.name,
+            shortName: row.shortName,
+            lastPrice: row.lastPrice,
+            dailyReturn: row.dailyReturn,
+            logoUrl: getFundLogoUrlForUi(row.fundId, row.code, row.logoUrl, row.name),
+            portfolioSize: row.portfolioSize,
+            investorCount: row.investorCount,
+            monthlyReturn: row.monthlyReturn,
+            yearlyReturn: row.yearlyReturn,
+          }));
+          snapshotFallbackPayload = {
+            ...snapshotFallbackPayload,
+            similarFunds: normalizeSimilarFundsForRender(
+              normalizedCode,
+              buildFundAlternatives(
+                {
+                  portfolioSize: snapshotFallbackPayload.fund.portfolioSize,
+                  investorCount: snapshotFallbackPayload.fund.investorCount,
+                  dailyReturn: snapshotFallbackPayload.fund.dailyReturn,
+                  monthlyReturn: snapshotFallbackPayload.fund.monthlyReturn,
+                  yearlyReturn: snapshotFallbackPayload.fund.yearlyReturn,
+                },
+                candidates
+              )
+            ),
+            similarCategoryPeerDailyReturns: candidates
+              .map((candidate) => candidate.dailyReturn)
+              .filter((value) => Number.isFinite(value)),
+          };
+          snapshotAlternativesSource =
+            servingAlternatives.source === "memory" ? "serving_memory" : "serving_file";
+          snapshotAlternativesFallbackUsed = true;
+        } else {
+          snapshotAlternativesReason = servingAlternatives.missReason ?? "cache_empty";
+        }
+        if (snapshotFallbackPayload.similarFunds.length === 0) {
+          const fundsListCandidates = await listFundDetailFundsListAlternatives(
+            normalizedCode,
+            snapshotCategoryCode,
+            FUND_ALTERNATIVES_CANDIDATE_POOL
+          );
+          if (fundsListCandidates.length > 0) {
+            snapshotFallbackPayload = {
+              ...snapshotFallbackPayload,
+              similarFunds: normalizeSimilarFundsForRender(
+                normalizedCode,
+                buildFundAlternatives(
+                  {
+                    portfolioSize: snapshotFallbackPayload.fund.portfolioSize,
+                    investorCount: snapshotFallbackPayload.fund.investorCount,
+                    dailyReturn: snapshotFallbackPayload.fund.dailyReturn,
+                    monthlyReturn: snapshotFallbackPayload.fund.monthlyReturn,
+                    yearlyReturn: snapshotFallbackPayload.fund.yearlyReturn,
+                  },
+                  fundsListCandidates
+                )
+              ),
+              similarCategoryPeerDailyReturns: fundsListCandidates
+                .map((candidate) => candidate.dailyReturn)
+                .filter((value) => Number.isFinite(value)),
+            };
+            snapshotAlternativesSource = "funds_list";
+            snapshotAlternativesFallbackUsed = true;
+            snapshotAlternativesReason = "funds_list_fallback";
+          }
+        }
+      }
       const totalMs = Date.now() - startedAt;
       steps.total_core_pipeline_duration = totalMs;
       steps.total_route_duration = totalMs;
@@ -4119,6 +4198,11 @@ async function getFundDetailPageDataUncached(
             `points=${range.pointCount} min_date=${range.minIso} max_date=${range.maxIso}`
         );
       }
+      console.info(
+        `[fund-detail-alternatives] code=${normalizedCode} alternatives_source=${snapshotAlternativesSource} ` +
+          `alternatives_count=${snapshotFallbackPayload.similarFunds.length} alternatives_fallback_used=${snapshotAlternativesFallbackUsed ? 1 : 0} ` +
+          `alternatives_degraded_reason=${snapshotAlternativesReason}`
+      );
       console.info(
         `[fund-detail-lifecycle] code=${normalizedCode} event=phase1_returned partial=${snapshotFallbackPayload.degraded?.partial ? 1 : 0} degraded=${snapshotFallbackPayload.degraded?.active ? 1 : 0}`
       );
@@ -5779,23 +5863,39 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
           const incomingSnapshotTs = payload.snapshotDate
             ? new Date(payload.snapshotDate).getTime()
             : Number.NEGATIVE_INFINITY;
+          const existingAlternatives = existing
+            ? normalizeSimilarFundsForRender(normalizedCode, existing.payload.similarFunds)
+            : [];
+          const incomingAlternatives = normalizeSimilarFundsForRender(normalizedCode, payload.similarFunds);
+          const shouldMergeComparison = incomingComparisonRefs > 0 && existingComparisonRefs === 0;
+          const shouldMergeAlternatives = incomingAlternatives.length > 0 && existingAlternatives.length === 0;
           if (
-            incomingComparisonRefs > 0 &&
-            existingComparisonRefs === 0 &&
+            (shouldMergeComparison || shouldMergeAlternatives) &&
             incomingSnapshotTs >= existingSnapshotTs &&
             existing
           ) {
             const mergedPayload: FundDetailPageData = {
               ...existing.payload,
-              kiyasBlock: payload.kiyasBlock,
+              ...(shouldMergeComparison ? { kiyasBlock: payload.kiyasBlock } : {}),
+              ...(shouldMergeAlternatives
+                ? {
+                    similarFunds: incomingAlternatives,
+                    similarCategoryPeerDailyReturns:
+                      payload.similarCategoryPeerDailyReturns.length > 0
+                        ? payload.similarCategoryPeerDailyReturns
+                        : existing.payload.similarCategoryPeerDailyReturns,
+                  }
+                : {}),
             };
             const cacheWriteStartedAt = Date.now();
             const writeMeta = writeDetailCache(state, normalizedCode, mergedPayload);
             emitSectionStateTransitions(state, normalizedCode, mergedPayload, refreshPhase);
             const cacheWriteMs = Date.now() - cacheWriteStartedAt;
             console.info(
-              `[fund-detail-cache] code=${normalizedCode} write=${refreshPhase}_compare_merge write_ms=${cacheWriteMs} ` +
+              `[fund-detail-cache] code=${normalizedCode} write=${refreshPhase}_selective_merge write_ms=${cacheWriteMs} ` +
+                `merge_compare=${shouldMergeComparison ? 1 : 0} merge_alternatives=${shouldMergeAlternatives ? 1 : 0} ` +
                 `existing_refs=${existingComparisonRefs} incoming_refs=${incomingComparisonRefs} ` +
+                `existing_alternatives=${existingAlternatives.length} incoming_alternatives=${incomingAlternatives.length} ` +
                 `served_cache_kind=${writeMeta.kind} cache_ttl_used=${writeMeta.freshTtlMs}/${writeMeta.staleTtlMs}`
             );
             return mergedPayload;
