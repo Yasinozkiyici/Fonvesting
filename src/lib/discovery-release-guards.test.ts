@@ -30,6 +30,20 @@ test("scores route runtime cache key is scoped by query and theme", () => {
   );
 });
 
+test("scores route does not short-circuit filtered requests to funds-list fallback before snapshot", () => {
+  const source = fs.readFileSync(path.resolve("src/app/api/funds/scores/route.ts"), "utf8");
+  assert.doesNotMatch(
+    source,
+    /if \(!handledByCriticalPath && queryTrim && !theme\)\s*\{\s*const fundsListFallback/s,
+    "query-filtered requests must not stop at funds-list fallback before snapshot path"
+  );
+  assert.doesNotMatch(
+    source,
+    /if \(!handledByCriticalPath && categoryCode\)[\s\S]*?readFundsListFallback/s,
+    "category-filtered requests must not short-circuit to funds-list before primary snapshot resolution"
+  );
+});
+
 test("discovery UI exposes stable invisible hooks for release smoke", () => {
   const home = fs.readFileSync(path.resolve("src/components/home/HomePageClient.tsx"), "utf8");
   const table = fs.readFileSync(path.resolve("src/components/tefas/ScoredFundsTable.tsx"), "utf8");

@@ -582,52 +582,17 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  if (!handledByCriticalPath && categoryCode) {
+  if (!handledByCriticalPath) {
     const fresh = pickFreshCache(state, key);
     if (fresh) {
       applyResolvedPayload(fresh, "memory", "hit");
       handledByCriticalPath = true;
     }
-    const stale = handledByCriticalPath ? null : pickStaleCache(state, key);
+  }
+  if (!handledByCriticalPath) {
+    const stale = pickStaleCache(state, key);
     if (stale) {
       applyResolvedPayload(stale, "stale", "stale");
-      handledByCriticalPath = true;
-    }
-    if (!handledByCriticalPath) {
-      const persisted = await readPersistedScoresPayload(mode, categoryCode);
-      if (hasUsableScoresPayload(persisted)) {
-        applyResolvedPayload(persisted, "db-cache", "db-cache");
-        handledByCriticalPath = true;
-      }
-    }
-    if (!handledByCriticalPath) {
-      const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
-      if (hasUsableScoresPayload(fundsListFallback)) {
-        applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
-        handledByCriticalPath = true;
-      }
-    }
-    if (!handledByCriticalPath) {
-      const scoresCacheFallback = await readPersistedAllScoresFilteredFallback(mode, categoryCode, queryTrim);
-      if (hasUsableScoresPayload(scoresCacheFallback)) {
-        applyResolvedPayload(scoresCacheFallback, "db-cache", "db-cache");
-        degradedReason = "category_scores_cache_fallback";
-        handledByCriticalPath = true;
-      }
-    }
-    if (!handledByCriticalPath) {
-      const servingFallback = await readCoreServingScoresFallback(mode, categoryCode, limit).catch(() => null);
-      if (hasUsableScoresPayload(servingFallback)) {
-        applyResolvedPayload(servingFallback, "light", "light");
-        handledByCriticalPath = true;
-      }
-    }
-  }
-
-  if (!handledByCriticalPath && queryTrim && !theme) {
-    const fundsListFallback = await readFundsListFallback(mode, categoryCode, queryTrim);
-    if (hasUsableScoresPayload(fundsListFallback)) {
-      applyResolvedPayload(fundsListFallback, "funds-list", "funds-list");
       handledByCriticalPath = true;
     }
   }
