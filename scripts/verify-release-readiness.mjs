@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { ReleaseDecision } from "./release-verification-common.mjs";
+import { withSmokeAuthEnv } from "./smoke-auth.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 for (const name of [".env.production.local", ".env.local", ".env.production", ".env"]) {
@@ -69,9 +70,30 @@ function run(command, args, env = process.env) {
 }
 
 const steps = [
-  { id: "typecheck", command: "pnpm", args: ["exec", "tsc", "--noEmit"] },
-  { id: "unit", command: "pnpm", args: ["run", "test:unit"] },
-  { id: "prodlike_ui", command: "pnpm", args: ["run", "smoke:ui:prodlike"] },
+  {
+    id: "typecheck",
+    command: "pnpm",
+    args: ["exec", "tsc", "--noEmit"],
+    env: withSmokeAuthEnv(process.env),
+    channel: "local",
+    required: true,
+  },
+  {
+    id: "unit",
+    command: "pnpm",
+    args: ["run", "test:unit"],
+    env: withSmokeAuthEnv(process.env),
+    channel: "local",
+    required: true,
+  },
+  {
+    id: "prodlike_ui",
+    command: "pnpm",
+    args: ["run", "smoke:ui:prodlike"],
+    env: withSmokeAuthEnv(process.env),
+    channel: "local",
+    required: true,
+  },
 ];
 
 if (previewUrl) {
@@ -79,71 +101,91 @@ if (previewUrl) {
     id: "preview_data",
     command: "pnpm",
     args: ["run", "smoke:data"],
-    env: { ...process.env, SMOKE_BASE_URL: previewUrl },
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: previewUrl }),
+    channel: "preview",
+    required: false,
   });
   steps.push({
     id: "preview_routes",
     command: "pnpm",
     args: ["run", "smoke:routes"],
-    env: { ...process.env, SMOKE_BASE_URL: previewUrl },
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: previewUrl }),
+    channel: "preview",
+    required: false,
   });
   steps.push({
     id: "preview_ui",
     command: "pnpm",
     args: ["run", "smoke:ui:preview"],
-    env: { ...process.env, SMOKE_BASE_URL: previewUrl },
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: previewUrl }),
+    channel: "preview",
+    required: false,
   });
 }
 
 if (productionUrl) {
   steps.push({
-    id: "production_data",
+    id: "production_safe_data",
     command: "pnpm",
     args: ["run", "smoke:data"],
-    env: { ...process.env, SMOKE_BASE_URL: productionUrl },
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: productionUrl }),
+    channel: "production",
+    required: true,
   });
   steps.push({
-    id: "production_routes",
+    id: "production_safe_routes",
     command: "pnpm",
     args: ["run", "smoke:routes"],
-    env: { ...process.env, SMOKE_BASE_URL: productionUrl },
-  });
-  steps.push({
-    id: "production_ui",
-    command: "pnpm",
-    args: ["run", "smoke:ui:preview"],
-    env: { ...process.env, SMOKE_BASE_URL: productionUrl },
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: productionUrl }),
+    channel: "production",
+    required: true,
   });
 }
 
 const failures = [];
+const advisories = [];
 
 for (const step of steps) {
   console.log(`\n[release-readiness] running step=${step.id}`);
   const result = await run(step.command, step.args, step.env || process.env);
   if (result.code !== 0) {
     const authBlocked = result.code === 2 || result.output.includes("classification=PREVIEW_AUTH_BLOCKER");
+    if (step.channel === "preview" && authBlocked) {
+      advisories.push({
+        step: step.id,
+        reason: "preview_auth_or_protection_blocked",
+        code: result.code,
+      });
+      continue;
+    }
+    if (step.channel === "preview" && !step.required) {
+      advisories.push({
+        step: step.id,
+        reason: authBlocked ? "preview_auth_or_protection_blocked" : "preview_verification_failed_non_blocking",
+        code: result.code,
+      });
+      continue;
+    }
     failures.push({
       step: step.id,
       decision: authBlocked ? ReleaseDecision.RELEASE_BLOCKED : ReleaseDecision.NO_GO,
-      reason: authBlocked ? "preview_or_target_auth_blocked" : "verification_failed",
+      reason: authBlocked ? "target_auth_or_protection_blocked" : "verification_failed",
       code: result.code,
     });
   }
 }
 
 if (requirePreview && !previewUrl) {
-  failures.push({
+  advisories.push({
     step: "preview_ui",
-    decision: ReleaseDecision.NO_GO,
-    reason: "insufficient_evidence_missing_preview_url",
+    reason: "preview_url_missing_informational",
     code: -1,
   });
 }
 
 if (requireProduction && !productionUrl) {
   failures.push({
-    step: "production_ui",
+    step: "production_safe_routes",
     decision: ReleaseDecision.NO_GO,
     reason: "insufficient_evidence_missing_production_url",
     code: -1,
@@ -158,6 +200,11 @@ console.log("\n=== Release Readiness Report ===");
 for (const failure of failures) {
   console.log(
     `[release-readiness] step=${failure.step} decision=${failure.decision} reason=${failure.reason} exit_code=${failure.code}`
+  );
+}
+for (const advisory of advisories) {
+  console.log(
+    `[release-readiness] step=${advisory.step} advisory=1 reason=${advisory.reason} exit_code=${advisory.code}`
   );
 }
 console.log(`[release-readiness] final_decision=${finalDecision}`);

@@ -33,12 +33,26 @@ export class ReleaseVerificationError extends Error {
   }
 }
 
+function redactSmokeSecrets(raw) {
+  let text = String(raw ?? "");
+  text = text.replace(/(x-vercel-protection-bypass:\s*)([^\s]+)/gi, "$1[REDACTED]");
+  text = text.replace(/(__vercel_protection_bypass=)([^\s;]+)/gi, "$1[REDACTED]");
+  const candidates = [
+    String(process.env.SMOKE_BYPASS_TOKEN || "").trim(),
+    String(process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "").trim(),
+  ].filter(Boolean);
+  for (const value of candidates) {
+    text = text.split(value).join("[REDACTED]");
+  }
+  return text;
+}
+
 /**
  * @param {unknown} error
  */
 export function asReleaseVerificationError(error) {
   if (error instanceof ReleaseVerificationError) return error;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = redactSmokeSecrets(error instanceof Error ? error.message : String(error));
   return new ReleaseVerificationError(message, {
     classification: ReleaseClassification.TEST_BUG,
     decision: ReleaseDecision.NO_GO,
@@ -76,10 +90,19 @@ export function emitReleaseClassification(input) {
  * @param {string} url
  */
 export function buildPreviewAuthBlocker(status, url) {
+  const hasBypass = String(process.env.SMOKE_BYPASS_TOKEN || process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "").trim().length > 0;
+  const authCode =
+    status === 401
+      ? hasBypass
+        ? "auth_invalid"
+        : "auth_missing"
+      : status === 403
+        ? "auth_forbidden"
+        : "non-auth application failure";
   return new ReleaseVerificationError(`preview authentication blocked (${status}) at ${url}`, {
     classification: ReleaseClassification.PREVIEW_AUTH_BLOCKER,
     decision: ReleaseDecision.RELEASE_BLOCKED,
-    code: "preview_auth_blocked",
+    code: authCode,
     details: `status=${status} url=${url}`,
   });
 }

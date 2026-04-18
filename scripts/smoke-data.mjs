@@ -1,3 +1,5 @@
+import { classifySmokeAccessFailure, withSmokeAuthFetchOptions } from "./smoke-auth.mjs";
+
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 
 function hasHealthyScoresSet(payload) {
@@ -96,6 +98,8 @@ const RETRY_COUNT = Number(process.env.SMOKE_RETRY_COUNT || 1);
 const RETRY_DELAY_MS = Number(process.env.SMOKE_RETRY_DELAY_MS || 1200);
 
 let failed = false;
+let authBlocked = false;
+let authFailureCode = null;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -110,7 +114,10 @@ for (const check of checks) {
     let durationMs;
     try {
       const startedAt = Date.now();
-      response = await fetch(`${baseUrl}${check.path}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      response = await fetch(
+        `${baseUrl}${check.path}`,
+        withSmokeAuthFetchOptions({ signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+      );
       text = await response.text();
       durationMs = Date.now() - startedAt;
     } catch (error) {
@@ -128,6 +135,10 @@ for (const check of checks) {
     const expectedStatus = check.expectedStatus ?? 200;
     if (response.status !== expectedStatus) {
       lastError = `HTTP ${response.status}`;
+      if (response.status === 401 || response.status === 403) {
+        authBlocked = true;
+        authFailureCode = classifySmokeAccessFailure(response.status);
+      }
       if (attempt < RETRY_COUNT) {
         console.warn(
           `[smoke:data] ${check.path} retrying after ${lastError} (attempt ${attempt + 1}/${RETRY_COUNT + 1})`
@@ -189,11 +200,19 @@ for (const check of checks) {
 }
 
 if (failed) {
-  console.log(
-    "[release-classification] step=smoke_data decision=NO_GO classification=PRODUCT_BUG code=data_contract_failed " +
-      'reason="release-significant data checks failed"'
-  );
-  process.exitCode = 1;
+  if (authBlocked) {
+    console.log(
+      "[release-classification] step=smoke_data decision=RELEASE_BLOCKED classification=PREVIEW_AUTH_BLOCKER " +
+        `code=${authFailureCode ?? "auth_invalid"} reason="post-deploy smoke access blocked by protection"`
+    );
+    process.exitCode = 2;
+  } else {
+    console.log(
+      "[release-classification] step=smoke_data decision=NO_GO classification=PRODUCT_BUG code=data_contract_failed " +
+        'reason="release-significant data checks failed" details="non-auth application failure"'
+    );
+    process.exitCode = 1;
+  }
 } else {
   console.log(
     "[release-classification] step=smoke_data decision=GO classification=NONE code=data_contract_ok " +

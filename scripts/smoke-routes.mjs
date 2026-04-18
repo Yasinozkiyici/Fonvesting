@@ -1,3 +1,5 @@
+import { classifySmokeAccessFailure, withSmokeAuthFetchOptions } from "./smoke-auth.mjs";
+
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 const forbiddenTokens = [
   "chunkloaderror",
@@ -18,12 +20,17 @@ const FETCH_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
 
 async function fetchText(path) {
   const startedAt = Date.now();
-  const response = await fetch(`${baseUrl}${path}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const response = await fetch(
+    `${baseUrl}${path}`,
+    withSmokeAuthFetchOptions({ signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+  );
   const body = await response.text();
   return { response, body, durationMs: Date.now() - startedAt };
 }
 
 let failed = false;
+let authBlocked = false;
+let authFailureCode = null;
 
 for (const check of routeChecks) {
   let response;
@@ -37,6 +44,10 @@ for (const check of routeChecks) {
     continue;
   }
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      authBlocked = true;
+      authFailureCode = classifySmokeAccessFailure(response.status);
+    }
     console.error(`[smoke:routes] ${check.path} failed with HTTP ${response.status}`);
     failed = true;
     continue;
@@ -71,11 +82,19 @@ for (const check of routeChecks) {
 }
 
 if (failed) {
-  console.log(
-    "[release-classification] step=smoke_routes decision=NO_GO classification=RUNTIME_CLIENT_ASSET_FAILURE " +
-      'code=route_runtime_contract_failed reason="route shell/runtime checks failed"'
-  );
-  process.exitCode = 1;
+  if (authBlocked) {
+    console.log(
+      "[release-classification] step=smoke_routes decision=RELEASE_BLOCKED classification=PREVIEW_AUTH_BLOCKER " +
+        `code=${authFailureCode ?? "auth_invalid"} reason="post-deploy smoke route access blocked by protection"`
+    );
+    process.exitCode = 2;
+  } else {
+    console.log(
+      "[release-classification] step=smoke_routes decision=NO_GO classification=RUNTIME_CLIENT_ASSET_FAILURE " +
+        'code=route_runtime_contract_failed reason="route shell/runtime checks failed" details="non-auth application failure"'
+    );
+    process.exitCode = 1;
+  }
 } else {
   console.log(
     "[release-classification] step=smoke_routes decision=GO classification=NONE " +

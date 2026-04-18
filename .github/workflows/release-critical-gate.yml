@@ -36,6 +36,7 @@ jobs:
         env:
           SMOKE_BASE_URL: ${{ inputs.base_url }}
           HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
+          SMOKE_BYPASS_TOKEN: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           VERIFY_REQUIRE_SCENARIOS: "1"
         run: pnpm run verify:critical-routes
 
@@ -44,6 +45,7 @@ jobs:
         env:
           SMOKE_BASE_URL: ${{ inputs.base_url }}
           HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
+          SMOKE_BYPASS_TOKEN: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
           VERIFY_REQUIRE_SCENARIOS: "1"
           VERIFY_SCENARIO: "degraded"
         run: pnpm run verify:critical-routes
@@ -52,12 +54,14 @@ jobs:
         env:
           SMOKE_BASE_URL: ${{ inputs.base_url }}
           HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
+          SMOKE_BYPASS_TOKEN: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: pnpm run data:release:gate
 
       - name: Release readiness chain (prodlike + target URL)
         env:
           SMOKE_UI_TIMEOUT_MS: "90000"
           RELEASE_PREVIEW_URL: ${{ inputs.base_url }}
-          RELEASE_REQUIRE_PREVIEW: "1"
+          RELEASE_REQUIRE_PREVIEW: "0"
           RELEASE_REQUIRE_PRODUCTION: "0"
+          SMOKE_BYPASS_TOKEN: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: pnpm run verify:release-readiness

@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import path from "node:path";
+import { withSmokeAuthFetchOptions } from "../smoke-auth.mjs";
 
 config({ path: path.join(process.cwd(), ".env.local"), quiet: true });
 config({ path: path.join(process.cwd(), ".env"), quiet: true });
@@ -128,8 +129,10 @@ async function fetchJson(path) {
     headers["x-serving-strict"] = "1";
   }
   const response = await fetch(`${baseUrl}${path}`, {
-    signal: AbortSignal.timeout(timeoutMs),
-    headers,
+    ...withSmokeAuthFetchOptions({
+      signal: AbortSignal.timeout(timeoutMs),
+      headers,
+    }),
   });
   const body = await response.text();
   let payload = null;

@@ -8,6 +8,7 @@ import {
   ReleaseDecision,
   ReleaseVerificationError,
 } from "./release-verification-common.mjs";
+import { getPlaywrightSmokeContextOptions, withSmokeAuthFetchOptions } from "./smoke-auth.mjs";
 
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 const timeoutMs = Number(process.env.SMOKE_UI_TIMEOUT_MS || 45_000);
@@ -40,7 +41,10 @@ async function visibleText(page) {
 }
 
 async function fetchJson(page, path) {
-  const response = await page.request.get(`${baseUrl}${path}`, { timeout: timeoutMs });
+  const response = await page.request.get(
+    `${baseUrl}${path}`,
+    withSmokeAuthFetchOptions({ timeout: timeoutMs })
+  );
   if (isAuthBlockedStatus(response.status())) {
     throw buildPreviewAuthBlocker(response.status(), `${baseUrl}${path}`);
   }
@@ -338,7 +342,11 @@ async function assertHomepageDiscovery(page) {
 }
 
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+const context = await browser.newContext({
+  viewport: { width: 1440, height: 1100 },
+  ...getPlaywrightSmokeContextOptions(),
+});
+const page = await context.newPage();
 const runtimeErrors = [];
 
 page.on("pageerror", (error) => {
@@ -397,5 +405,6 @@ try {
   });
   process.exitCode = classified.decision === ReleaseDecision.RELEASE_BLOCKED ? 2 : 1;
 } finally {
+  await context.close();
   await browser.close();
 }

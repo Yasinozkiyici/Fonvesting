@@ -3,6 +3,7 @@ import {
   DEGRADED_SCENARIO_PROBES,
   SUPPORTING_PROBE_PATHS,
 } from "./critical-path-contracts.mjs";
+import { withSmokeAuthFetchOptions } from "./smoke-auth.mjs";
 
 const baseUrl = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
 const timeoutMs = Number(process.env.VERIFY_TIMEOUT_MS || 25000);
@@ -17,8 +18,10 @@ function sleep(ms) {
 
 async function fetchJson(path) {
   const response = await fetch(`${baseUrl}${path}`, {
-    signal: AbortSignal.timeout(timeoutMs),
-    headers: { "x-health-secret": process.env.HEALTH_SECRET || "" },
+    ...withSmokeAuthFetchOptions({
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "x-health-secret": process.env.HEALTH_SECRET || "" },
+    }),
   });
   const raw = await response.text();
   let payload = null;

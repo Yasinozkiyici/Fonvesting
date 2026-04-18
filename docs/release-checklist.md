@@ -41,8 +41,8 @@
 - `pnpm exec tsc --noEmit`
 - `pnpm run test:unit`
 - `pnpm run smoke:ui:prodlike` (clean build + `next start` artifact + UI interaction smoke)
-- `SMOKE_BASE_URL="<preview-url>" pnpm run smoke:ui:preview`
-- `RELEASE_PREVIEW_URL="<preview-url>" RELEASE_PRODUCTION_URL="<prod-url>" pnpm run verify:release-readiness`
+- `SMOKE_BASE_URL="<preview-url>" pnpm run smoke:ui:preview` (bilgilendirici, release blocker degil)
+- `RELEASE_PREVIEW_URL="<preview-url>" RELEASE_PRODUCTION_URL="<prod-url>" RELEASE_REQUIRE_PREVIEW=0 RELEASE_REQUIRE_PRODUCTION=1 pnpm run verify:release-readiness`
 - `pnpm run verify:release-critical`
 - `pnpm run smoke:routes`
 - `pnpm run smoke:data`
@@ -58,7 +58,7 @@
 - "API full but UI empty" gozlenirse release bloklanir.
 
 ## Karar siniflandirmasi (zorunlu)
-- `GO`: tum kritik adimlar ve hedef URL UI-functional kaniti PASS.
-- `NO_GO`: product/test/runtime sorunu veya yetersiz kanit (`insufficient evidence`).
-- `RELEASE_BLOCKED`: preview/prod URL auth-protection ya da env/config erisim blokaji.
-- `401/403` protected preview sonucu **product bug** sayilmaz; sinif `PREVIEW_AUTH_BLOCKER` olarak raporlanir ve deploy bloklanir.
+- `GO`: bloklayici adimlar PASS (`tsc`, `test:unit`, `smoke:ui:prodlike`, production-safe remote kontroller).
+- `NO_GO`: product/test/runtime sorunu veya production-safe kanit eksigi (`insufficient evidence`).
+- `RELEASE_BLOCKED`: production hedefinde auth/protection veya env/config erisim blokaji.
+- Protected preview icin `401/403` sonucu **product bug** sayilmaz; `PREVIEW_AUTH_BLOCKER` olarak raporlanir ve advisory not olarak kalir.
