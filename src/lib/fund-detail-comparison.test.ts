@@ -259,6 +259,46 @@ test("series window: benchmark serisi boşsa satır üretilir, veri yetersiz say
   assert.equal(view.passedCount + view.behindCount + view.tiedCount, 0);
 });
 
+test("series window: makro seri boş olsa bile kıyas bloğunda dönem satırı varsa bloktan beslenir (ör. BIST100)", () => {
+  const block = makeBlock({
+    bist100: [
+      {
+        periodId: "1y",
+        label: "1 Yıl",
+        fundPct: 12.0,
+        refPct: 7.5,
+        refPolicyDeltaPp: null,
+        band: "above",
+        diffPct: null,
+      },
+    ],
+  });
+  const view = buildBenchmarkComparisonView({
+    block,
+    periodId: "1y",
+    preferredOrder: ["bist100"],
+    labels: { bist100: "BIST 100" },
+    seriesWindow: {
+      fundSeries: [
+        { t: 1000, v: 100 },
+        { t: 2000, v: 112 },
+      ],
+      refSeriesByKey: {
+        bist100: [],
+      },
+      startT: 1000,
+      endT: 2000,
+    },
+  });
+
+  assert.equal(view.rows.length, 1);
+  assert.equal(view.rows[0]?.key, "bist100");
+  assert.equal(view.rows[0]?.hasEnoughData, true);
+  assert.ok(Math.abs((view.rows[0]?.comparisonDeltaPct ?? 0) - 4.5) < 1e-9);
+  assert.equal(view.rows[0]?.fundReturnPct, 12.0);
+  assert.equal(view.rows[0]?.referenceReturnPct, 7.5);
+});
+
 test("series window: date range değişince summary yeniden hesaplanır", () => {
   const commonInput = {
     block: null,

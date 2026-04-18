@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resolveCategoryCodeByHints, resolveDiscoveryFilters } from "@/lib/tefas-discovery-rail";
 
+test("resolveCategoryCodeByHints: kategori adı null olsa bile TypeError fırlatmaz", () => {
+  const cats = [
+    { code: "PPF", name: null as unknown as string },
+    { code: "HSF", name: "Hisse Senedi Fonu" },
+  ];
+  assert.doesNotThrow(() => resolveCategoryCodeByHints(cats, ["hisse senedi"]));
+  assert.equal(resolveCategoryCodeByHints(cats, ["hisse senedi"]), "HSF");
+});
+
 test("resolveCategoryCodeByHints: ipucu kategori adında bulunur", () => {
   const cats = [
     { code: "HSF", name: "Hisse Senedi Fonu" },

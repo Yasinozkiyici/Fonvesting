@@ -7,6 +7,7 @@ type DbRuntimeFailureCategory =
   | "connection_closed"
   | "connect_timeout"
   | "network_unreachable"
+  | "invalid_datasource"
   | "auth_failed"
   | "unknown"
   | "health_probe_soft_timeout";

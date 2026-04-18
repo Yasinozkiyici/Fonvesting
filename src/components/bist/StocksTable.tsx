@@ -10,7 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-} from "lucide-react";
+} from "@/components/icons";
 import {
   fetchNormalizedJson,
   normalizeCategoryOptions,

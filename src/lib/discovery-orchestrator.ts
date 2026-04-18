@@ -7,7 +7,7 @@ import {
   type HealthState,
 } from "@/lib/fund-data-reliability";
 import type { ScoresApiPayload } from "@/lib/services/fund-scores-types";
-import type { FundThemeId } from "@/lib/fund-themes";
+import { fundMatchesTheme, type FundThemeId } from "@/lib/fund-themes";
 
 export type DiscoveryHealth = {
   scopeHealth: HealthState;
@@ -31,11 +31,16 @@ function normalizeQuery(value: string): string {
   return value.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
 }
 
+function matchedCoverageTotal(payload: ScoresApiPayload): number {
+  return payload.matchedTotal ?? payload.total;
+}
+
 function isScopeAligned(payload: ScoresApiPayload, scope: DiscoveryScope): boolean {
-  if (payload.total < payload.funds.length) return false;
+  if (matchedCoverageTotal(payload) < payload.funds.length) return false;
   const normalizedQuery = normalizeQuery(scope.queryTrim);
   return payload.funds.every((fund) => {
     if (scope.categoryCode && fund.category?.code !== scope.categoryCode) return false;
+    if (scope.theme && !fundMatchesTheme(fund, scope.theme)) return false;
     if (normalizedQuery) {
       const text = `${fund.code} ${fund.name} ${fund.shortName ?? ""}`.toLocaleLowerCase("tr-TR");
       if (!text.includes(normalizedQuery)) return false;
@@ -65,7 +70,7 @@ export function deriveDiscoveryHealth(input: {
       sourceTier: reliabilitySourceFromDiscoverySource(input.source),
       stale: input.stale,
       rows: input.payload.funds.length,
-      total: input.payload.total,
+      total: matchedCoverageTotal(input.payload),
       scopeAligned,
       degradedReason: input.degradedReason,
       failureClass: input.failureClass,
@@ -73,7 +78,7 @@ export function deriveDiscoveryHealth(input: {
   );
   const scopeHealth = healthFromReliabilityClass(scopeAligned ? "current" : "invalid_insufficient");
   const resultCompletenessHealth = healthFromReliabilityClass(
-    input.payload.total >= input.payload.funds.length ? "current" : "invalid_insufficient"
+    matchedCoverageTotal(input.payload) >= input.payload.funds.length ? "current" : "invalid_insufficient"
   );
   const freshnessHealth = healthFromReliabilityClass(input.stale ? "stale_but_usable" : "current");
   const requestConsistencyHealth = healthFromReliabilityClass(

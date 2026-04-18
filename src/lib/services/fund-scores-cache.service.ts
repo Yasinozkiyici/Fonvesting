@@ -6,6 +6,7 @@ import {
   filterScoresPayloadByQuery,
   type ScoresApiPayload,
 } from "@/lib/services/fund-scores-compute.service";
+import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 import { normalizeScoresPayloadFundTypes } from "@/lib/fund-type-display";
 import { fundTypeForApi } from "@/lib/fund-type-display";
@@ -207,7 +208,7 @@ async function getScoresPayloadFromSupabaseRest(
   );
   const latestDate = latestRows[0]?.date;
   if (!latestDate) {
-    return { mode, total: 0, funds: [] };
+    return createScoresPayload({ mode, funds: [], universeTotal: 0, matchedTotal: 0 });
   }
 
   const scoreField = scoreFieldForMode(mode);
@@ -269,11 +270,14 @@ async function getScoresPayloadFromSupabaseRest(
     console.warn("[scores-cache] supabase universe merge skipped", e);
   }
 
-  const payload = enrichScoresPayloadLogos({
-    mode,
-    total: funds.length,
-    funds,
-  });
+  const payload = enrichScoresPayloadLogos(
+    createScoresPayload({
+      mode,
+      funds,
+      universeTotal: funds.length,
+      matchedTotal: funds.length,
+    })
+  );
 
   return queryTrim ? filterScoresPayloadByQuery(payload, queryTrim) : payload;
 }

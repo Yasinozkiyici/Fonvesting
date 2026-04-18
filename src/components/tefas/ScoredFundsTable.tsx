@@ -11,7 +11,7 @@ import {
   X,
   SlidersHorizontal,
   ArrowDownWideNarrow,
-} from "lucide-react";
+} from "@/components/icons";
 import type { RankingMode } from "@/lib/scoring";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
 import { FundRowMobile, FundDataTableRow } from "@/components/ds/FundRow";
@@ -24,6 +24,7 @@ import {
   normalizeFundListResponse,
   normalizeScoredResponse,
 } from "@/lib/client-data";
+import { readScoresMatchedTotal, readScoresUniverseTotal } from "@/lib/scores-response-counts";
 import { shouldStopBootstrapRetries } from "@/lib/scored-funds-bootstrap";
 import { fundMatchesTheme, getFundTheme, type FundThemeId } from "@/lib/fund-themes";
 import { fundTypeSortKey } from "@/lib/fund-type-display";
@@ -63,6 +64,13 @@ function buildScoresScopeKey(
   return `${mode}|${normalizedCategory || "all"}|${theme ?? "none"}|q:${normalizedQuery || "none"}`;
 }
 
+/** Aynı mod / kategori / tema iken yalnızca arama metni (q) değişti mi — geçişte boş ekran / iskelet flaşı önlemek için. */
+function stripScoresScopeQuerySuffix(scopeKey: string): string {
+  const idx = scopeKey.lastIndexOf("|q:");
+  if (idx === -1) return scopeKey;
+  return scopeKey.slice(0, idx);
+}
+
 function rankingModeLabel(mode: RankingMode): string {
   if (mode === "LOW_RISK") return "Düşük Risk";
   if (mode === "HIGH_RETURN") return "Yüksek Getiri";
@@ -70,14 +78,20 @@ function rankingModeLabel(mode: RankingMode): string {
   return "En İyi";
 }
 
-function formatHomepageCountCaption(input: {
+export function formatHomepageCountCaption(input: {
   shown: number;
-  registeredTotal: number;
+  registeredTotal: number | null;
   loadedCount: number;
   hasFilters: boolean;
   filteredHint: string | null;
 }): string {
   const shownStr = input.shown.toLocaleString("tr-TR");
+  if (input.registeredTotal == null) {
+    if (input.hasFilters) {
+      return `${shownStr} fon · ${input.filteredHint ?? "filtre"} (tam evren bilinmiyor)`;
+    }
+    return `Önizleme: ${shownStr} · Tam evren bilinmiyor`;
+  }
   const regStr = input.registeredTotal.toLocaleString("tr-TR");
   const fullUniverse = input.shown === input.registeredTotal;
   if (input.hasFilters) {
@@ -144,10 +158,7 @@ function mapFundsPayloadToScoredResponse(
     total: number;
   }
 ): ScoredResponse {
-  return {
-    mode,
-    total: payload.total,
-    funds: payload.items.map((item) => ({
+  const funds = payload.items.map((item) => ({
       fundId: item.id,
       code: item.code,
       name: item.name,
@@ -160,7 +171,16 @@ function mapFundsPayloadToScoredResponse(
       category: item.category ? { code: item.category.code, name: item.category.name } : null,
       fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
       finalScore: null,
-    })),
+    }));
+  const returnedCount = funds.length;
+  const universeTotal = payload.total;
+  return {
+    mode,
+    total: universeTotal,
+    universeTotal,
+    matchedTotal: universeTotal,
+    returnedCount,
+    funds,
   };
 }
 
@@ -225,7 +245,10 @@ interface ScoredFundsTableProps {
   quickStartLabel?: string | null;
   quickStartUniverseHint?: string | null;
   quickStartOnClear?: () => void;
-  /** Varsayılan tam evren (SSR total) — daraltma açıklaması için */
+  /**
+   * Kanonik keşif evreni toplamı (SSR veya güvenilir client yanıtı).
+   * null ise satır sayısı / payload.total ile asla doldurulmaz.
+   */
   referenceUniverseTotal?: number | null;
 }
 
@@ -248,7 +271,9 @@ export default function ScoredFundsTable({
 }: ScoredFundsTableProps) {
   const seededInitialData = normalizeScoredResponse(initialData);
   const seededInitialDataLooksPartial = Boolean(
-    seededInitialData && seededInitialData.funds.length > 0 && seededInitialData.total > seededInitialData.funds.length
+    seededInitialData &&
+      seededInitialData.funds.length > 0 &&
+      readScoresUniverseTotal(seededInitialData) > seededInitialData.funds.length
   );
   const seededCategories = normalizeCategoryOptions(initialCategories);
   const initialScopeKey = buildScoresScopeKey(
@@ -333,7 +358,14 @@ export default function ScoredFundsTable({
       ? payloadForCurrentMode
       : null;
   const lastGoodMatchesScope = lastGoodScopeKey != null && lastGoodScopeKey === currentFetchScopeKey;
-  const displayPayload = payloadForCurrentScope ?? (lastGoodMatchesScope ? lastGoodPayload : null);
+  const lastGoodSameScopeBase =
+    Boolean(lastGoodPayload && lastGoodPayload.funds.length > 0) &&
+    lastGoodScopeKey != null &&
+    stripScoresScopeQuerySuffix(lastGoodScopeKey) === stripScoresScopeQuerySuffix(currentFetchScopeKey);
+  const displayPayload =
+    payloadForCurrentScope ??
+    (lastGoodMatchesScope ? lastGoodPayload : null) ??
+    (lastGoodSameScopeBase ? lastGoodPayload : null);
 
   useEffect(() => {
     setRankingMode(initialMode);
@@ -1025,6 +1057,14 @@ export default function ScoredFundsTable({
 
   const totalPages = Math.max(1, Math.ceil(filteredFunds.length / pageSize));
   const paginatedFunds = filteredFunds.slice((page - 1) * pageSize, page * pageSize);
+  const showTableLoadingSkeleton =
+    (loading || bootstrapFallbackActive) &&
+    paginatedFunds.length === 0 &&
+    !(
+      Boolean(normalizeFundSearchText(deferredSearch)) &&
+      themeScopedFunds.length > 0 &&
+      filteredFunds.length === 0
+    );
   const hasFilters = Boolean(search || (enableCategoryFilter && category) || activeIntent || activeTheme);
   useEffect(() => {
     console.info(
@@ -1046,12 +1086,12 @@ export default function ScoredFundsTable({
     console.info(
       `[discover-visible-rows] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
         `visible_rows=${paginatedFunds.length} filtered_total=${filteredFunds.length} page=${page}/${totalPages} ` +
-        `universe_total=${referenceUniverseTotal ?? displayPayload?.total ?? filteredFunds.length}`
+        `universe_total=${referenceUniverseTotal ?? "unknown"} payload_universe=${displayPayload ? readScoresUniverseTotal(displayPayload) : "none"}`
     );
   }, [
     activeTheme,
     category,
-    displayPayload?.total,
+    displayPayload ? readScoresUniverseTotal(displayPayload) : null,
     filteredFunds.length,
     page,
     paginatedFunds.length,
@@ -1205,31 +1245,34 @@ export default function ScoredFundsTable({
     if (!quickStartActive || !quickStartLabel) return null;
     const shown = filteredFunds.length;
     const shownStr = shown.toLocaleString("tr-TR");
-    const payload = displayPayload;
-    const scopedTotal =
-      payloadForCurrentScope?.total ??
-      payloadForCurrentScope?.funds.length ??
-      (payload ? payload.total ?? payload.funds.length : null);
+    const clientWidenedUniverse =
+      payloadForCurrentScope &&
+      readScoresUniverseTotal(payloadForCurrentScope) > payloadForCurrentScope.funds.length
+        ? readScoresUniverseTotal(payloadForCurrentScope)
+        : null;
     const registeredTotal =
-      scopedTotal ?? (routeScopedMatchCount > 0 ? routeScopedMatchCount : referenceUniverseTotal ?? shown);
-    const regStr = registeredTotal.toLocaleString("tr-TR");
+      referenceUniverseTotal ??
+      clientWidenedUniverse ??
+      (routeScopedMatchCount > 0 ? routeScopedMatchCount : null);
+    const regStr = registeredTotal != null ? registeredTotal.toLocaleString("tr-TR") : "—";
     return { shownStr, contextLabel: quickStartLabel, universeStr: regStr };
-  }, [
-    filteredFunds.length,
-    displayPayload,
-    payloadForCurrentScope,
-    quickStartActive,
-    quickStartLabel,
-    referenceUniverseTotal,
-    routeScopedMatchCount,
-  ]);
+  }, [filteredFunds.length, payloadForCurrentScope, quickStartActive, quickStartLabel, referenceUniverseTotal, routeScopedMatchCount]);
 
   const resultCountCaption = useMemo(() => {
     const shown = filteredFunds.length;
     const payload = displayPayload;
     const loadedCount = payload?.funds.length ?? shown;
-    const scopeTotal = payloadForCurrentScope?.total ?? payload?.total ?? loadedCount;
-    const registeredTotal = hasFilters ? scopeTotal : referenceUniverseTotal ?? scopeTotal;
+    const scopeMatchedTotal = (() => {
+      const p = payloadForCurrentScope ?? displayPayload;
+      if (!p) return loadedCount;
+      return readScoresMatchedTotal(p);
+    })();
+    const clientWidenedUniverse =
+      payloadForCurrentScope &&
+      readScoresUniverseTotal(payloadForCurrentScope) > payloadForCurrentScope.funds.length
+        ? readScoresUniverseTotal(payloadForCurrentScope)
+        : null;
+    const registeredTotal = hasFilters ? scopeMatchedTotal : referenceUniverseTotal ?? clientWidenedUniverse ?? null;
     if (quickStartActive && quickStartLabel) {
       return null;
     }
@@ -1575,7 +1618,7 @@ export default function ScoredFundsTable({
       </div>
 
       <div className="md:hidden space-y-1.5 px-3 py-1.5">
-        {(loading || bootstrapFallbackActive) && paginatedFunds.length === 0 ? (
+        {showTableLoadingSkeleton ? (
           [...Array(8)].map((_, i) => (
             <div key={i} className="mobile-fund-card mobile-fund-card--scan min-h-[4.5rem] animate-pulse">
               <div className="flex items-start gap-2.5 px-0 py-0">
@@ -1653,7 +1696,7 @@ export default function ScoredFundsTable({
             </tr>
           </thead>
           <tbody>
-            {(loading || bootstrapFallbackActive) && paginatedFunds.length === 0 ? (
+            {showTableLoadingSkeleton ? (
               [...Array(10)].map((_, i) => (
                 <tr key={i} className="table-row">
                   <td colSpan={8} className="px-6 py-3">

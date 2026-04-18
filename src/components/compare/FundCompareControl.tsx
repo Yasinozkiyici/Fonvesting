@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Plus } from "lucide-react";
+import { Check, Plus } from "@/components/icons";
 import {
   addCompareCode,
   COMPARE_CODES_CHANGED_EVENT,

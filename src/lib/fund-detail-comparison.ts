@@ -256,7 +256,7 @@ function rowsSummary(rows: BenchmarkComparisonRow[]): {
 function buildRowsFromSeriesWindow(input: {
   block: FundKiyasViewPayload | null;
   periodId: KiyasPeriodId;
-  labels?: Record<string, string>;
+  labels?: Partial<Record<string, string>>;
   preferredOrder: KiyasRefKey[];
   selectedRef: KiyasRefKey | null;
   seriesWindow: {
@@ -323,30 +323,28 @@ function buildRowsFromSeriesWindow(input: {
 
     const hasEnoughData = finite(referenceReturnPct);
     if (!hasEnoughData) {
-      if (key === "category") {
-        const blockRow = input.block?.rowsByRef.category?.find((row) => row.periodId === input.periodId);
-        if (blockRow && finite(blockRow.fundPct) && finite(blockRow.refPct)) {
-          const comparisonDeltaPct = (blockRow.fundPct as number) - (blockRow.refPct as number);
-          rows.push({
-            key,
-            label,
-            typeLabel: comparisonRefType(key),
-            periodId: input.periodId,
-            hasEnoughData: true,
-            periodStartMs: startT,
-            periodEndMs: endT,
-            fundReturnPct: blockRow.fundPct,
-            referenceReturnPct: blockRow.refPct,
-            comparisonDeltaPct,
-            outcome: benchmarkComparisonOutcomeFromDelta(comparisonDeltaPct),
-          });
-          continue;
-        }
-        if (!blockRow) {
-          invalidReason = invalidReason ?? "category_block_missing";
-        } else {
-          invalidReason = invalidReason ?? "category_block_invalid";
-        }
+      // Grafik penceresiyle makro serisi hizalanamadığında, sunucu kıyas tablosunda bu dönem için
+      // geçerli satır varsa onu kullan (kategori ile sınırlı kalmadan — BIST/faiz vb. için de).
+      const blockRowsForKey = input.block?.rowsByRef[key];
+      const blockRow = Array.isArray(blockRowsForKey)
+        ? blockRowsForKey.find((row) => row.periodId === input.periodId)
+        : undefined;
+      if (blockRow && finite(blockRow.fundPct) && finite(blockRow.refPct)) {
+        const comparisonDeltaPct = (blockRow.fundPct as number) - (blockRow.refPct as number);
+        rows.push({
+          key,
+          label,
+          typeLabel: comparisonRefType(key),
+          periodId: input.periodId,
+          hasEnoughData: true,
+          periodStartMs: startT,
+          periodEndMs: endT,
+          fundReturnPct: blockRow.fundPct,
+          referenceReturnPct: blockRow.refPct,
+          comparisonDeltaPct,
+          outcome: benchmarkComparisonOutcomeFromDelta(comparisonDeltaPct),
+        });
+        continue;
       }
       bumpInvalidation(invalidReason ?? "reference_return_unavailable");
       rows.push({
@@ -427,7 +425,7 @@ export function buildBenchmarkComparisonView(input: {
   block: FundKiyasViewPayload | null;
   periodId: KiyasPeriodId;
   selectedRef?: KiyasRefKey | null;
-  labels?: Record<string, string>;
+  labels?: Partial<Record<string, string>>;
   preferredOrder?: KiyasRefKey[];
   seriesWindow?: {
     fundSeries: ComparisonPoint[];

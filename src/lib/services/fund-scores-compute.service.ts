@@ -16,6 +16,8 @@ import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
 import { getScoresPayloadFromDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
 import type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
+import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
+import { fundMatchesTheme, type FundThemeId } from "@/lib/fund-themes";
 import { fundSearchMatches } from "@/lib/fund-search";
 
 export type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
@@ -196,11 +198,13 @@ async function computeScoresPayloadFromRawData(mode: RankingMode, categoryKey: s
     })
   );
 
-  return {
+  const scoredRows = scoredFunds.map((entry) => entry.item);
+  return createScoresPayload({
     mode,
-    total: scoredFunds.length,
-    funds: scoredFunds.map((entry) => entry.item),
-  };
+    funds: scoredRows,
+    universeTotal: scoredRows.length,
+    matchedTotal: scoredRows.length,
+  });
 }
 
 export async function computeScoresPayload(
@@ -220,9 +224,49 @@ export async function computeScoresPayload(
 
 export function filterScoresPayloadByQuery(payload: ScoresApiPayload, q: string): ScoresApiPayload {
   const trimmed = q.trim();
-  if (!trimmed) return { ...payload, appliedQuery: undefined };
-  const funds = payload.funds.filter(
-    (f) => fundSearchMatches(trimmed, [f.code, f.name, f.shortName ?? null])
+  if (!trimmed) {
+    const universeTotal = payload.universeTotal ?? payload.total;
+    const matchedTotal = payload.matchedTotal ?? payload.total;
+    return createScoresPayload({
+      mode: payload.mode,
+      funds: payload.funds,
+      universeTotal,
+      matchedTotal,
+      appliedQuery: undefined,
+    });
+  }
+  const universeTotal = payload.universeTotal ?? payload.total;
+  const funds = payload.funds.filter((f) =>
+    fundSearchMatches(trimmed, [f.code, f.name, f.shortName ?? null])
   );
-  return { ...payload, total: funds.length, funds, appliedQuery: trimmed };
+  return createScoresPayload({
+    mode: payload.mode,
+    funds,
+    universeTotal,
+    matchedTotal: funds.length,
+    appliedQuery: trimmed,
+  });
+}
+
+export function filterScoresPayloadByTheme(payload: ScoresApiPayload, theme: FundThemeId | null): ScoresApiPayload {
+  if (!theme) {
+    const universeTotal = payload.universeTotal ?? payload.total;
+    const matchedTotal = payload.matchedTotal ?? payload.total;
+    return createScoresPayload({
+      mode: payload.mode,
+      funds: payload.funds,
+      universeTotal,
+      matchedTotal,
+      appliedQuery: payload.appliedQuery,
+    });
+  }
+  const universeTotal = payload.universeTotal ?? payload.total;
+  const funds = payload.funds.filter((fund) => fundMatchesTheme(fund, theme));
+  return createScoresPayload({
+    mode: payload.mode,
+    funds,
+    universeTotal,
+    matchedTotal: funds.length,
+    appliedQuery: payload.appliedQuery,
+  });
 }

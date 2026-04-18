@@ -73,10 +73,9 @@ function countComparisonValidRows(data: FundDetailPageData): { valid: number; to
   let valid = 0;
   let total = 0;
   for (const rows of Object.values(rowsByRef)) {
-    const row = rows.find((item) => item.periodId === "1y");
-    if (!row) continue;
+    if (!rows?.length) continue;
     total += 1;
-    if (isFiniteNumber(row.fundPct) && isFiniteNumber(row.refPct)) {
+    if (rows.some((item) => isFiniteNumber(item.fundPct) && isFiniteNumber(item.refPct))) {
       valid += 1;
     }
   }

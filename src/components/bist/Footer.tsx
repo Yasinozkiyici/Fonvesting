@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ExternalLink, Github, Twitter, Linkedin } from "lucide-react";
+import { ExternalLink, Github, Twitter, Linkedin } from "@/components/icons";
 import { SiteLogo } from "@/components/SiteLogo";
 
 const SOCIALS = [

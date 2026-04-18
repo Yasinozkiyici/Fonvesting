@@ -9,6 +9,7 @@ import { refreshFundHistorySyncState } from "@/lib/services/tefas-history.servic
 import { rebuildMarketSnapshot, recomputeFundReturnsFromHistory } from "@/lib/services/tefas-sync.service";
 import { fetchUsdTryEurTryLive } from "@/lib/services/exchange-rates.service";
 import { classifyDailyReturnPctPoints2dp, countDailyReturnDirections } from "@/lib/daily-return-ui";
+import { rebuildV2ServingWorld } from "@/lib/v2/serving/rebuild";
 
 type ServingStepTiming = {
   name: string;
@@ -65,6 +66,16 @@ export type ServingRebuildResult = {
   };
   detailCore: {
     written: number;
+  };
+  v2Serving: {
+    buildId: string | null;
+    listRows: number;
+    detailRows: number;
+    compareRows: number;
+    discoveryRows: number;
+    parseFailureCount: number;
+    failedSourceCount: number;
+    fundCoverageRatio: number;
   };
   timings: {
     totalMs: number;
@@ -427,6 +438,7 @@ async function runServingCore(options: { warmCaches: boolean; incrementalDaily: 
   const warm = options.warmCaches
     ? await markStep("warm_scores_cache", () => warmAllScoresApiCaches())
     : { written: 0 };
+  const v2Serving = await markStep("rebuild_v2_serving_world", () => rebuildV2ServingWorld(snapshotDate));
 
   await refreshFundHistorySyncState({
     phase: options.incrementalDaily ? "serving_daily_incremental" : "serving_rebuild",
@@ -439,6 +451,7 @@ async function runServingCore(options: { warmCaches: boolean; incrementalDaily: 
       writtenDerivedMetrics: derived.written,
       writtenDetailCore: detailCore.written,
       warmedCaches: warm.written,
+      v2ServingBuildId: v2Serving.buildId,
       completedAt: new Date().toISOString(),
       incrementalDaily: options.incrementalDaily,
     },
@@ -452,6 +465,16 @@ async function runServingCore(options: { warmCaches: boolean; incrementalDaily: 
     derived: { written: derived.written },
     detailCore: { written: detailCore.written },
     warm: { written: warm.written },
+    v2Serving: {
+      buildId: v2Serving.buildId,
+      listRows: v2Serving.listRows,
+      detailRows: v2Serving.detailRows,
+      compareRows: v2Serving.compareRows,
+      discoveryRows: v2Serving.discoveryRows,
+      parseFailureCount: v2Serving.parseFailureCount,
+      failedSourceCount: v2Serving.failedSourceCount,
+      fundCoverageRatio: v2Serving.fundCoverageRatio,
+    },
     timings: {
       totalMs: Date.now() - runStartedAt,
       steps,

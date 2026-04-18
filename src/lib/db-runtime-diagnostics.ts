@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { getEffectiveDatabaseUrl } from "@/lib/prisma";
+import {
+  inferConnectionModeFromDatabaseUrl,
+  getPrismaRuntimeDatabaseUrlEnvKey,
+  readRawDatabaseUrlFromProcessEnv,
+  readRawDirectUrlFromProcessEnv,
+  resolveDbRuntimeEnvPath,
+  resolvePrismaDatasourceUrl,
+} from "@/lib/db/db-connection-profile";
 
 export type RuntimePathId = "homepage" | "health" | "cron";
 
@@ -8,7 +15,8 @@ export type DbRuntimeTargetDiagnostics = {
   env: {
     databaseUrlExists: boolean;
     directUrlExists: boolean;
-    resolvedFrom: "DATABASE_URL" | "dev_fallback";
+    /** Prisma runtime için kazanan env anahtarı (POSTGRES_PRISMA_URL öncelikli). */
+    resolvedFrom: "POSTGRES_PRISMA_URL" | "DATABASE_URL" | "none" | "dev_fallback";
   };
   fingerprint: {
     hostMasked: string | null;
@@ -36,23 +44,26 @@ function maskToken(value: string): string {
   return `${value.slice(0, 2)}***${value.slice(-2)}`;
 }
 
+function mapModeToDiagnosticsMode(
+  inferred: ReturnType<typeof inferConnectionModeFromDatabaseUrl>,
+  scheme: string
+): DbRuntimeTargetDiagnostics["connection"]["mode"] {
+  if (scheme === "prisma") return "data_proxy";
+  if (inferred === "pooled") return "supabase_pooler";
+  if (inferred === "direct") return "direct_postgres";
+  return "unknown";
+}
+
 function parseResolvedUrl() {
-  const effective = getEffectiveDatabaseUrl();
+  const effective = resolvePrismaDatasourceUrl();
   const parsed = new URL(effective);
   const host = parsed.hostname || "";
   const dbName = parsed.pathname.replace(/^\//, "") || "";
   const scheme = parsed.protocol.replace(":", "").toLowerCase();
   const sslmode = (parsed.searchParams.get("sslmode") ?? "").toLowerCase();
   const pgbouncer = (parsed.searchParams.get("pgbouncer") ?? "").toLowerCase() === "true";
-  const hostLower = host.toLowerCase();
-  const mode: DbRuntimeTargetDiagnostics["connection"]["mode"] =
-    scheme === "prisma"
-      ? "data_proxy"
-      : hostLower.includes("pooler.supabase.com") || pgbouncer
-        ? "supabase_pooler"
-        : scheme === "postgresql" || scheme === "postgres"
-          ? "direct_postgres"
-          : "unknown";
+  const inferred = inferConnectionModeFromDatabaseUrl(effective);
+  const mode = mapModeToDiagnosticsMode(inferred, scheme);
   return {
     host,
     dbName,
@@ -66,9 +77,11 @@ function parseResolvedUrl() {
 }
 
 export function getDbRuntimeTargetDiagnostics(path: RuntimePathId): DbRuntimeTargetDiagnostics {
-  const rawDb = (process.env.DATABASE_URL ?? "").trim();
-  const rawDirect = (process.env.DIRECT_URL ?? "").trim();
-  const resolvedFrom = rawDb ? "DATABASE_URL" : "dev_fallback";
+  const rawDb = readRawDatabaseUrlFromProcessEnv();
+  const rawDirect = readRawDirectUrlFromProcessEnv();
+  const envPath = resolveDbRuntimeEnvPath();
+  const prismaKey = getPrismaRuntimeDatabaseUrlEnvKey();
+  const resolvedFrom = envPath === "database_url" ? prismaKey : "dev_fallback";
   try {
     const resolved = parseResolvedUrl();
     return {
@@ -116,6 +129,28 @@ export function getDbRuntimeTargetDiagnostics(path: RuntimePathId): DbRuntimeTar
         connectionLimit: null,
       },
     };
+  }
+}
+
+/**
+ * Sunucu loglarında şifre/host sızdırmadan tek satır DB hedef özeti (release / compare tanıları).
+ */
+export function tryFormatDbRuntimeEvidenceOneLiner(): string {
+  try {
+    const d = getDbRuntimeTargetDiagnostics("health");
+    const prismaKey = getPrismaRuntimeDatabaseUrlEnvKey();
+    return (
+      `resolved_from=${d.env.resolvedFrom}` +
+      ` prisma_env=${prismaKey}` +
+      ` mode=${d.connection.mode}` +
+      ` host_hash=${d.fingerprint.hostHash ?? "none"}` +
+      ` ssl=${d.connection.sslConfigured ? 1 : 0}` +
+      ` pgbouncer=${d.connection.pgbouncer ? 1 : 0}` +
+      ` connect_timeout_s=${d.connection.connectTimeoutSec ?? "na"}` +
+      ` pool_timeout_s=${d.connection.poolTimeoutSec ?? "na"}`
+    );
+  } catch {
+    return "diagnostics_unavailable";
   }
 }
 

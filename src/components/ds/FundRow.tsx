@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/icons";
 import { fundDetailHref } from "@/lib/fund-routes";
 import type { ScoredFund } from "@/types/scored-funds";
 import type { FundListRow } from "@/lib/services/fund-list.service";

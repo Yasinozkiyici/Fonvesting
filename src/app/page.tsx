@@ -16,6 +16,20 @@ import {
 } from "@/lib/services/fund-daily-snapshot.service";
 import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
 import type { ScoredResponse } from "@/types/scored-funds";
+import {
+  buildHomepageTotalsEvidence,
+  formatHomepageTotalsEvidenceLog,
+  resolveHomepageTrueUniverseTotal,
+} from "@/lib/homepage-fund-counts";
+import type { HomepageTotalsSemanticContract } from "@/lib/data-flow/contracts";
+import {
+  deriveHomepageDiscoverySurfaceState,
+  logHomepageDataFlowEvidence,
+  prepareHomepageCategoriesForClient,
+  prepareHomepageScoresPreviewAtBoundary,
+} from "@/lib/data-flow";
+import { readScoresUniverseTotal } from "@/lib/scores-response-counts";
+import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 
 export const revalidate = LIVE_DATA_PAGE_REVALIDATE_SEC;
 export const dynamic = "force-dynamic";
@@ -101,9 +115,10 @@ function scoresPreviewFromServingRows(
   servingRows: HomeServingRows
 ): ScoredResponse | null {
   if (servingRows.rows.length === 0) return null;
-  return {
+  return createScoresPayload({
     mode,
-    total: servingRows.rows.length,
+    universeTotal: 0,
+    matchedTotal: servingRows.rows.length,
     funds: servingRows.rows.map((row) => ({
       fundId: row.fundId,
       code: row.code,
@@ -124,7 +139,7 @@ function scoresPreviewFromServingRows(
           : null,
       finalScore: null,
     })),
-  };
+  });
 }
 
 function categoriesFromServingRows(servingRows: HomeServingRows): Array<{ code: string; name: string }> {
@@ -155,6 +170,7 @@ function deriveMarketSummaryFromServingRows(servingRows: HomeServingRows): Marke
       totalFundCount: servingRows.rows.length,
     },
     fundCount: servingRows.rows.length,
+    snapshotFundCountIsCanonicalUniverse: false,
     totalPortfolioSize,
     totalInvestorCount,
     advancers,
@@ -191,27 +207,6 @@ function resolveHomepageMarketData(
   return deriveMarketSummaryFromServingRows(servingRows);
 }
 
-function resolveExploreUniverseTotal(input: {
-  initialScores: ScoredResponse | null;
-  initialScoresPreview: ScoredResponse | null;
-  initialRowsSource: "scores" | "serving_core" | "none";
-  marketFundCount: number | null;
-}): number | null {
-  // Kaynak önceliği:
-  // 1) scores.total (keşif evreni için en doğru kaynak)
-  // 2) serving_core fallback ise market fundCount (preview limiti evren değil)
-  // 3) geriye kalan preview total
-  if (input.initialScores?.total && input.initialScores.total > 0) return input.initialScores.total;
-  if (input.initialRowsSource === "serving_core" && input.marketFundCount && input.marketFundCount > 0) {
-    return input.marketFundCount;
-  }
-  if (input.initialScoresPreview?.total && input.initialScoresPreview.total > 0) {
-    return input.initialScoresPreview.total;
-  }
-  if (input.marketFundCount && input.marketFundCount > 0) return input.marketFundCount;
-  return null;
-}
-
 export default async function Page({
   searchParams,
 }: {
@@ -227,21 +222,23 @@ export default async function Page({
     HOME_SSR_CORE_ROWS_TIMEOUT_MS,
     { rows: [], source: "none" as const, missReason: "cache_empty" as const }
   );
-  const marketDataRawTask = HOME_SSR_MARKET_ENABLED
+  const marketSummaryTask = HOME_SSR_MARKET_ENABLED
     ? withSoftTimeout(getMarketSummaryFromDailySnapshotSafe(), HOME_SSR_MARKET_TIMEOUT_MS, null)
-    : Promise.resolve(null);
+    : Promise.resolve(null as MarketSnapshotSummaryPayload | null);
   const servingRows = await servingRowsTask;
   const servingCategories = categoriesFromServingRows(servingRows);
-  const [marketDataRaw, categories] = await Promise.all([
-    marketDataRawTask,
+  const [marketSummaryRaw, categories] = await Promise.all([
+    marketSummaryTask,
     servingCategories.length > 0
       ? Promise.resolve(servingCategories)
       : withSoftTimeout(getCategorySummariesFromDailySnapshotSafe(), HOME_SSR_CATEGORY_TIMEOUT_MS, []),
   ]);
-  const marketData = resolveHomepageMarketData(marketDataRaw, servingRows);
+  const { categories: categoriesForClient, rejectedRows: homepageCategoryRejectedRows } =
+    prepareHomepageCategoriesForClient(categories);
+  const marketData = resolveHomepageMarketData(marketSummaryRaw, servingRows);
   const intentResolved = resolveFundIntentState(
     initialIntent,
-    categories.map((item) => ({ code: item.code, name: item.name })),
+    categoriesForClient,
     { mode: requestedMode, category: requestedCategory }
   );
   const initialMode = intentResolved.mode;
@@ -274,32 +271,76 @@ export default async function Page({
       initialRowsSource = "none";
     }
   }
+  const homepageFundsCountBeforeBoundary = initialScoresPreview?.funds.length ?? null;
+  const initialScoresPreviewForClient =
+    prepareHomepageScoresPreviewAtBoundary(initialScoresPreview) ?? initialScoresPreview;
+  const discoverySurface = deriveHomepageDiscoverySurfaceState({
+    categoryCount: categoriesForClient.length,
+    scoresPreview: initialScoresPreviewForClient,
+    categoryRejectedRows: homepageCategoryRejectedRows,
+    preNormalizationFundCount: homepageFundsCountBeforeBoundary,
+  });
   console.info(
     `[home-ssr-scores] mode=${initialMode} timeout_ms=${HOME_SSR_SCORES_TIMEOUT_MS} duration_ms=${initialScoresMeta.durationMs} ` +
-      `timed_out=${initialScoresMeta.timedOut ? 1 : 0} rows=${initialScores?.funds.length ?? 0} total=${initialScores?.total ?? 0} phase=${scorePreloadPhase}`
+      `timed_out=${initialScoresMeta.timedOut ? 1 : 0} rows=${initialScores?.funds.length ?? 0} universe=${initialScores ? readScoresUniverseTotal(initialScores) : 0} phase=${scorePreloadPhase}`
   );
   console.info(
-    `[home-ssr-rows] mode=${initialMode} homepage_rows_source=${initialRowsSource} homepage_rows_count=${initialScoresPreview?.funds.length ?? 0}`
+    `[home-ssr-rows] mode=${initialMode} homepage_rows_source=${initialRowsSource} homepage_rows_count=${initialScoresPreviewForClient?.funds.length ?? 0}`
   );
-  const exploreUniverseTotal = resolveExploreUniverseTotal({
+  const marketSnapshotCanonical = marketData?.snapshotFundCountIsCanonicalUniverse !== false;
+  const marketSnapshotFundCount =
+    marketSnapshotCanonical && marketData?.fundCount != null && marketData.fundCount > 0 ? marketData.fundCount : null;
+  const universeResolution = resolveHomepageTrueUniverseTotal({
     initialScores,
-    initialScoresPreview,
     initialRowsSource,
-    marketFundCount: marketData?.fundCount ?? null,
+    scoresTimedOut: initialScoresMeta.timedOut,
+    scoresPreviewLimit: HOME_SSR_SCORES_LIMIT,
+    marketSnapshotFundCount,
+    marketSnapshotCanonical,
   });
-  const initialScoresPreviewRows = initialScoresPreview?.funds.length ?? 0;
-  const initialScoresPreviewTotal = initialScoresPreview?.total ?? initialScoresPreviewRows;
+  const exploreUniverseTotal = universeResolution.kind === "known" ? universeResolution.value : null;
+  const totalsEvidence = buildHomepageTotalsEvidence({
+    resolution: universeResolution,
+    loadedPreviewRowCount: initialScoresPreviewForClient?.funds.length ?? 0,
+    scoresRowSource: initialRowsSource,
+    scoresTimedOut: initialScoresMeta.timedOut,
+    rawScoresTotal: initialScores ? readScoresUniverseTotal(initialScores) : null,
+    marketSnapshotFundCount: marketData?.fundCount ?? null,
+    marketSnapshotCanonical,
+  });
+  const totalsSemantic: HomepageTotalsSemanticContract = {
+    ...totalsEvidence,
+    previewLimit: HOME_SSR_SCORES_LIMIT,
+  };
+  console.info(formatHomepageTotalsEvidenceLog(totalsEvidence));
+  logHomepageDataFlowEvidence({
+    surface: "homepage_ssr",
+    discovery_surface: discoverySurface.kind,
+    category_rejected_rows: homepageCategoryRejectedRows,
+    scores_row_source: initialRowsSource,
+    preview_limit: totalsSemantic.previewLimit,
+    loaded_preview_rows: totalsSemantic.loadedPreviewRowCount,
+    true_universe_kind: totalsSemantic.trueUniverse.kind,
+    true_universe_value: totalsSemantic.trueUniverse.kind === "known" ? totalsSemantic.trueUniverse.value : null,
+  });
+  const initialScoresPreviewRows = initialScoresPreviewForClient?.funds.length ?? 0;
+  const knownUniverseFloor =
+    universeResolution.kind === "known" ? universeResolution.value : initialScoresPreviewRows;
   // Homepage defaultta SSR preview satırlarını "tam skor payload" sanıp kilitlenmeyelim:
   // tablo/search ilk yükten sonra tam scope'u client tarafında bir kez yenilemeli.
   const initialScoresPartial =
     initialScoresMeta.timedOut ||
     !initialScores ||
     initialRowsSource !== "scores" ||
-    initialScoresPreviewRows < initialScoresPreviewTotal;
+    universeResolution.kind === "unknown" ||
+    initialScoresPreviewRows < knownUniverseFloor;
 
-  const marketDayTone = marketData
-    ? deriveMarketTone(marketData.advancers, marketData.decliners, marketData.summary.avgDailyReturn)
-    : null;
+  const marketDayTone = (() => {
+    if (!marketData) return null;
+    const avg = marketData.summary?.avgDailyReturn;
+    if (!Number.isFinite(avg)) return null;
+    return deriveMarketTone(marketData.advancers, marketData.decliners, avg);
+  })();
 
   return (
     <SitePageShell>
@@ -309,9 +350,10 @@ export default async function Page({
           <MarketHeader initialData={marketData} exploreUniverseTotal={exploreUniverseTotal} />
 
           <HomePageClient
-            initialScoresPreview={initialScoresPreview}
+            initialScoresPreview={initialScoresPreviewForClient}
             initialScoresPartial={initialScoresPartial}
-            categories={categories.map((item) => ({ code: item.code, name: item.name }))}
+            canonicalUniverseTotal={exploreUniverseTotal}
+            categories={categoriesForClient}
             initialMode={initialMode}
             initialCategory={initialCategory}
             initialQuery={initialQuery}

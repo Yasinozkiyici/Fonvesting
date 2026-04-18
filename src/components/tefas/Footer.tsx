@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Github, Twitter } from "lucide-react";
+import { Github, Twitter } from "@/components/icons";
 import { SiteLogo } from "@/components/SiteLogo";
 
 const PRODUCT_LINKS = [

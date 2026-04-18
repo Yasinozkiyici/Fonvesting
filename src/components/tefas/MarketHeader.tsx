@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Minus } from "@/components/icons";
 import { normalizeMarketApi, type MarketApiPayload } from "@/lib/client-data";
 import { describeHomeMarketFundCell } from "@/lib/home-market-fund-stats";
 
@@ -46,6 +46,7 @@ export default function MarketHeader({
   const fundCell = describeHomeMarketFundCell({
     snapshotFundCount: data.fundCount,
     exploreUniverseTotal,
+    snapshotFundCountIsCanonicalUniverse: data.snapshotFundCountIsCanonicalUniverse,
   });
 
   return (

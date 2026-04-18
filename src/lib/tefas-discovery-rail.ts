@@ -77,8 +77,9 @@ export const DISCOVERY_SECONDARY_BY_PRIMARY: Record<
   categories: "from_categories",
 };
 
-function normalizeTr(s: string): string {
-  return s
+function normalizeTr(s: string | null | undefined): string {
+  if (s == null) return "";
+  return String(s)
     .toLocaleLowerCase("tr-TR")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]+/g, "");
@@ -91,7 +92,7 @@ export function resolveCategoryCodeByHints(
 ): string {
   if (!hints?.length) return "";
   for (const hint of hints) {
-    const h = normalizeTr(hint.trim());
+    const h = normalizeTr(typeof hint === "string" ? hint.trim() : String(hint ?? "").trim());
     if (!h) continue;
     const hit = categories.find((c) => normalizeTr(c.name).includes(h));
     if (hit) return hit.code;

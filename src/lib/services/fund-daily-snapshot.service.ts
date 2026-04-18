@@ -23,6 +23,7 @@ import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeDisplayLabel, fundTypeForApi } from "@/lib/fund-type-display";
 import { getCachedUsdTryEurTry, mergeSnapshotFx } from "@/lib/services/exchange-rates.service";
 import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-types";
+import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { classifyDailyReturnPctPoints2dp, countDailyReturnDirections } from "@/lib/daily-return-ui";
 
@@ -196,6 +197,11 @@ export type FundTypeSnapshotSummary = {
 export type MarketSnapshotSummaryPayload = {
   summary: { avgDailyReturn: number; totalFundCount: number };
   fundCount: number;
+  /**
+   * When false, `fundCount` / `summary.totalFundCount` must not be shown as “tam evren” (subset/preview shell).
+   * Canonical daily snapshot path sets true; serving-row market shell sets false.
+   */
+  snapshotFundCountIsCanonicalUniverse?: boolean;
   totalPortfolioSize: number;
   totalInvestorCount: number;
   advancers: number;
@@ -652,7 +658,7 @@ export async function getScoresPayloadFromDailySnapshot(
   options?: { limit?: number; includeTotal?: boolean }
 ): Promise<ScoresApiPayload | null> {
   const startedAt = Date.now();
-  const normalizedCategory = categoryKey.trim();
+  const normalizedCategory = String(categoryKey ?? "").trim();
   const requestedLimit = Number.isFinite(options?.limit)
     ? Math.max(1, Math.trunc(options?.limit as number))
     : null;
@@ -746,14 +752,26 @@ export async function getScoresPayloadFromDailySnapshot(
   }));
 
   const queryDurationMs = Date.now() - queryStartedAt;
-  const total = totalCount ?? funds.length;
+  if (limit != null && (totalCount == null || !Number.isFinite(totalCount))) {
+    console.error(
+      `[scores-db] mode=${mode} category=${normalizedCategory || "all"} rows=${funds.length} ` +
+        `missing_universe_total_with_limit=1 limit=${limit} — refusing row_count as universe surrogate`
+    );
+    return null;
+  }
+  const total = limit != null ? (totalCount as number) : totalCount ?? funds.length;
   const totalDurationMs = Date.now() - startedAt;
   console.info(
     `[scores-db] mode=${mode} category=${normalizedCategory || "all"} rows=${funds.length} total=${total} ` +
       `queryMs=${queryDurationMs} totalMs=${totalDurationMs} limit=${limit ?? "none"}`
   );
 
-  return { mode, total, funds };
+  return createScoresPayload({
+    mode,
+    funds,
+    universeTotal: total,
+    matchedTotal: total,
+  });
 }
 
 async function computeCategorySummariesFromDailySnapshot(): Promise<CategorySnapshotSummary[]> {
@@ -1180,6 +1198,7 @@ async function computeMarketSummaryFromDailySnapshot(): Promise<MarketSnapshotSu
         totalFundCount: effectiveFundCount,
       },
       fundCount: effectiveFundCount,
+      snapshotFundCountIsCanonicalUniverse: true,
       totalPortfolioSize: effectiveTotalPortfolioSize,
       totalInvestorCount: effectiveTotalInvestorCount,
       advancers: directionCounts.advancers,
@@ -1324,12 +1343,18 @@ async function computeMarketSummaryFromSupabaseRest(): Promise<MarketSnapshotSum
     })),
   );
 
+  const restMarketSnapshotValid =
+    summary.totalFundCount > 0 &&
+    summary.totalPortfolioSize > 0 &&
+    summary.totalInvestorCount > 0 &&
+    Number.isFinite(summary.avgDailyReturn);
   return {
     summary: {
       avgDailyReturn: summary.avgDailyReturn,
       totalFundCount: effectiveFundCount,
     },
     fundCount: effectiveFundCount,
+    snapshotFundCountIsCanonicalUniverse: restMarketSnapshotValid,
     totalPortfolioSize: effectiveTotalPortfolioSize,
     totalInvestorCount: effectiveTotalInvestorCount,
     advancers: directionCounts.advancers,

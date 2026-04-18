@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { Sparkles, RotateCcw, ArrowRight } from "lucide-react";
+import { Sparkles, RotateCcw, ArrowRight } from "@/components/icons";
 import type { RankingMode } from "@/lib/scoring";
 import { FUND_THEMES, type FundThemeId } from "@/lib/fund-themes";
 

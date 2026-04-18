@@ -8,6 +8,7 @@ export type DatabaseFailureCategory =
   | "connect_timeout"
   | "network_unreachable"
   | "auth_failed"
+  | "invalid_datasource"
   | "unknown";
 
 export type DatabaseFailureClassification = {
@@ -19,7 +20,12 @@ export type DatabaseFailureClassification = {
 
 function getPrismaCode(error: unknown): string | null {
   if (error instanceof Prisma.PrismaClientKnownRequestError) return error.code;
-  if (error instanceof Prisma.PrismaClientInitializationError) return error.errorCode ?? null;
+  if (error instanceof Prisma.PrismaClientInitializationError) {
+    const fromProp = error.errorCode ?? null;
+    if (fromProp) return fromProp;
+    const match = /\b(P\d{4})\b/.exec(error.message);
+    return match?.[1] ?? null;
+  }
   return null;
 }
 
@@ -68,12 +74,18 @@ export function classifyDatabaseError(error: unknown): DatabaseFailureClassifica
   }
 
   if (
+    prismaCode === "P1001" ||
+    msg.includes("can't reach database server") ||
     msg.includes("could not translate host name") ||
     msg.includes("enotfound") ||
     msg.includes("eai_again") ||
     msg.includes("connection refused")
   ) {
     return { category: "network_unreachable", prismaCode, message, retryable: true };
+  }
+
+  if (prismaCode === "P1012" || msg.includes("error validating datasource")) {
+    return { category: "invalid_datasource", prismaCode, message, retryable: false };
   }
 
   if (msg.includes("password authentication failed") || msg.includes("authentication failed")) {

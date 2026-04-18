@@ -1,10 +1,18 @@
+import {
+  inferConnectionModeFromDatabaseUrl,
+  readPrismaRuntimeDatabaseUrlRaw,
+  readRawDatabaseUrlFromProcessEnv,
+  readRawDirectUrlFromProcessEnv,
+  type DbConnectionMode,
+} from "@/lib/db/db-connection-profile";
+
+export type { DbConnectionMode } from "@/lib/db/db-connection-profile";
+
 export type DbEnvFailureCategory =
   | "missing_database_url"
   | "missing_direct_url"
   | "invalid_database_url"
   | "unknown_env_config_error";
-
-export type DbConnectionMode = "pooled" | "direct" | "unknown";
 
 export type DbEnvStatus = {
   ok: boolean;
@@ -15,19 +23,6 @@ export type DbEnvStatus = {
   failureCategory: DbEnvFailureCategory | null;
   failureDetail: string | null;
 };
-
-function inferConnectionMode(rawUrl: string): DbConnectionMode {
-  try {
-    const url = new URL(rawUrl);
-    const host = url.hostname.toLowerCase();
-    const pgbouncer = (url.searchParams.get("pgbouncer") ?? "").toLowerCase() === "true";
-    if (host.includes("pooler.supabase.com") || pgbouncer) return "pooled";
-    if (url.protocol === "postgresql:" || url.protocol === "postgres:") return "direct";
-    return "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 
 export function sanitizeFailureDetail(input: string | null | undefined): string | null {
   if (!input) return null;
@@ -43,37 +38,38 @@ export function getDbEnvStatus(options?: {
   requireDirectUrl?: boolean;
   directUrlMandatoryInProductionOnly?: boolean;
 }): DbEnvStatus {
-  const rawDb = (process.env.DATABASE_URL ?? "").trim();
-  const rawDirect = (process.env.DIRECT_URL ?? "").trim();
+  const rawRuntime = readPrismaRuntimeDatabaseUrlRaw();
+  const rawDb = readRawDatabaseUrlFromProcessEnv();
+  const rawDirect = readRawDirectUrlFromProcessEnv();
   const isProd = process.env.NODE_ENV === "production";
   const requireDirect = options?.requireDirectUrl === true;
   const prodOnly = options?.directUrlMandatoryInProductionOnly ?? true;
   const directRequiredNow = requireDirect && (!prodOnly || isProd);
 
-  if (!rawDb) {
+  if (!rawRuntime) {
     return {
       ok: false,
       configured: false,
-      databaseUrlExists: false,
+      databaseUrlExists: Boolean(rawDb),
       directUrlExists: Boolean(rawDirect),
       connectionMode: "unknown",
       failureCategory: "missing_database_url",
-      failureDetail: "DATABASE_URL is empty",
+      failureDetail: "POSTGRES_PRISMA_URL and DATABASE_URL are both empty (runtime)",
     };
   }
 
   try {
-    const parsed = new URL(rawDb);
+    const parsed = new URL(rawRuntime);
     const proto = parsed.protocol.toLowerCase();
     if (proto !== "postgresql:" && proto !== "postgres:" && proto !== "prisma:") {
       return {
         ok: false,
         configured: true,
-        databaseUrlExists: true,
+        databaseUrlExists: Boolean(rawDb),
         directUrlExists: Boolean(rawDirect),
         connectionMode: "unknown",
         failureCategory: "invalid_database_url",
-        failureDetail: `Unsupported DATABASE_URL protocol: ${proto}`,
+        failureDetail: `Unsupported Prisma runtime URL protocol: ${proto}`,
       };
     }
 
@@ -81,9 +77,9 @@ export function getDbEnvStatus(options?: {
       return {
         ok: false,
         configured: true,
-        databaseUrlExists: true,
+        databaseUrlExists: Boolean(rawDb),
         directUrlExists: false,
-        connectionMode: inferConnectionMode(rawDb),
+        connectionMode: inferConnectionModeFromDatabaseUrl(rawRuntime),
         failureCategory: "missing_direct_url",
         failureDetail: "DIRECT_URL is required but empty",
       };
@@ -92,9 +88,9 @@ export function getDbEnvStatus(options?: {
     return {
       ok: true,
       configured: true,
-      databaseUrlExists: true,
+      databaseUrlExists: Boolean(rawDb),
       directUrlExists: Boolean(rawDirect),
-      connectionMode: inferConnectionMode(rawDb),
+      connectionMode: inferConnectionModeFromDatabaseUrl(rawRuntime),
       failureCategory: null,
       failureDetail: null,
     };
@@ -102,7 +98,7 @@ export function getDbEnvStatus(options?: {
     return {
       ok: false,
       configured: true,
-      databaseUrlExists: true,
+      databaseUrlExists: Boolean(rawDb),
       directUrlExists: Boolean(rawDirect),
       connectionMode: "unknown",
       failureCategory: "invalid_database_url",
@@ -110,4 +106,3 @@ export function getDbEnvStatus(options?: {
     };
   }
 }
-

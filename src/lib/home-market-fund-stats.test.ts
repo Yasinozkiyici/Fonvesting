@@ -24,3 +24,24 @@ test("describeHomeMarketFundCell: explore null ise yalnızca snapshot", () => {
   assert.equal(r.primaryValue, "2.390");
   assert.equal(r.secondaryLine, null);
 });
+
+test("describeHomeMarketFundCell: snapshot kanonik değilse ve keşif evreni biliniyorsa keşif öncelikli", () => {
+  const r = describeHomeMarketFundCell({
+    snapshotFundCount: 180,
+    exploreUniverseTotal: 2390,
+    snapshotFundCountIsCanonicalUniverse: false,
+  });
+  assert.equal(r.primaryLabel, "Keşif evreni");
+  assert.equal(r.primaryValue, "2.390");
+  assert.match(r.secondaryLine ?? "", /sınırlı/i);
+});
+
+test("describeHomeMarketFundCell: snapshot kanonik değilse ve keşif evreni yoksa em dash", () => {
+  const r = describeHomeMarketFundCell({
+    snapshotFundCount: 180,
+    exploreUniverseTotal: null,
+    snapshotFundCountIsCanonicalUniverse: false,
+  });
+  assert.equal(r.primaryValue, "—");
+  assert.match(r.secondaryLine ?? "", /bilinmiyor/i);
+});

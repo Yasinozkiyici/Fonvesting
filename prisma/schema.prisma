@@ -57,6 +57,7 @@ model Fund {
   priceHistory     FundPriceHistory[]
   dailySnapshots   FundDailySnapshot[]
   derivedMetrics   FundDerivedMetrics?
+  healthDailyRows  FundHealthDaily[]
   watchlistItems   WatchlistItem[]
   @@index([isActive, portfolioSize(sort: Desc)])
   @@index([isActive, dailyReturn(sort: Desc)])
@@ -293,4 +294,180 @@ model WatchlistItem {
   fund        Fund      @relation(fields: [fundId], references: [id], onDelete: Cascade)
   addedAt     DateTime  @default(now())
   @@unique([watchlistId, fundId])
+}
+
+// --- Data platform v1 (parallel-run; legacy tablolar korunur) ---
+
+enum RawPayloadParseStatus {
+  PENDING
+  OK
+  FAILED
+}
+
+model RawMarketPayload {
+  id            String                @id @default(cuid())
+  source        String
+  sourceKey     String                @map("source_key")
+  fetchedAt     DateTime              @default(now()) @map("fetched_at")
+  effectiveDate DateTime?             @map("effective_date")
+  payload       Json
+  checksum      String
+  parseStatus   RawPayloadParseStatus @default(PENDING) @map("parse_status")
+  parseError    String?               @map("parse_error")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  @@index([source, fetchedAt(sort: Desc)])
+  @@index([checksum])
+  @@index([effectiveDate])
+  @@map("raw_market_payloads")
+}
+
+model RawFundMetadataPayload {
+  id            String                @id @default(cuid())
+  source        String
+  sourceKey     String                @map("source_key")
+  fetchedAt     DateTime              @default(now()) @map("fetched_at")
+  effectiveDate DateTime?             @map("effective_date")
+  payload       Json
+  checksum      String
+  parseStatus   RawPayloadParseStatus @default(PENDING) @map("parse_status")
+  parseError    String?               @map("parse_error")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  @@index([source, fetchedAt(sort: Desc)])
+  @@index([checksum])
+  @@index([effectiveDate])
+  @@map("raw_fund_metadata_payloads")
+}
+
+model RawInvestorCountsPayload {
+  id            String                @id @default(cuid())
+  source        String
+  sourceKey     String                @map("source_key")
+  fetchedAt     DateTime              @default(now()) @map("fetched_at")
+  effectiveDate DateTime?             @map("effective_date")
+  payload       Json
+  checksum      String
+  parseStatus   RawPayloadParseStatus @default(PENDING) @map("parse_status")
+  parseError    String?               @map("parse_error")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  @@index([source, fetchedAt(sort: Desc)])
+  @@index([checksum])
+  @@index([effectiveDate])
+  @@map("raw_investor_counts_payloads")
+}
+
+model RawPricesPayload {
+  id            String                @id @default(cuid())
+  source        String
+  sourceKey     String                @map("source_key")
+  fetchedAt     DateTime              @default(now()) @map("fetched_at")
+  effectiveDate DateTime?             @map("effective_date")
+  payload       Json
+  checksum      String
+  parseStatus   RawPayloadParseStatus @default(PENDING) @map("parse_status")
+  parseError    String?               @map("parse_error")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  @@index([source, fetchedAt(sort: Desc)])
+  @@index([checksum])
+  @@index([effectiveDate])
+  @@map("raw_prices_payloads")
+}
+
+model RawPortfolioBreakdownsPayload {
+  id            String                @id @default(cuid())
+  source        String
+  sourceKey     String                @map("source_key")
+  fetchedAt     DateTime              @default(now()) @map("fetched_at")
+  effectiveDate DateTime?             @map("effective_date")
+  payload       Json
+  checksum      String
+  parseStatus   RawPayloadParseStatus @default(PENDING) @map("parse_status")
+  parseError    String?               @map("parse_error")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  @@index([source, fetchedAt(sort: Desc)])
+  @@index([checksum])
+  @@index([effectiveDate])
+  @@map("raw_portfolio_breakdowns_payloads")
+}
+
+/** Günlük fon bütünlük / eksiklik skoru (serving öncesi denetim). */
+model FundHealthDaily {
+  id                String   @id @default(cuid())
+  fundId            String   @map("fund_id")
+  date              DateTime
+  completenessScore Float?   @map("completeness_score")
+  missingFields     Json?    @map("missing_fields")
+  diagnostics       Json?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  fund              Fund     @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  @@unique([fundId, date])
+  @@index([date(sort: Desc)])
+  @@map("fund_health_daily")
+}
+
+model ServingFundList {
+  id           String   @id @default(cuid())
+  buildId      String   @unique @map("build_id")
+  snapshotAsOf DateTime @map("snapshot_as_of")
+  status       String   @default("unknown")
+  payload      Json
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@index([snapshotAsOf(sort: Desc)])
+  @@map("serving_fund_list")
+}
+
+model ServingFundDetail {
+  id           String   @id @default(cuid())
+  buildId      String   @map("build_id")
+  fundCode     String   @map("fund_code")
+  snapshotAsOf DateTime @map("snapshot_as_of")
+  status       String   @default("unknown")
+  payload      Json
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@unique([buildId, fundCode])
+  @@index([fundCode, snapshotAsOf(sort: Desc)])
+  @@map("serving_fund_detail")
+}
+
+model ServingCompareInputs {
+  id           String   @id @default(cuid())
+  buildId      String   @unique @map("build_id")
+  snapshotAsOf DateTime @map("snapshot_as_of")
+  status       String   @default("unknown")
+  payload      Json
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@index([snapshotAsOf(sort: Desc)])
+  @@map("serving_compare_inputs")
+}
+
+model ServingDiscoveryIndex {
+  id           String   @id @default(cuid())
+  buildId      String   @unique @map("build_id")
+  snapshotAsOf DateTime @map("snapshot_as_of")
+  status       String   @default("unknown")
+  payload      Json
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@index([snapshotAsOf(sort: Desc)])
+  @@map("serving_discovery_index")
+}
+
+model ServingSystemStatus {
+  id           String   @id @default(cuid())
+  buildId      String   @unique @map("build_id")
+  snapshotAsOf DateTime @map("snapshot_as_of")
+  status       String   @default("unknown")
+  payload      Json
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@index([snapshotAsOf(sort: Desc)])
+  @@map("serving_system_status")
 }

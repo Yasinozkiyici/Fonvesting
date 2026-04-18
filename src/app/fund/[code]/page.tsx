@@ -20,6 +20,8 @@ import {
   deriveFundDetailSectionStates,
   shouldRenderSectionFromContract,
 } from "@/lib/fund-detail-section-status";
+import { normalizeFundDetailPayloadAtBoundary } from "@/lib/data-flow/detail-boundary";
+import { logDetailDataFlowEvidence } from "@/lib/data-flow/diagnostics";
 import { loadFundDetailPageData } from "@/lib/services/fund-detail-load";
 
 function FundDetailChartSkeleton() {
@@ -93,9 +95,44 @@ export default async function FundDetailPage({ params }: Props) {
 
   const data = await loadFundDetailPageData(code);
   if (!data) notFound();
-  const sectionStates = deriveFundDetailSectionStates(data);
-  const behavior = deriveFundDetailBehaviorContract(data);
-  const alternativesHasRenderablePayload = data.similarFunds.length > 0;
+  const boundary = normalizeFundDetailPayloadAtBoundary(data);
+  logDetailDataFlowEvidence({
+    code: code.toUpperCase(),
+    surfaceState: boundary.surfaceState.kind,
+    rejectedRows: boundary.diagnostics.rejectedRows,
+    normalizedRows: boundary.diagnostics.normalizedRows,
+    rejectedReason: boundary.diagnostics.rejectedReason,
+  });
+  if (!boundary.payload) {
+    return (
+      <SitePageShell>
+        <Header />
+        <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
+          <div
+            className="rounded-[1rem] border px-4 py-4 text-sm"
+            style={{
+              borderColor: "var(--border-subtle)",
+              background: "var(--card-bg)",
+              color: "var(--text-secondary)",
+            }}
+            data-detail-surface-state={boundary.surfaceState.kind}
+          >
+            Fon detayı şu an güvenli şekilde oluşturulamadı. Lütfen kısa süre sonra tekrar deneyin.
+          </div>
+        </main>
+        <Footer variant="detail" />
+      </SitePageShell>
+    );
+  }
+  const safeData = boundary.payload;
+  const selfCode = safeData.fund.code.trim().toUpperCase();
+  const alternativesRenderableCount = safeData.similarFunds.filter((item) => {
+    const altCode = item.code?.trim().toUpperCase();
+    return Boolean(altCode && altCode !== selfCode);
+  }).length;
+  const sectionStates = deriveFundDetailSectionStates(safeData);
+  const behavior = deriveFundDetailBehaviorContract(safeData);
+  const alternativesHasRenderablePayload = alternativesRenderableCount > 0;
   const shouldRenderAlternativesSection = shouldRenderSectionFromContract(
     behavior.canRenderAlternatives,
     alternativesHasRenderablePayload
@@ -111,18 +148,23 @@ export default async function FundDetailPage({ params }: Props) {
       <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 pb-20 max-md:pb-[max(6.75rem,calc(5.25rem+env(safe-area-inset-bottom,0px)))] sm:px-6 sm:py-5 md:pb-9 lg:px-8 lg:pb-10">
         <div
           className="sr-only"
-          data-detail-overall-health={data.overallDetailHealth?.overallDetailHealth ?? "unknown"}
-          data-detail-reliability-class={data.overallDetailHealth?.reliabilityClass ?? data.degraded?.reliabilityClass ?? "unknown"}
-          data-detail-trust-final={data.overallDetailHealth?.trustAsFinal ? "1" : "0"}
+          data-detail-overall-health={safeData.overallDetailHealth?.overallDetailHealth ?? "unknown"}
+          data-detail-reliability-class={safeData.overallDetailHealth?.reliabilityClass ?? safeData.degraded?.reliabilityClass ?? "unknown"}
+          data-detail-trust-final={safeData.overallDetailHealth?.trustAsFinal ? "1" : "0"}
+          data-detail-surface-state={boundary.surfaceState.kind}
         />
         <FundDetailAutoRecover
-          fundCode={data.fund.code}
-          degraded={Boolean(data.degraded?.active)}
+          fundCode={safeData.fund.code}
+          degraded={Boolean(safeData.degraded?.active)}
           sectionStates={sectionStates}
-          suppressAutoRefresh={behavior.tier === "LOW_DATA" || behavior.tier === "NO_USEFUL_DATA"}
+          suppressAutoRefresh={
+            behavior.tier === "LOW_DATA" ||
+            behavior.tier === "NO_USEFUL_DATA" ||
+            safeData.overallDetailHealth?.overallDetailHealth === "invalid"
+          }
         />
-        <FundDetailStabilityProbe fundCode={data.fund.code} />
-        <FundDetailHero data={data} />
+        <FundDetailStabilityProbe fundCode={safeData.fund.code} />
+        <FundDetailHero data={safeData} />
 
         <FundDetailMobileTabNav showRiskTab={showRiskTab} showCompareTab={showCompareTab} />
 
@@ -131,16 +173,16 @@ export default async function FundDetailPage({ params }: Props) {
             data-detail-section="performance"
             className="flex flex-col gap-4 max-md:scroll-mt-[calc(3.375rem+3.25rem+env(safe-area-inset-top,0px))] md:gap-6"
           >
-            <FundDetailChart data={data} />
-            <FundDetailTrends data={data} />
+            <FundDetailChart data={safeData} />
+            <FundDetailTrends data={safeData} />
           </div>
 
           <div style={{ contentVisibility: "auto", containIntrinsicSize: "232px" }}>
-            <FundDetailRisk data={data} />
+            <FundDetailRisk data={safeData} />
           </div>
 
           <div style={{ contentVisibility: "auto", containIntrinsicSize: "360px" }}>
-            <FundDetailProfile data={data} />
+            <FundDetailProfile data={safeData} />
           </div>
 
           {shouldRenderAlternativesSection ? (
@@ -148,8 +190,8 @@ export default async function FundDetailPage({ params }: Props) {
               <FundDetailAlternativesRegion>
                 <FundDetailSimilar
                   sectionId={FUND_DETAIL_PHASE2_IDS.alternatives}
-                  funds={data.similarFunds}
-                  categoryName={data.fund.category?.name ?? null}
+                  funds={safeData.similarFunds}
+                  categoryName={safeData.fund.category?.name ?? null}
                 />
               </FundDetailAlternativesRegion>
             </div>
@@ -157,7 +199,7 @@ export default async function FundDetailPage({ params }: Props) {
         </div>
       </main>
 
-      <FundDetailMobileDock fundCode={data.fund.code} />
+      <FundDetailMobileDock fundCode={safeData.fund.code} />
 
       <Footer variant="detail" />
     </SitePageShell>

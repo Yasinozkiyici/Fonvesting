@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock3, LayoutGrid, Network, Scale, Shield, TrendingUp, type LucideIcon } from "lucide-react";
+import { Clock3, LayoutGrid, Network, Scale, Shield, TrendingUp, type LucideIcon } from "@/components/icons";
 import ScoredFundsTable from "@/components/tefas/ScoredFundsTable";
 import { fetchNormalizedJsonWithMeta, normalizeScoredResponse } from "@/lib/client-data";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
@@ -22,6 +22,8 @@ import {
 type Props = {
   initialScoresPreview: ScoredResponse | null;
   initialScoresPartial: boolean;
+  /** Kanonik keşif evreni toplamı; bilinmiyorsa null (satır sayısından türetilmez). */
+  canonicalUniverseTotal: number | null;
   categories: Array<{ code: string; name: string }>;
   initialMode: RankingMode;
   initialCategory: string;
@@ -89,7 +91,7 @@ function initialDiscoveryFromUrl(
   categories: Array<{ code: string; name: string }>
 ): { primary: DiscoveryPrimaryKind | null; secondaryId: string } {
   if (initialTheme) return { primary: "thematic", secondaryId: initialTheme };
-  const cat = initialCategory.trim();
+  const cat = String(initialCategory ?? "").trim();
   if (cat && categories.some((c) => c.code === cat)) {
     return { primary: "categories", secondaryId: cat };
   }
@@ -99,6 +101,7 @@ function initialDiscoveryFromUrl(
 export function HomePageClient({
   initialScoresPreview,
   initialScoresPartial,
+  canonicalUniverseTotal,
   categories,
   initialMode,
   initialCategory,
@@ -404,8 +407,6 @@ export function HomePageClient({
     return universeScopeLabel(null);
   }, [discoveryActive, effectiveCategory, effectiveTheme, initialScoresPreview?.funds]);
 
-  const referenceUniverseTotal = initialScoresPreview?.total ?? initialScoresPreview?.funds.length ?? null;
-
   const fundsForSpotlights = discoveryActive ? (modeSpotlightPayload ?? initialScoresPreview) : initialScoresPreview;
 
   const featuredSpotlights = useMemo(() => {
@@ -418,7 +419,7 @@ export function HomePageClient({
       const nb = b.finalScore;
       const aMissing = na == null || !Number.isFinite(na);
       const bMissing = nb == null || !Number.isFinite(nb);
-      if (aMissing && bMissing) return a.code.localeCompare(b.code, "tr");
+      if (aMissing && bMissing) return String(a.code ?? "").localeCompare(String(b.code ?? ""), "tr");
       if (aMissing) return 1;
       if (bMissing) return -1;
       return nb - na;
@@ -710,7 +711,7 @@ export function HomePageClient({
             quickStartLabel={quickStartDisplayLabel}
             quickStartUniverseHint={discoveryActive ? estimatedUniverseLabel : null}
             quickStartOnClear={discoveryActive ? handleDiscoveryClear : undefined}
-            referenceUniverseTotal={referenceUniverseTotal}
+            referenceUniverseTotal={canonicalUniverseTotal}
           />
         </div>
       </div>

@@ -1092,6 +1092,7 @@ export type FundDetailPageData = {
     fundSizeTrendHealth: "healthy" | "degraded" | "invalid";
     compareHealth: "healthy" | "degraded" | "invalid";
     alternativesHealth: "healthy" | "degraded" | "invalid";
+    profileHealth: "healthy" | "degraded" | "invalid";
   };
   overallDetailHealth?: {
     overallDetailHealth: "healthy" | "degraded" | "invalid";

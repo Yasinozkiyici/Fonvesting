@@ -17,6 +17,19 @@ import {
   shouldUseFastCompareContextFallback,
 } from "@/lib/operational-hardening";
 import { readActiveRegistryFundsByCodes } from "@/lib/services/fund-registry-read.service";
+import {
+  enforceServingRouteTrust,
+  readServingComparePrimary,
+  readServingFundListPrimary,
+  servingHeaders,
+} from "@/lib/data-platform/read-side-serving";
+import { tryFormatDbRuntimeEvidenceOneLiner } from "@/lib/db-runtime-diagnostics";
+import { resolveCompareSurfaceState } from "@/lib/data-flow/compare-boundary";
+import { logCompareDataFlowEvidence } from "@/lib/data-flow/diagnostics";
+import {
+  isServingStrictModeEnabled,
+  servingStrictHeaders,
+} from "@/lib/data-platform/serving-strict-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -320,12 +333,33 @@ async function loadContextForRows(rows: CompareFundRow[]): Promise<ContextLoadOu
 
 export async function GET(req: NextRequest) {
   try {
+    const strictMode = isServingStrictModeEnabled(req);
+    const [servingCompare, servingList] = await Promise.all([
+      readServingComparePrimary(),
+      readServingFundListPrimary(),
+    ]);
+    const servingWorld = servingCompare.world ?? servingList.world ?? null;
     const codes = parseCodes(req.nextUrl.searchParams.get("codes"));
     if (codes.length === 0) {
+      const surfaceState = resolveCompareSurfaceState({
+        requestedCount: 0,
+        returnedCount: 0,
+        failureClass: null,
+        degradedSource: "empty_request",
+        payloadInvalid: false,
+      });
       return NextResponse.json(
         {
           funds: [] as const,
           compare: null as CompareContextDto | null,
+          meta: {
+            servingWorld,
+            compareHealth: "invalid",
+            trustAsFinal: false,
+            degradedSource: "empty_request",
+            failureClass: null,
+            surfaceState,
+          },
         },
         {
           headers: { "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC) },
@@ -333,11 +367,42 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    let rows = await loadRowsFromServing(codes).catch(() => []);
+    let rows = (() => {
+      if (!servingCompare.payload || !servingList.payload) return [] as CompareFundRow[];
+      const selected = new Set(codes.map((code) => code.trim().toUpperCase()));
+      const listByCode = new Map(
+        servingList.payload.funds.map((fund) => [fund.code.trim().toUpperCase(), fund])
+      );
+      return servingCompare.payload.funds
+        .filter((item) => selected.has(item.code.trim().toUpperCase()))
+        .map((item) => {
+          const list = listByCode.get(item.code.trim().toUpperCase());
+          return {
+            fundId: list?.code ?? item.code,
+            code: item.code,
+            name: list?.name ?? item.code,
+            shortName: list?.shortName ?? null,
+            logoUrl: null,
+            lastPrice: list?.lastPrice ?? 0,
+            dailyReturn: item.dailyReturn,
+            monthlyReturn: item.monthlyReturn,
+            yearlyReturn: item.yearlyReturn,
+            portfolioSize: item.portfolioSize,
+            investorCount: item.investorCount,
+            categoryCode: item.categoryCode,
+            categoryName: item.categoryCode,
+            fundTypeCode: list?.fundTypeCode ?? null,
+            fundTypeName: list?.fundTypeCode != null ? String(list.fundTypeCode) : null,
+            categoryId: null,
+            isActive: true,
+          } satisfies CompareFundRow;
+        });
+    })();
     let degradedSource: string | null = null;
-    if (rows.length > 0) degradedSource = "serving";
+    if (rows.length > 0) degradedSource = "serving_compare_inputs";
     if (rows.length === 0) {
       rows = await loadRowsFromSnapshot(codes).catch(() => []);
+      if (rows.length > 0) degradedSource = "snapshot_fallback";
     }
     if (rows.length === 0) {
       rows = await loadRowsFromFundRegistry(codes).catch(() => []);
@@ -365,6 +430,50 @@ export async function GET(req: NextRequest) {
       degradedSource,
       contextDegraded: contextOutcome.degraded,
     });
+    const routeTrust = enforceServingRouteTrust({
+      world: servingWorld,
+      source: "serving_compare_inputs",
+      requiredBuilds: ["fundList", "compare", "system"],
+      payloadAvailable: rowsUsable,
+      fallbackUsed: degradedSource !== "serving_compare_inputs",
+      fallbackReason: degradedSource ?? "serving_compare_unavailable",
+    });
+    const strictTrust = compareHealth.trustAsFinal && routeTrust.trustAsFinal;
+    if (strictMode && (degradedSource !== "serving_compare_inputs" || !strictTrust)) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/funds/compare",
+          reason:
+            degradedSource && degradedSource !== "serving_compare_inputs"
+              ? degradedSource
+              : routeTrust.degradedReason ?? "compare_not_final",
+        },
+        {
+          status: 503,
+          headers: {
+            ...servingHeaders({
+              world: servingWorld,
+              trust: {
+                trustAsFinal: strictTrust,
+                degradedKind: routeTrust.degradedKind,
+                degradedReason: routeTrust.degradedReason,
+              },
+              routeSource: degradedSource ?? "unknown",
+              fallbackUsed: degradedSource !== "serving_compare_inputs",
+            }),
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason:
+                degradedSource && degradedSource !== "serving_compare_inputs"
+                  ? degradedSource
+                  : routeTrust.degradedReason ?? "compare_not_final",
+            }),
+          },
+        }
+      );
+    }
 
     const funds = ordered.map((it) => {
       const ex = extrasById[it.fundId] ?? {
@@ -397,8 +506,42 @@ export async function GET(req: NextRequest) {
       };
     });
 
+    if (codes.length >= 2 && funds.length < 2) {
+      console.warn(
+        `[funds/compare-insufficient] requested=${codes.join(",")} returned_funds=${funds.length} ` +
+          `degraded_source=${degradedSource ?? "none"} compare_health=${compareHealth.compareHealth} ` +
+          `evidence=${tryFormatDbRuntimeEvidenceOneLiner()}`
+      );
+    }
+    const surfaceState = resolveCompareSurfaceState({
+      requestedCount: codes.length,
+      returnedCount: funds.length,
+      failureClass: contextOutcome.failureClass,
+      degradedSource: degradedSource ?? null,
+      payloadInvalid: false,
+    });
+    logCompareDataFlowEvidence({
+      requestedCount: codes.length,
+      returnedCount: funds.length,
+      surfaceState: surfaceState.kind,
+      degradedSource: degradedSource ?? null,
+      failureClass: contextOutcome.failureClass,
+      compareHealth: compareHealth.compareHealth,
+    });
+
     return NextResponse.json(
-      { funds, compare },
+      {
+        funds,
+        compare,
+        meta: {
+          servingWorld,
+          compareHealth: compareHealth.compareHealth,
+          trustAsFinal: compareHealth.trustAsFinal && routeTrust.trustAsFinal,
+          degradedSource: degradedSource ?? null,
+          failureClass: contextOutcome.failureClass,
+          surfaceState,
+        },
+      },
       {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
@@ -406,10 +549,39 @@ export async function GET(req: NextRequest) {
           ...(contextOutcome.failureClass ? { "X-Compare-Failure-Class": contextOutcome.failureClass } : {}),
           "X-Compare-Health": compareHealth.compareHealth,
           "X-Compare-Trust-Final": compareHealth.trustAsFinal ? "1" : "0",
+          ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+          ...servingHeaders({
+            world: servingWorld,
+            trust: {
+              trustAsFinal: strictTrust,
+              degradedKind: routeTrust.degradedKind,
+              degradedReason: routeTrust.degradedReason,
+            },
+            routeSource: degradedSource ?? "unknown",
+            fallbackUsed: degradedSource !== "serving_compare_inputs",
+          }),
         },
       }
     );
   } catch (e) {
+    const strictMode = isServingStrictModeEnabled(req);
+    if (strictMode) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/funds/compare",
+          reason: "exception_requires_fallback",
+        },
+        {
+          status: 503,
+          headers: servingStrictHeaders({
+            enabled: strictMode,
+            violated: true,
+            reason: "exception_requires_fallback",
+          }),
+        }
+      );
+    }
     const codes = parseCodes(req.nextUrl.searchParams.get("codes"));
     const servingRows = codes.length > 0 ? await loadRowsFromServing(codes).catch(() => []) : [];
     if (servingRows.length > 0) {
@@ -438,16 +610,36 @@ export async function GET(req: NextRequest) {
         maxDrawdown1y: null,
         variabilityLabel: null,
       }));
+      const failureClass = isTimeoutLike(e) ? "timeout" : "compare_failed";
+      const surfaceState = resolveCompareSurfaceState({
+        requestedCount: codes.length,
+        returnedCount: fallbackFunds.length,
+        failureClass,
+        degradedSource: "serving_exception_fallback",
+        payloadInvalid: false,
+      });
+      logCompareDataFlowEvidence({
+        requestedCount: codes.length,
+        returnedCount: fallbackFunds.length,
+        surfaceState: surfaceState.kind,
+        degradedSource: "serving_exception_fallback",
+        failureClass,
+      });
       return NextResponse.json(
         {
           funds: fallbackFunds,
           compare: buildDegradedCompareContext(ordered.map((row) => row.code.trim().toUpperCase())),
+          meta: {
+            degradedSource: "serving_exception_fallback",
+            failureClass,
+            surfaceState,
+          },
         },
         {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
             "X-Compare-Degraded-Source": "serving_exception_fallback",
-            "X-Compare-Failure-Class": isTimeoutLike(e) ? "timeout" : "compare_failed",
+            "X-Compare-Failure-Class": failureClass,
           },
         }
       );

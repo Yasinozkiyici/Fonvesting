@@ -10,6 +10,9 @@ export async function GET() {
     message: "Alt yolları kullanın; kök /api yalnızca bu listeyi döner.",
     endpoints: {
       health: "/api/health",
+      healthData: "/api/health/data (auth: CRON_SECRET veya HEALTH_SECRET)",
+      healthServing: "/api/health/serving",
+      healthFund: "/api/health/fund/[code]",
       funds: "/api/funds?pageSize=10",
       market: "/api/market",
       categories: "/api/categories",

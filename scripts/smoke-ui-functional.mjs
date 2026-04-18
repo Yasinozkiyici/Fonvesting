@@ -125,8 +125,12 @@ async function assertDetailUsable(page, code) {
   const companion = comparisonCompanions.find((item) => item !== code) || "TI1";
   const altCompanion = comparisonCompanions.find((item) => item !== code && item !== companion) || "ZP8";
   const comparePayload = await fetchJson(page, `/api/funds/compare?codes=${code},${companion}`);
+  const compareSurfaceState = comparePayload?.meta?.surfaceState?.kind || null;
+  if (!compareSurfaceState) fail(`/api/funds/compare for ${code} missing meta.surfaceState.kind`);
   const compareFunds = Array.isArray(comparePayload?.funds) ? comparePayload.funds.length : 0;
-  if (compareFunds < 2) fail(`/api/funds/compare for ${code} returned <2 funds`);
+  if (compareSurfaceState === "ready" && compareFunds < 2) {
+    fail(`/api/funds/compare for ${code} state=ready but returned <2 funds`);
+  }
 
   const response = await page.goto(`${baseUrl}/fund/${code}`, { waitUntil: "networkidle", timeout: timeoutMs });
   if (!response) fail(`/fund/${code} status none`);
@@ -134,27 +138,70 @@ async function assertDetailUsable(page, code) {
     throw buildPreviewAuthBlocker(response.status(), `${baseUrl}/fund/${code}`);
   }
   if (response.status() >= 400) fail(`/fund/${code} status ${response.status()}`);
+  await page.waitForSelector("[data-detail-surface-state]", { timeout: timeoutMs });
+  await waitForLoadingToSettle(page);
+
+  const detailSurfaceState = await page
+    .locator("[data-detail-surface-state]")
+    .first()
+    .getAttribute("data-detail-surface-state")
+    .catch(() => null);
+  if (!detailSurfaceState) {
+    fail(`/fund/${code} missing data-detail-surface-state`);
+  }
+  const detailReady = detailSurfaceState === "ready";
+  if (!detailReady) {
+    const degradedPanelCount = await page
+      .locator(`[data-detail-surface-state="${detailSurfaceState}"]`)
+      .count()
+      .catch(() => 0);
+    if (degradedPanelCount < 1) {
+      fail(`/fund/${code} detail degraded state=${detailSurfaceState} has no explicit surface marker`);
+    }
+    return;
+  }
+
   await page.waitForFunction(
     () => document.body.innerText.toLocaleLowerCase("tr-TR").includes("getiri karşılaştırması"),
     null,
     { timeout: timeoutMs }
   );
-  await waitForLoadingToSettle(page);
 
   const body = await visibleText(page);
   const normalizedBody = normalizeText(body);
   if (!normalizedBody.includes("karşılaştırma")) fail(`/fund/${code} missing comparison UI`);
-  if (!normalizedBody.includes("öncelikli net fark")) fail(`/fund/${code} missing comparison summary`);
-  if (normalizedBody.includes("0 geçti •0 geride •0 başa baş") && normalizedBody.includes("veri yetersiz")) {
-    fail(`/fund/${code} comparison rendered product-useless rows`);
+  const comparisonPanelState = await page
+    .locator("[data-fund-detail-comparison-summary-state]")
+    .first()
+    .getAttribute("data-fund-detail-comparison-summary-state")
+    .catch(() => null);
+  if (!comparisonPanelState) {
+    fail(`/fund/${code} missing data-fund-detail-comparison-summary-state (comparison panel contract)`);
   }
 
-  const comparisonRowCount = await page
-    .locator("span")
-    .filter({ hasText: /^(Geçti|Geride|Başa baş|Veri yetersiz)$/ })
-    .count()
-    .catch(() => 0);
-  if (comparisonRowCount < 1) fail(`/fund/${code} comparison rows missing`);
+  if (comparisonPanelState === "ready") {
+    if (!normalizedBody.includes("öncelikli net fark")) fail(`/fund/${code} missing comparison summary`);
+    if (normalizedBody.includes("0 geçti •0 geride •0 başa baş") && normalizedBody.includes("veri yetersiz")) {
+      fail(`/fund/${code} comparison rendered product-useless rows`);
+    }
+    const comparisonRowCount = await page
+      .locator("span")
+      .filter({ hasText: /^(Geçti|Geride|Başa baş|Veri yetersiz)$/ })
+      .count()
+      .catch(() => 0);
+    if (comparisonRowCount < 1) fail(`/fund/${code} comparison rows missing`);
+  } else {
+    const degradedReason = await page
+      .locator("[data-fund-detail-comparison-degraded-reason]")
+      .first()
+      .getAttribute("data-fund-detail-comparison-degraded-reason")
+      .catch(() => null);
+    if (!degradedReason || degradedReason === "ready") {
+      fail(
+        `/fund/${code} comparison panel state=${comparisonPanelState} expected typed degraded reason (data-fund-detail-comparison-degraded-reason)`
+      );
+    }
+  }
 
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await waitForLoadingToSettle(page);
@@ -180,6 +227,57 @@ async function assertDetailUsable(page, code) {
     fail(`/fund/${code} API had alternatives but UI rendered empty`);
   }
   if (alternativeLinks < 1) fail(`/fund/${code} alternatives section has no fund links`);
+}
+
+async function assertCompareSurface(page) {
+  const codes = ["VGA", "TI1"];
+  const compareReadyPayload = await fetchJson(page, `/api/funds/compare?codes=${codes.join(",")}`);
+  const readyState = compareReadyPayload?.meta?.surfaceState?.kind || null;
+  if (!readyState) fail("/api/funds/compare missing meta.surfaceState.kind");
+
+  await page.goto(`${baseUrl}/compare`, { waitUntil: "networkidle", timeout: timeoutMs });
+  await page.evaluate(
+    (codesToStore) => {
+      localStorage.setItem("fonvesting_compare_codes_v1", JSON.stringify(codesToStore));
+      window.dispatchEvent(new Event("fonvesting_compare_codes_changed"));
+    },
+    codes
+  );
+  await page.reload({ waitUntil: "networkidle", timeout: timeoutMs });
+  await page.waitForSelector("[data-compare-surface-state]", { timeout: timeoutMs });
+  await waitForLoadingToSettle(page);
+  const uiReadyState = await page
+    .locator("[data-compare-surface-state]")
+    .first()
+    .getAttribute("data-compare-surface-state")
+    .catch(() => null);
+  if (!uiReadyState) fail("/compare missing data-compare-surface-state");
+  if (readyState === "ready") {
+    const readyMarkerCount = await page.locator("[data-compare-surface-ready='1']").count();
+    if (readyMarkerCount < 1) fail("/compare ready state missing success surface marker");
+  } else {
+    const degradedMarkerCount = await page.locator("[data-compare-surface-degraded='1']").count();
+    if (degradedMarkerCount < 1) fail(`/compare state=${uiReadyState} missing degraded surface marker`);
+  }
+
+  await page.evaluate(() => {
+    localStorage.setItem("fonvesting_compare_codes_v1", JSON.stringify(["VGA"]));
+    window.dispatchEvent(new Event("fonvesting_compare_codes_changed"));
+  });
+  await page.reload({ waitUntil: "networkidle", timeout: timeoutMs });
+  await page.waitForSelector("[data-compare-surface-state]", { timeout: timeoutMs });
+  const insufficientState = await page
+    .locator("[data-compare-surface-state]")
+    .first()
+    .getAttribute("data-compare-surface-state")
+    .catch(() => null);
+  if (insufficientState !== "degraded_insufficient_funds") {
+    fail(`/compare insufficient funds state mismatch: ${String(insufficientState)}`);
+  }
+  const readyMarkerWithOneCode = await page.locator("[data-compare-surface-ready='1']").count();
+  if (readyMarkerWithOneCode > 0) {
+    fail("/compare rendered success surface with insufficient funds");
+  }
 }
 
 async function assertHomepageDiscovery(page) {
@@ -268,6 +366,8 @@ try {
     await assertDetailUsable(page, code);
     console.log(`[smoke:ui-functional] /fund/${code} ok`);
   }
+  await assertCompareSurface(page);
+  console.log("[smoke:ui-functional] /compare boundary surface contract ok");
   await assertHomepageDiscovery(page);
   if (runtimeErrors.length > 0) {
     throw new ReleaseVerificationError("runtime/client asset failures detected", {

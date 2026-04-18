@@ -4,6 +4,7 @@ import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { servingHomeRowHasPublishableCode } from "@/lib/services/fund-detail-core-serving-row-guard";
 
 const DAY_MS = 86_400_000;
 const CORE_SERVING_KEY_PREFIX = "fund_detail_core:v1";
@@ -411,30 +412,42 @@ function getCoreServingFileState(): {
   return g.__fundDetailCoreServingFileCache;
 }
 
-function toServingListRow(payload: FundDetailCoreServingPayload): FundDetailCoreServingListRow {
+function toServingListRow(payload: FundDetailCoreServingPayload | null | undefined): FundDetailCoreServingListRow {
+  const fund = payload?.fund;
+  const safeCode = String(fund?.code ?? "").trim();
+  const safeFundId = String(fund?.fundId ?? "").trim();
   return {
-    fundId: payload.fund.fundId,
-    code: payload.fund.code,
-    name: payload.fund.name,
-    shortName: payload.fund.shortName,
-    logoUrl: payload.fund.logoUrl,
-    categoryCode: payload.fund.categoryCode,
-    categoryName: payload.fund.categoryName,
-    fundTypeCode: payload.fund.fundTypeCode,
-    fundTypeName: payload.fund.fundTypeName,
-    lastPrice: Number.isFinite(payload.latestPrice) ? payload.latestPrice : 0,
-    dailyReturn: Number.isFinite(payload.dailyChangePct) ? payload.dailyChangePct : 0,
-    monthlyReturn: Number.isFinite(payload.monthlyReturn) ? payload.monthlyReturn : 0,
-    yearlyReturn: Number.isFinite(payload.yearlyReturn) ? payload.yearlyReturn : 0,
+    fundId: safeFundId || (safeCode ? `serving-fund:${safeCode}` : ""),
+    code: safeCode,
+    name: String(fund?.name ?? "").trim() || safeCode,
+    shortName: fund?.shortName ?? null,
+    logoUrl: fund?.logoUrl ?? null,
+    categoryCode: fund?.categoryCode ?? null,
+    categoryName: fund?.categoryName ?? null,
+    fundTypeCode: fund?.fundTypeCode ?? null,
+    fundTypeName: fund?.fundTypeName ?? null,
+    lastPrice: payload && Number.isFinite(payload.latestPrice) ? payload.latestPrice : 0,
+    dailyReturn: payload && Number.isFinite(payload.dailyChangePct) ? payload.dailyChangePct : 0,
+    monthlyReturn: payload && Number.isFinite(payload.monthlyReturn) ? payload.monthlyReturn : 0,
+    yearlyReturn: payload && Number.isFinite(payload.yearlyReturn) ? payload.yearlyReturn : 0,
     portfolioSize:
-      Number.isFinite(payload.portfolioSummary?.current) && payload.portfolioSummary.current > 0
+      payload &&
+      Number.isFinite(payload.portfolioSummary?.current) &&
+      payload.portfolioSummary &&
+      payload.portfolioSummary.current > 0
         ? payload.portfolioSummary.current
         : 0,
     investorCount:
-      Number.isFinite(payload.investorSummary?.current) && payload.investorSummary.current > 0
+      payload &&
+      Number.isFinite(payload.investorSummary?.current) &&
+      payload.investorSummary &&
+      payload.investorSummary.current > 0
         ? Math.round(payload.investorSummary.current)
         : 0,
-    updatedAt: payload.generatedAt,
+    updatedAt:
+      typeof payload?.generatedAt === "string" && payload.generatedAt.trim()
+        ? payload.generatedAt
+        : new Date(0).toISOString(),
   };
 }
 
@@ -1286,7 +1299,7 @@ export async function listFundDetailCoreServingRows(limit: number): Promise<Fund
   const memoryRows = [...getCoreServingMemory().values()]
     .filter((entry) => now - entry.cachedAt <= CORE_SERVING_MEMORY_TTL_MS)
     .map((entry) => toServingListRow(entry.payload))
-    .filter((row) => row.code.trim().length > 0);
+    .filter(servingHomeRowHasPublishableCode);
 
   if (memoryRows.length >= boundedLimit) {
     memoryRows.sort(rankServingRows);
@@ -1297,7 +1310,7 @@ export async function listFundDetailCoreServingRows(limit: number): Promise<Fund
   const fileState = getCoreServingFileState();
   const fileRows = [...fileState.records.values()]
     .map(toServingListRow)
-    .filter((row) => row.code.trim().length > 0);
+    .filter(servingHomeRowHasPublishableCode);
   if (fileRows.length > 0) {
     fileRows.sort(rankServingRows);
     return { rows: fileRows.slice(0, boundedLimit), source: "file", missReason: null };
@@ -1331,7 +1344,9 @@ export async function getFundDetailCoreServingUniversePayloads(): Promise<{
       const memory = getCoreServingMemory();
       const cachedAt = Date.now();
       for (const payload of records) {
-        memory.set(payload.fund.code.trim().toUpperCase(), { payload, cachedAt });
+        const codeRaw = payload.fund?.code;
+        if (typeof codeRaw !== "string" || !codeRaw.trim()) continue;
+        memory.set(codeRaw.trim().toUpperCase(), { payload, cachedAt });
       }
       return { records, source: "db", missReason: null };
     }
@@ -1359,7 +1374,9 @@ export async function getFundDetailCoreServingUniversePayloads(): Promise<{
       const memory = getCoreServingMemory();
       const cachedAt = Date.now();
       for (const payload of records) {
-        memory.set(payload.fund.code.trim().toUpperCase(), { payload, cachedAt });
+        const codeRaw = payload.fund?.code;
+        if (typeof codeRaw !== "string" || !codeRaw.trim()) continue;
+        memory.set(codeRaw.trim().toUpperCase(), { payload, cachedAt });
       }
       return { records, source: "db", missReason: null };
     }
@@ -1395,9 +1412,12 @@ export async function listFundDetailCoreServingAlternatives(
   const now = Date.now();
   const memoryRows = [...getCoreServingMemory().values()]
     .filter((entry) => now - entry.cachedAt <= CORE_SERVING_MEMORY_TTL_MS)
-    .map((entry) => toServingListRow(entry.payload));
+    .map((entry) => toServingListRow(entry.payload))
+    .filter(servingHomeRowHasPublishableCode);
   const fileProbe = await getFundDetailCoreServingFromFile("__ALT__");
-  const fileRows = [...getCoreServingFileState().records.values()].map(toServingListRow);
+  const fileRows = [...getCoreServingFileState().records.values()]
+    .map(toServingListRow)
+    .filter(servingHomeRowHasPublishableCode);
   const source: "memory" | "file" | "none" = fileRows.length > 0 ? "file" : memoryRows.length > 0 ? "memory" : "none";
   const pool = fileRows.length > 0 ? fileRows : memoryRows;
   if (pool.length === 0) {

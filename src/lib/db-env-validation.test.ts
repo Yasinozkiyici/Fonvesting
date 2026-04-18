@@ -19,10 +19,23 @@ function withEnv<T>(vars: Record<string, string | undefined>, run: () => T): T {
   }
 }
 
-test("env validation: missing DATABASE_URL classified", () => {
-  const status = withEnv({ DATABASE_URL: "", DIRECT_URL: undefined }, () => getDbEnvStatus());
+test("env validation: missing runtime URL (POSTGRES + DATABASE empty) classified", () => {
+  const status = withEnv(
+    { DATABASE_URL: "", POSTGRES_PRISMA_URL: "", DIRECT_URL: undefined },
+    () => getDbEnvStatus()
+  );
   assert.equal(status.ok, false);
   assert.equal(status.failureCategory, "missing_database_url");
+});
+
+test("env validation: ok with POSTGRES_PRISMA_URL only (no DATABASE_URL)", () => {
+  const pool =
+    "postgresql://postgres.ref:secret@aws-0-eu-west-1.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require";
+  const status = withEnv({ DATABASE_URL: "", POSTGRES_PRISMA_URL: pool, DIRECT_URL: undefined }, () =>
+    getDbEnvStatus()
+  );
+  assert.equal(status.ok, true);
+  assert.equal(status.connectionMode, "pooled");
 });
 
 test("env validation: invalid DATABASE_URL protocol classified", () => {

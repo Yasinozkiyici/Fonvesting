@@ -22,9 +22,31 @@ function fmtTrInt(n: number): string {
 export function describeHomeMarketFundCell(input: {
   snapshotFundCount: number;
   exploreUniverseTotal: number | null | undefined;
+  /** When false, `snapshotFundCount` is not a canonical universe total (subset / önizleme kabuğu). */
+  snapshotFundCountIsCanonicalUniverse?: boolean;
 }): HomeMarketFundCell {
   const snap = input.snapshotFundCount;
   const exp = input.exploreUniverseTotal;
+  const snapCanon = input.snapshotFundCountIsCanonicalUniverse !== false;
+
+  if (!snapCanon) {
+    if (exp != null && Number.isFinite(exp)) {
+      return {
+        primaryLabel: "Keşif evreni",
+        primaryValue: fmtTrInt(exp),
+        secondaryLine: "Portföy özeti (sınırlı)",
+        fullDescription:
+          `Keşif tablosu için kanonik evren toplamı ${fmtTrInt(exp)} fon. Üst şeritteki portföy/fon sayımı şu an tam evreni temsil etmiyor (önizleme veya alt küme kabuğu).`,
+      };
+    }
+    return {
+      primaryLabel: "Fon sayısı",
+      primaryValue: "—",
+      secondaryLine: "Tam evren bilinmiyor",
+      fullDescription:
+        "Piyasa özeti şu an tam fon evreni sayısını güvenle göstermiyor; keşif evreni de henüz çözülemedi. Veri yenilendiğinde güncellenir.",
+    };
+  }
 
   if (exp != null && Number.isFinite(exp) && exp !== snap) {
     return {

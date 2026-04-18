@@ -22,6 +22,12 @@ import {
   writeCompareCodes,
 } from "@/lib/compare-selection";
 import { fundTypeDisplayLabel } from "@/lib/fund-type-display";
+import {
+  normalizeCompareApiBoundary,
+  type CompareBoundaryContext,
+  type CompareBoundaryFundRow,
+} from "@/lib/data-flow/compare-boundary";
+import type { CompareSurfaceState } from "@/lib/data-flow/contracts";
 
 type KiyasRefKey = "category" | "policy" | "bist100" | "gold" | "usdtry" | "eurtry";
 type KiyasPeriodId = "1m" | "3m" | "6m" | "1y" | "2y" | "3y";
@@ -36,31 +42,22 @@ type ComparePeriodRow = {
   diffPct: number | null;
 };
 
-type CompareContext = {
-  anchorDate: string;
+type ComparePayloadMeta = {
+  compareHealth?: "healthy" | "degraded" | "invalid";
+  trustAsFinal?: boolean;
+  degradedSource?: string | null;
+  failureClass?: string | null;
+  surfaceState?: CompareSurfaceState;
+  servingWorld?: { worldId?: string | null; worldAligned?: boolean } | null;
+};
+
+type Row = CompareBoundaryFundRow;
+type CompareContext = Omit<CompareBoundaryContext, "refs" | "defaultRef" | "periods" | "summaryByRef" | "matrix"> & {
   refs: { key: KiyasRefKey; label: string }[];
   defaultRef: KiyasRefKey;
   periods: { id: KiyasPeriodId; label: string }[];
   summaryByRef: Partial<Record<KiyasRefKey, string>>;
   matrix: Record<string, Partial<Record<KiyasRefKey, ComparePeriodRow[]>>>;
-};
-
-type Row = {
-  code: string;
-  name: string;
-  shortName: string | null;
-  logoUrl?: string | null;
-  lastPrice: number;
-  dailyReturn: number;
-  monthlyReturn: number;
-  yearlyReturn: number;
-  portfolioSize: number;
-  investorCount: number;
-  category: { code: string; name: string } | null;
-  fundType: { code: number; name: string } | null;
-  volatility1y: number | null;
-  maxDrawdown1y: number | null;
-  variabilityLabel: "Sakin" | "Orta" | "Geniş" | null;
 };
 
 type CompareInsight = {
@@ -536,6 +533,8 @@ export function ComparePageClient() {
   const [compare, setCompare] = useState<CompareContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [compareMeta, setCompareMeta] = useState<ComparePayloadMeta | null>(null);
+  const [surfaceState, setSurfaceState] = useState<CompareSurfaceState>({ kind: "degraded_insufficient_funds" });
   const [refKey, setRefKey] = useState<KiyasRefKey | null>(null);
   const [periodId, setPeriodId] = useState<KiyasPeriodId>("1y");
   const [isPending, startTransition] = useTransition();
@@ -551,6 +550,8 @@ export function ComparePageClient() {
     if (c.length === 0) {
       setRows([]);
       setCompare(null);
+      setCompareMeta(null);
+      setSurfaceState({ kind: "degraded_insufficient_funds" });
       setLoading(false);
       setError(null);
       return;
@@ -562,20 +563,30 @@ export function ComparePageClient() {
         signal: controller.signal,
       });
       const body = (await r.json()) as {
-        funds?: Row[];
-        compare?: CompareContext | null;
+        funds?: unknown[];
+        compare?: unknown;
+        meta?: ComparePayloadMeta;
         error?: string;
       };
       if (!r.ok) throw new Error(body.error ?? "İstek başarısız");
       if (!controller.signal.aborted) {
-        setRows(Array.isArray(body.funds) ? body.funds : []);
-        setCompare(body.compare ?? null);
+        const normalized = normalizeCompareApiBoundary({
+          body,
+          requestedCodes: c,
+          fallbackFailureClass: body.meta?.failureClass ?? null,
+        });
+        setRows(normalized.funds);
+        setCompare((normalized.compare as CompareContext | null) ?? null);
+        setCompareMeta(body.meta ?? null);
+        setSurfaceState(body.meta?.surfaceState ?? normalized.surfaceState);
       }
     } catch (e) {
       if ((e as Error)?.name === "AbortError") return;
       setError(e instanceof Error ? e.message : "Yüklenemedi");
       setRows([]);
       setCompare(null);
+      setCompareMeta(null);
+      setSurfaceState({ kind: "degraded_timeout" });
     } finally {
       if (!controller.signal.aborted) {
         setLoading(false);
@@ -625,6 +636,29 @@ export function ComparePageClient() {
   }, [load]);
 
   const activeRef = refKey ?? compare?.defaultRef ?? null;
+  const integrityNotice = useMemo(() => {
+    if (surfaceState.kind === "degraded_insufficient_funds") {
+      return "Karşılaştırma için en az 2 fon gerekli.";
+    }
+    if (surfaceState.kind === "degraded_timeout") {
+      return "Karşılaştırma verisi zaman aşımına uğradı; sonuçlar eksik olabilir.";
+    }
+    if (surfaceState.kind === "degraded_db_unavailable") {
+      return "Karşılaştırma veritabanı geçici olarak kullanılamıyor.";
+    }
+    if (surfaceState.kind === "degraded_invalid_payload") {
+      return "Karşılaştırma yanıtı doğrulanamadı; güvenli fallback gösteriliyor.";
+    }
+    if (!compareMeta) return null;
+    if (compareMeta.compareHealth === "invalid") return "Karşılaştırma verisi eksik; sonuçlar kesin değildir.";
+    if (compareMeta.compareHealth === "degraded" || compareMeta.trustAsFinal === false) {
+      return "Karşılaştırma kısmi/degrade veriyle üretildi; karar öncesi detay sayfasında doğrulayın.";
+    }
+    if (compareMeta.servingWorld?.worldAligned === false) {
+      return "Karşılaştırma farklı serving build'lerinden gelebilir; değerler geçici olarak hizasız olabilir.";
+    }
+    return null;
+  }, [compareMeta, surfaceState]);
   const activeRefLabel = useMemo(
     () => (activeRef ? compare?.refs.find((item) => item.key === activeRef)?.label ?? "Referans" : "Referans"),
     [activeRef, compare]
@@ -756,7 +790,10 @@ export function ComparePageClient() {
   }, []);
 
   return (
-    <div className="w-full min-w-0 max-w-full space-y-4 sm:space-y-5">
+    <div
+      className="w-full min-w-0 max-w-full space-y-4 sm:space-y-5"
+      data-compare-surface-state={surfaceState.kind}
+    >
       {codes.length === 0 && !loading ? (
         <p className="text-sm leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Henüz kod yok.{" "}
@@ -778,6 +815,11 @@ export function ComparePageClient() {
           {error}
         </p>
       ) : null}
+      {integrityNotice ? (
+        <p className="text-[11px] leading-snug" style={{ color: "var(--text-tertiary)" }}>
+          {integrityNotice}
+        </p>
+      ) : null}
 
       {loading && codes.length > 0 ? (
         <div className="min-h-[3.5rem] rounded-[18px] border border-dashed px-3 py-3 sm:min-h-[4rem]" style={{ borderColor: "var(--border-subtle)", background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))" }}>
@@ -787,8 +829,9 @@ export function ComparePageClient() {
         </div>
       ) : null}
 
-      {rows.length > 0 && compare && activeRef ? (
+      {rows.length > 0 && compare && activeRef && surfaceState.kind === "ready" ? (
         <section
+          data-compare-surface-ready="1"
           className="w-full min-w-0 max-w-full rounded-[24px] border px-3 py-3.5 sm:px-4 sm:py-4.5"
           style={{
             borderColor: "var(--border-subtle)",
@@ -909,11 +952,16 @@ export function ComparePageClient() {
         </section>
       ) : null}
 
-      {rows.length > 0 && !compare ? (
-        <p className="text-[11px] leading-snug max-md:line-clamp-2" style={{ color: "var(--text-tertiary)" }} title="Referans katmanı okunamıyor; tablo yine görünür.">
+      {rows.length > 0 && (!compare || surfaceState.kind !== "ready") ? (
+        <p
+          data-compare-surface-degraded="1"
+          className="text-[11px] leading-snug max-md:line-clamp-2"
+          style={{ color: "var(--text-tertiary)" }}
+          title="Referans katmanı okunamıyor; tablo yine görünür."
+        >
           <span className="md:hidden">Referans katmanı yüklenemedi; tablo aşağıda.</span>
           <span className="hidden md:inline">
-            Referans katmanı şu an okunamıyor; temel karşılaştırma alanları yine de aşağıda görünür.
+            Referans katmanı şu an kısıtlı; temel karşılaştırma alanları aşağıda güvenli fallback ile görünür.
           </span>
         </p>
       ) : null}
@@ -1043,7 +1091,7 @@ export function ComparePageClient() {
       ) : null}
 
       {codes.length > 0 && !loading && rows.length === 0 && !error ? (
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+        <p data-compare-surface-degraded="1" className="text-sm" style={{ color: "var(--text-muted)" }}>
           Seçilen kodlardan hiçbiri bulunamadı. Listeyi güncelleyin.
         </p>
       ) : null}

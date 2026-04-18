@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DAILY_SOURCE_REFRESH_CUTOFF_MINUTES, latestExpectedBusinessSessionDate } from "@/lib/daily-sync-policy";
 import { TefasBrowserClient, withTefasBrowserClient, type TefasExportPayload } from "@/lib/services/tefas-browser.service";
 import { parseTefasSessionDate, startOfUtcDay } from "@/lib/trading-calendar-tr";
+import { ingestRawRows } from "@/lib/ingestion/pipeline/ingest-raw";
 
 const HISTORY_SYNC_KEY = "tefas_fund_history";
 const DEFAULT_CHUNK_DAYS = 14;
@@ -149,6 +150,10 @@ function normalizeSessionDate(raw: string | null | undefined, fallbackDate: Date
 
 function buildChunkCacheKey(chunk: { start: Date; end: Date }, fundTypeCode: number): string {
   return `${formatDate(chunk.start)}:${formatDate(chunk.end)}:${fundTypeCode}`;
+}
+
+function checksumJson(payload: unknown): string {
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 async function fetchHistoryChunk(
@@ -402,6 +407,8 @@ export async function syncFundHistoryRange(options: {
   try {
     let fetchedRows = 0;
     let writtenRows = 0;
+    let rawInserted = 0;
+    let rawSkipped = 0;
     const touchedDates = new Set<number>();
     await withTefasBrowserClient(async (client) => {
       for (const [index, chunk] of chunks.entries()) {
@@ -422,6 +429,22 @@ export async function syncFundHistoryRange(options: {
         for (const fundTypeCode of [0, 1] as const) {
           const parts = await fetchHistoryChunkWithFallback(client, chunk, fundTypeCode);
           for (const payload of parts) {
+            const sourceKey = buildChunkCacheKey(chunk, fundTypeCode);
+            const parseError = payload.ok ? null : payload.error;
+            const effectiveDate = startOfUtcDay(chunk.end);
+            const rawIngest = await ingestRawRows("prices", [
+              {
+                source: "tefas_browser",
+                sourceKey,
+                effectiveDate,
+                payload,
+                checksum: checksumJson({ sourceKey, payload }),
+                parseStatus: payload.ok ? "OK" : "FAILED",
+                parseError,
+              },
+            ]);
+            rawInserted += rawIngest.inserted;
+            rawSkipped += rawIngest.skipped;
             if (!payload.ok) {
               throw new Error(`[history-sync] ${buildChunkCacheKey(chunk, fundTypeCode)} -> ${payload.error}`);
             }
@@ -451,6 +474,8 @@ export async function syncFundHistoryRange(options: {
           fetchedRows,
           writtenRows,
           touchedDates: touchedDates.size,
+          rawInserted,
+          rawSkipped,
         });
       }
     });
@@ -464,6 +489,8 @@ export async function syncFundHistoryRange(options: {
       fetchedRows,
       writtenRows,
       touchedDates: touchedDates.size,
+      rawInserted,
+      rawSkipped,
     };
 
     await refreshFundHistorySyncState(details);

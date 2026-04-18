@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBuildFingerprint } from "@/lib/build-fingerprint";
+import { resolveDbConnectionProfile } from "@/lib/db/db-connection-profile";
 import { getSystemHealthSnapshot } from "@/lib/system-health";
 
 export const dynamic = "force-dynamic";
@@ -97,6 +98,7 @@ export async function GET(request: Request) {
       `health_db_probe_used=${dbProbeUsed} health_db_probe_ms=${snapshot.database.diagnostics.pingMs ?? -1} ` +
       `system_check_degraded=${systemCheckDegraded ? 1 : 0} system_check_reason=${systemCheckReason} strict=${strictMode ? 1 : 0} status=${statusCode}`
   );
+  const dbConnProfile = resolveDbConnectionProfile();
   const sharedHeaders: Record<string, string> = {
     "X-Health-Mode": healthMode,
     "X-Health-Strict": strictMode ? "1" : "0",
@@ -107,6 +109,9 @@ export async function GET(request: Request) {
     "X-System-Check-Reason": systemCheckReason,
     "X-Db-Env-Status": snapshot.database.envStatus.failureCategory ?? "ok",
     "X-Db-Connection-Mode": snapshot.database.connectionMode,
+    "X-Db-Env-Path": dbConnProfile.envPath,
+    "X-Db-Prisma-Datasource": "POSTGRES_PRISMA_URL|DATABASE_URL",
+    "X-Prisma-Runtime-Env-Key": dbConnProfile.prismaRuntimeEnvKey,
     "X-Db-Failure-Class": readPathFailureClass,
     "X-Health-Direct-Db-Failure-Class": directDbFailureClass,
     "X-Daily-Sync-Source-Status": snapshot.jobs.dailySyncStatus?.sourceStatus ?? "unknown",

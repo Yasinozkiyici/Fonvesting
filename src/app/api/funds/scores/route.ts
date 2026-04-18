@@ -3,13 +3,23 @@ import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/
 import type { RankingMode } from "@/lib/scoring";
 import type { ScoresApiPayload } from "@/lib/services/fund-scores-types";
 import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
-import { filterScoresPayloadByQuery } from "@/lib/services/fund-scores-compute.service";
+import {
+  filterScoresPayloadByQuery,
+  filterScoresPayloadByTheme,
+} from "@/lib/services/fund-scores-compute.service";
+import {
+  applyScoresPayloadRowLimit,
+  coerceScoresPayloadFromLegacy,
+  createScoresPayload,
+} from "@/lib/services/fund-scores-semantics";
 import { scoresApiCacheKey } from "@/lib/services/fund-scores-cache.service";
 import { prisma } from "@/lib/prisma";
 import { getAllFundsCached, getFundsPage } from "@/lib/services/fund-list.service";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
+import { buildDbAccessResolutionLog, logDbAccessResolution } from "@/lib/db/db-access-resolution-log";
+import { resolveDbConnectionProfile } from "@/lib/db/db-connection-profile";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
-import { fundMatchesTheme, parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
+import { parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
 import { getFundDetailCoreServingUniversePayloads } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import {
@@ -17,6 +27,16 @@ import {
   reliabilitySourceFromDiscoverySource,
 } from "@/lib/fund-data-reliability";
 import { deriveDiscoveryHealth } from "@/lib/discovery-orchestrator";
+import {
+  enforceServingRouteTrust,
+  readServingDiscoveryPrimary,
+  readServingFundListPrimary,
+  servingHeaders,
+} from "@/lib/data-platform/read-side-serving";
+import {
+  isServingStrictModeEnabled,
+  servingStrictHeaders,
+} from "@/lib/data-platform/serving-strict-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -113,12 +133,6 @@ function requestScopeKey(
   }`;
 }
 
-function filterScoresPayloadByTheme(payload: ScoresApiPayload, theme: FundThemeId | null): ScoresApiPayload {
-  if (!theme) return payload;
-  const funds = payload.funds.filter((fund) => fundMatchesTheme(fund, theme));
-  return { ...payload, total: funds.length, funds };
-}
-
 function parseLimit(searchParams: URLSearchParams): number | null {
   const raw = searchParams.get("limit");
   if (!raw) return null;
@@ -139,7 +153,9 @@ function shouldShortCircuitDbFallback(category: string): boolean {
     category === "transaction_timeout" ||
     category === "connection_closed" ||
     category === "connect_timeout" ||
-    category === "network_unreachable"
+    category === "network_unreachable" ||
+    category === "auth_failed" ||
+    category === "invalid_datasource"
   );
 }
 
@@ -161,7 +177,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 function buildEmptyPayload(mode: RankingMode): ScoresApiPayload {
-  return { mode, total: 0, funds: [] };
+  return createScoresPayload({ mode, funds: [], universeTotal: 0, matchedTotal: 0 });
 }
 
 function hasUsableScoresPayload(payload: ScoresApiPayload | null | undefined): payload is ScoresApiPayload {
@@ -172,14 +188,25 @@ function sanitizePersistedPayload(mode: RankingMode, payload: unknown): ScoresAp
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const candidate = payload as ScoresApiPayload;
   if (!Array.isArray(candidate.funds)) return null;
-  return {
+  const legacyTotal = typeof candidate.total === "number" ? candidate.total : candidate.funds.length;
+  const universeTotal =
+    typeof candidate.universeTotal === "number" && Number.isFinite(candidate.universeTotal)
+      ? candidate.universeTotal
+      : legacyTotal;
+  const matchedTotal =
+    typeof candidate.matchedTotal === "number" && Number.isFinite(candidate.matchedTotal)
+      ? candidate.matchedTotal
+      : legacyTotal;
+  const returned = candidate.funds.length;
+  return createScoresPayload({
     mode,
-    total: typeof candidate.total === "number" ? candidate.total : candidate.funds.length,
     funds: candidate.funds,
+    universeTotal,
+    matchedTotal: Math.max(matchedTotal, returned),
     ...(typeof candidate.appliedQuery === "string" && candidate.appliedQuery.trim()
       ? { appliedQuery: candidate.appliedQuery }
       : {}),
-  };
+  });
 }
 
 function pickFreshCache(state: ScoresRuntimeState, key: string): ScoresApiPayload | null {
@@ -187,7 +214,7 @@ function pickFreshCache(state: ScoresRuntimeState, key: string): ScoresApiPayloa
   if (!hit) return null;
   if (Date.now() - hit.updatedAt > SCORES_FRESH_TTL_MS) return null;
   if (!hasUsableScoresPayload(hit.payload)) return null;
-  return hit.payload;
+  return coerceScoresPayloadFromLegacy(hit.payload);
 }
 
 function pickStaleCache(state: ScoresRuntimeState, key: string): ScoresApiPayload | null {
@@ -195,7 +222,7 @@ function pickStaleCache(state: ScoresRuntimeState, key: string): ScoresApiPayloa
   if (!hit) return null;
   if (Date.now() - hit.updatedAt > SCORES_STALE_TTL_MS) return null;
   if (!hasUsableScoresPayload(hit.payload)) return null;
-  return hit.payload;
+  return coerceScoresPayloadFromLegacy(hit.payload);
 }
 
 async function readPersistedScoresPayload(mode: RankingMode, categoryCode: string): Promise<ScoresApiPayload | null> {
@@ -277,9 +304,10 @@ async function readFundsListFallback(
     SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS
   ).catch(() => null);
   if (!page) return null;
-  return {
+  return createScoresPayload({
     mode,
-    total: page.total,
+    universeTotal: page.total,
+    matchedTotal: page.total,
     funds: page.items.map((item) => ({
       fundId: item.id,
       code: item.code,
@@ -294,7 +322,7 @@ async function readFundsListFallback(
       fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
       finalScore: null,
     })),
-  };
+  });
 }
 
 async function readThemeFundsListFallback(
@@ -308,26 +336,28 @@ async function readThemeFundsListFallback(
     SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS
   ).catch(() => []);
   if (rows.length === 0) return null;
-  const basePayload: ScoresApiPayload = {
+  const categoryFunds = rows
+    .filter((item) => (categoryCode ? item.category?.code === categoryCode : true))
+    .map((item) => ({
+      fundId: item.id,
+      code: item.code,
+      name: item.name,
+      shortName: item.shortName,
+      logoUrl: item.logoUrl,
+      lastPrice: item.lastPrice,
+      dailyReturn: item.dailyReturn,
+      portfolioSize: item.portfolioSize,
+      investorCount: item.investorCount,
+      category: item.category ? { code: item.category.code, name: item.category.name } : null,
+      fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
+      finalScore: null,
+    }));
+  const basePayload = createScoresPayload({
     mode,
-    total: rows.length,
-    funds: rows
-      .filter((item) => (categoryCode ? item.category?.code === categoryCode : true))
-      .map((item) => ({
-        fundId: item.id,
-        code: item.code,
-        name: item.name,
-        shortName: item.shortName,
-        logoUrl: item.logoUrl,
-        lastPrice: item.lastPrice,
-        dailyReturn: item.dailyReturn,
-        portfolioSize: item.portfolioSize,
-        investorCount: item.investorCount,
-        category: item.category ? { code: item.category.code, name: item.category.name } : null,
-        fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
-        finalScore: null,
-      })),
-  };
+    funds: categoryFunds,
+    universeTotal: categoryFunds.length,
+    matchedTotal: categoryFunds.length,
+  });
   const queryPayload = queryTrim ? filterScoresPayloadByQuery(basePayload, queryTrim) : basePayload;
   const themed = filterScoresPayloadByTheme(queryPayload, theme);
   if (!hasUsableScoresPayload(themed)) return null;
@@ -344,7 +374,13 @@ async function readThemeFundsListFallback(
     if (portfolio !== 0) return portfolio;
     return a.code.localeCompare(b.code, "tr");
   });
-  return { ...themed, total: funds.length, funds };
+  return createScoresPayload({
+    mode,
+    funds,
+    universeTotal: themed.universeTotal,
+    matchedTotal: funds.length,
+    appliedQuery: themed.appliedQuery,
+  });
 }
 
 async function readPersistedAllScoresFilteredFallback(
@@ -371,7 +407,12 @@ async function readPersistedAllScoresFilteredFallback(
     if (portfolio !== 0) return portfolio;
     return a.code.localeCompare(b.code, "tr");
   });
-  const payload = { mode, total: sorted.length, funds: sorted };
+  const payload = createScoresPayload({
+    mode,
+    funds: sorted,
+    universeTotal: sorted.length,
+    matchedTotal: sorted.length,
+  });
   return queryTrim ? filterScoresPayloadByQuery(payload, queryTrim) : payload;
 }
 
@@ -420,9 +461,10 @@ async function readCoreServingScoresFallback(
     return a.code.localeCompare(b.code, "tr");
   });
   const sliced = rows.slice(0, Math.min(requestedLimit, MAX_LIMIT));
-  return {
+  return createScoresPayload({
     mode,
-    total: rows.length,
+    universeTotal: rows.length,
+    matchedTotal: rows.length,
     funds: sliced.map((row) => ({
       fundId: row.fundId,
       code: row.code,
@@ -443,7 +485,7 @@ async function readCoreServingScoresFallback(
           : null,
       finalScore: null,
     })),
-  };
+  });
 }
 
 function normalizeRankingMode(searchParams: URLSearchParams): RankingMode {
@@ -504,10 +546,15 @@ async function resolveBasePayload(
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now();
+  const strictMode = isServingStrictModeEnabled(request);
   const dbEnvStatus = getDbEnvStatus();
+  const dbConnProfile = resolveDbConnectionProfile();
   const dbHeaders = {
     "X-Db-Env-Status": dbEnvStatus.failureCategory ?? "ok",
     "X-Db-Connection-Mode": dbEnvStatus.connectionMode,
+    "X-Db-Env-Path": dbConnProfile.envPath,
+    "X-Db-Prisma-Datasource": "POSTGRES_PRISMA_URL|DATABASE_URL",
+    "X-Prisma-Runtime-Env-Key": dbConnProfile.prismaRuntimeEnvKey,
   };
   const { searchParams } = new URL(request.url);
   const mode = normalizeRankingMode(searchParams);
@@ -519,6 +566,192 @@ export async function GET(request: NextRequest) {
   const key = responseScoresKey(mode, categoryCode, limit, queryTrim, theme);
   const scopeRequestKey = requestScopeKey(mode, categoryCode, queryTrim, theme);
   const state = getScoresRouteState();
+  const [servingDiscovery, servingFundList] = await Promise.all([
+    readServingDiscoveryPrimary(),
+    readServingFundListPrimary(),
+  ]);
+  const servingWorld = servingDiscovery.world ?? servingFundList.world ?? null;
+  const servingPrimaryTrust = enforceServingRouteTrust({
+    world: servingWorld,
+    source: "serving_discovery_index",
+    requiredBuilds: ["fundList", "discovery", "system"],
+    payloadAvailable: Boolean(servingDiscovery.payload && servingFundList.payload),
+    fallbackUsed: false,
+  });
+
+  if (servingDiscovery.payload && servingFundList.payload) {
+    const strictServingTrust =
+      servingPrimaryTrust.trustAsFinal &&
+      servingDiscovery.trust.trustAsFinal &&
+      servingFundList.trust.trustAsFinal;
+    if (strictMode && !strictServingTrust) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/funds/scores",
+          reason:
+            servingPrimaryTrust.degradedReason ??
+            servingDiscovery.trust.degradedReason ??
+            servingFundList.trust.degradedReason ??
+            "serving_primary_not_final",
+        },
+        {
+          status: 503,
+          headers: {
+            ...servingHeaders({
+              world: servingWorld,
+              trust: {
+                trustAsFinal: strictServingTrust,
+                degradedKind:
+                  servingPrimaryTrust.degradedKind !== "none"
+                    ? servingPrimaryTrust.degradedKind
+                    : servingDiscovery.trust.degradedKind !== "none"
+                      ? servingDiscovery.trust.degradedKind
+                      : servingFundList.trust.degradedKind,
+                degradedReason:
+                  servingPrimaryTrust.degradedReason ??
+                  servingDiscovery.trust.degradedReason ??
+                  servingFundList.trust.degradedReason,
+              },
+              routeSource: "serving_discovery_index",
+              fallbackUsed: false,
+            }),
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason:
+                servingPrimaryTrust.degradedReason ??
+                servingDiscovery.trust.degradedReason ??
+                servingFundList.trust.degradedReason ??
+                "serving_primary_not_final",
+            }),
+          },
+        }
+      );
+    }
+    const fundsByCode = new Map(
+      servingFundList.payload.funds.map((fund) => [fund.code.trim().toUpperCase(), fund])
+    );
+    const rankedRows = [...servingDiscovery.payload.funds]
+      .filter((row) => (categoryCode ? row.categoryCode === categoryCode : true))
+      .sort((left, right) => left.rank - right.rank);
+    const servingFunds: ScoresApiPayload["funds"] = [];
+    for (const row of rankedRows) {
+      const fund = fundsByCode.get(row.code.trim().toUpperCase());
+      if (!fund) continue;
+      servingFunds.push({
+        fundId: fund.code,
+        code: fund.code,
+        name: fund.name,
+        shortName: fund.shortName,
+        logoUrl: null,
+        lastPrice: fund.lastPrice,
+        dailyReturn: fund.dailyReturn,
+        portfolioSize: fund.portfolioSize,
+        investorCount: fund.investorCount,
+        category: fund.categoryCode ? { code: fund.categoryCode, name: fund.categoryCode } : null,
+        fundType: fund.fundTypeCode != null ? { code: fund.fundTypeCode, name: String(fund.fundTypeCode) } : null,
+        finalScore: row.score,
+      });
+    }
+    const materialized = createScoresPayload({
+      mode,
+      funds: servingFunds,
+      universeTotal: rankedRows.length,
+      matchedTotal: servingFunds.length,
+    });
+    const queryPayload = queryTrim ? filterScoresPayloadByQuery(materialized, queryTrim) : materialized;
+    const themedPayload = filterScoresPayloadByTheme(queryPayload, theme);
+    const limitedPayload = applyScoresPayloadRowLimit(themedPayload, limit && limit > 0 ? limit : null);
+    const discoveryHealth = deriveDiscoveryHealth({
+      payload: limitedPayload,
+      scope: {
+        mode,
+        categoryCode,
+        theme,
+        queryTrim,
+      },
+      source: "serving_discovery",
+      degradedReason: null,
+      failureClass: null,
+      stale: false,
+      requestConsistent: true,
+    });
+    return NextResponse.json(
+      {
+        ...limitedPayload,
+        meta: {
+          servingWorld,
+          reliability: {
+            overall: discoveryHealth.overallDiscoveryHealth,
+            scope: discoveryHealth.scopeHealth,
+              trustAsFinal: strictServingTrust,
+          },
+        },
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+          "X-Scores-Source": "serving_discovery_index",
+          "X-Scores-Cache": "serving-primary",
+          "X-Discover-Theme": theme ?? "none",
+          "X-Discover-Server-Result-Count": String(limitedPayload.funds.length),
+          "X-Discover-Universe-Total": String(limitedPayload.universeTotal),
+          ...servingHeaders({
+            world: servingWorld,
+            trust: {
+              trustAsFinal: strictServingTrust,
+              degradedKind:
+                servingPrimaryTrust.degradedKind !== "none"
+                  ? servingPrimaryTrust.degradedKind
+                  : servingDiscovery.trust.degradedKind !== "none"
+                    ? servingDiscovery.trust.degradedKind
+                    : servingFundList.trust.degradedKind,
+              degradedReason:
+                servingPrimaryTrust.degradedReason ??
+                servingDiscovery.trust.degradedReason ??
+                servingFundList.trust.degradedReason,
+            },
+            routeSource: "serving_discovery_index",
+            fallbackUsed: false,
+          }),
+          "X-Discovery-Reliability-Class": discoveryHealth.reliabilityClass,
+          "X-Discovery-Trust-Final": discoveryHealth.trustAsFinal ? "1" : "0",
+          "X-Discovery-Scope-Aligned": discoveryHealth.scopeHealth === "healthy" ? "1" : "0",
+          "X-Discovery-Overall-Health": discoveryHealth.overallDiscoveryHealth,
+          "X-Discovery-Request-Key": scopeRequestKey,
+          ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+        },
+      }
+    );
+  }
+  if (strictMode) {
+    return NextResponse.json(
+      {
+        error: "serving_strict_violation",
+        route: "/api/funds/scores",
+        reason: "serving_discovery_or_fund_list_unavailable",
+      },
+      {
+        status: 503,
+        headers: {
+          ...servingHeaders({
+            world: servingWorld,
+            trust: servingPrimaryTrust,
+            routeSource: "legacy_fallback",
+            fallbackUsed: true,
+          }),
+          ...servingStrictHeaders({
+            enabled: strictMode,
+            violated: true,
+            reason: "serving_discovery_or_fund_list_unavailable",
+          }),
+          ...dbHeaders,
+        },
+      }
+    );
+  }
 
   let cacheState: "hit" | "miss" | "dedupe" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "miss";
   let source: "snapshot" | "memory" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "snapshot";
@@ -530,7 +763,7 @@ export async function GET(request: NextRequest) {
     nextSource: typeof source,
     nextCacheState: typeof cacheState
   ): void => {
-    basePayload = payload;
+    basePayload = coerceScoresPayloadFromLegacy(payload);
     source = nextSource;
     cacheState = nextCacheState;
   };
@@ -744,6 +977,9 @@ export async function GET(request: NextRequest) {
         : "theme_funds_list_fallback";
     }
   }
+  if (limit != null && limit > 0) {
+    payload = applyScoresPayloadRowLimit(payload, limit);
+  }
   const durationMs = Date.now() - startedAt;
   const emptyResultKind =
     payload.funds.length === 0 ? (degradedReason ? "degraded" : "valid") : null;
@@ -766,34 +1002,61 @@ export async function GET(request: NextRequest) {
     sourceTier: reliabilitySourceFromDiscoverySource(source),
     stale: (degradedReason ?? "").includes("stale"),
     rows: payload.funds.length,
-    total: payload.total,
+    total: payload.matchedTotal ?? payload.total,
     scopeAligned,
     degradedReason,
     failureClass,
   });
   if (payload.funds.length > 0 && String(cacheState) !== "stale") {
-    state.cache.set(key, { payload, updatedAt: Date.now() });
+    state.cache.set(key, { payload: coerceScoresPayloadFromLegacy(payload), updatedAt: Date.now() });
   }
 
   console.info(
     `[scores-api] mode=${mode} category=${categoryCode || "all"} limit=${limit ?? "none"} q=${queryTrim ? "1" : "0"} ` +
-      `source=${source} cache=${cacheState} total=${payload.total} ms=${durationMs}${degradedReason ? ` degraded=${degradedReason}` : ""}${
+      `source=${source} cache=${cacheState} universe=${payload.universeTotal} matched=${payload.matchedTotal} returned=${payload.returnedCount} ms=${durationMs}${
+        degradedReason ? ` degraded=${degradedReason}` : ""
+      }${
         failureClass ? ` failure_class=${failureClass}` : ""
       }`
+  );
+  logDbAccessResolution(
+    buildDbAccessResolutionLog({
+      route: "/api/funds/scores",
+      effectiveDatasourceUrl: dbConnProfile.effectiveDatasourceUrl,
+      envPath: dbConnProfile.envPath,
+      prismaRuntimeEnvKey: dbConnProfile.prismaRuntimeEnvKey,
+      connectionMode: dbConnProfile.connectionMode,
+      chosenDataSource: source,
+      degraded: Boolean(degradedReason),
+      degradedReason,
+      dbFailureCategory: failureClass,
+    })
   );
   console.info(
     `[discover-server-result] mode=${mode} category=${categoryCode || "all"} theme=${theme ?? "none"} ` +
       `source=${source} cache=${cacheState} base_count=${basePayload.funds.length} query_count=${queryPayload.funds.length} ` +
-      `server_result_count=${payload.funds.length} total=${payload.total} ms=${durationMs} empty_reason=${
+      `server_result_count=${payload.funds.length} universe=${payload.universeTotal} matched=${payload.matchedTotal} ms=${durationMs} empty_reason=${
         payload.funds.length === 0 ? degradedReason ?? "valid_empty" : "none"
       }`
   );
   console.info(
     `[discover-universe-total] mode=${mode} category=${categoryCode || "all"} theme=${theme ?? "none"} ` +
-      `visible_total=${payload.total} base_total=${basePayload.total} source=${source}`
+      `universe=${payload.universeTotal} matched=${payload.matchedTotal} returned=${payload.returnedCount} base_universe=${basePayload.universeTotal} source=${source}`
   );
 
-  return NextResponse.json(payload, {
+  return NextResponse.json(
+    {
+      ...payload,
+      meta: {
+        servingWorld,
+        reliability: {
+          overall: discoveryHealth.overallDiscoveryHealth,
+          scope: discoveryHealth.scopeHealth,
+          trustAsFinal: discoveryHealth.trustAsFinal,
+        },
+      },
+    },
+    {
     status: 200,
     headers: {
       "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
@@ -801,7 +1064,7 @@ export async function GET(request: NextRequest) {
       "X-Scores-Cache": cacheState,
       "X-Discover-Theme": theme ?? "none",
       "X-Discover-Server-Result-Count": String(payload.funds.length),
-      "X-Discover-Universe-Total": String(payload.total),
+      "X-Discover-Universe-Total": String(payload.universeTotal),
       "X-Db-Failure-Class": failureClass ?? "none",
       ...dbHeaders,
       ...(emptyResultKind ? { "X-Scores-Empty-Result": emptyResultKind } : {}),
@@ -818,6 +1081,12 @@ export async function GET(request: NextRequest) {
       "X-Discovery-Request-Health": discoveryHealth.requestConsistencyHealth,
       "X-Discovery-Overall-Health": discoveryHealth.overallDiscoveryHealth,
       "X-Discovery-Request-Key": scopeRequestKey,
+      "X-Serving-World-Id": servingWorld?.worldId ?? "none",
+      "X-Serving-World-Aligned": servingWorld?.worldAligned ? "1" : "0",
+      "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",
+      "X-Serving-Discovery-Build-Id": servingWorld?.buildIds.discovery ?? "none",
+      ...servingStrictHeaders({ enabled: strictMode, violated: false }),
     },
-  });
+  }
+  );
 }

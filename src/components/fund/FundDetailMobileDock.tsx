@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { GitCompareArrows, Share2 } from "lucide-react";
+import { GitCompareArrows, Share2 } from "@/components/icons";
 import {
   addCompareCode,
   COMPARE_CODES_CHANGED_EVENT,

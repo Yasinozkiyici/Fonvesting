@@ -19,7 +19,16 @@ export type ScoredFundRow = {
 
 export type ScoresApiPayload = {
   mode: RankingMode;
+  /**
+   * Tam keşif evreni (mode + kategori + sunucu kaynağının döndürdüğü kapsam; tema / istemci metin filtresi öncesi).
+   * @deprecated Yeni kod `universeTotal` kullanmalı; bu alan her zaman `universeTotal` ile aynı tutulur.
+   */
   total: number;
+  universeTotal: number;
+  /** Arama (q) + tema ile eşleşen fon sayısı (satır limiti uygulanmadan önce). */
+  matchedTotal: number;
+  /** Yanıt gövdesinde dönen satır sayısı (= funds.length). */
+  returnedCount: number;
   funds: ScoredFundRow[];
   /** İstemci: sunucu metin filtresi uyguladıysa çift filtreleme yapmamak için */
   appliedQuery?: string;

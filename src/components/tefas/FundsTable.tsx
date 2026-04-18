@@ -11,7 +11,7 @@ import {
   X,
   SlidersHorizontal,
   ArrowDownWideNarrow,
-} from "lucide-react";
+} from "@/components/icons";
 import { FundLogoMark } from "./FundLogoMark";
 import {
   fetchNormalizedJson,

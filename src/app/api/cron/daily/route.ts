@@ -6,6 +6,7 @@ import { areRuntimeTargetsIdentical, getDbRuntimeTargetDiagnostics } from "@/lib
 import { runDailyPipeline, type DailyPipelineStepState } from "@/lib/pipeline/runDailyPipeline";
 import { prisma } from "@/lib/prisma";
 import { MARKET_SUMMARY_CACHE_TAG } from "@/lib/services/fund-daily-snapshot.service";
+import { stringifySyncLogMeta } from "@/lib/sync-log-meta-json";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -38,8 +39,21 @@ type DailySyncRunMeta = {
   phase: "daily_sync";
   runKey: string;
   trigger: "cron_route";
+  outcome: "running" | "success" | "partial" | "failed" | "timeout_suspected";
   sourceStatus: "unknown" | "success" | "failed";
   publishStatus: "unknown" | "success" | "failed";
+  sourceQuality?: "success_with_data" | "successful_noop" | "empty_source_anomaly" | "partial_source_failure";
+  sourceQualityReason?: string;
+  processedSnapshotDate?: string | null;
+  fetchedFundRows?: number;
+  writtenFundRows?: number;
+  canonicalRowsWritten?: number;
+  publishBuildId?: string | null;
+  publishListRows?: number;
+  publishDetailRows?: number;
+  publishCompareRows?: number;
+  publishDiscoveryRows?: number;
+  publishCoverageRatio?: number;
   firstFailedStep: string | null;
   failureKind: "none" | "exception" | "timeout_suspected";
   staleRunRecovered: boolean;
@@ -106,13 +120,11 @@ function toSyncLogProgressMessage(input: {
     message: input.message?.slice(0, 240),
   };
 
-  const raw = JSON.stringify(payload);
-  return raw.length > 1900 ? `${raw.slice(0, 1897)}...` : raw;
+  return stringifySyncLogMeta(payload);
 }
 
 function toDailySyncRunMetaMessage(input: DailySyncRunMeta): string {
-  const raw = JSON.stringify(input);
-  return raw.length > 1900 ? `${raw.slice(0, 1897)}...` : raw;
+  return stringifySyncLogMeta(input);
 }
 
 function computeDailySyncStatuses(progress: PipelineStepProgress): {
@@ -224,6 +236,7 @@ export async function GET(req: NextRequest) {
               phase: "daily_sync",
               runKey,
               trigger: "cron_route",
+              outcome: "running",
               sourceStatus: "unknown",
               publishStatus: "unknown",
               firstFailedStep: null,
@@ -323,6 +336,7 @@ export async function GET(req: NextRequest) {
                   phase: "daily_sync",
                   runKey,
                   trigger: "cron_route",
+                  outcome: "running",
                   sourceStatus: statuses.sourceStatus,
                   publishStatus: statuses.publishStatus,
                   firstFailedStep: pipelineProgress.firstFailedStep,
@@ -376,8 +390,24 @@ export async function GET(req: NextRequest) {
             phase: "daily_sync",
             runKey,
             trigger: "cron_route",
+            outcome:
+              result.publish.outcome === "success" && result.sourceQuality.kind !== "partial_source_failure"
+                ? "success"
+                : "partial",
             sourceStatus: statuses.sourceStatus,
             publishStatus: statuses.publishStatus,
+            sourceQuality: result.sourceQuality.kind,
+            sourceQualityReason: result.sourceQuality.reason,
+            processedSnapshotDate: result.processedSnapshotDate,
+            fetchedFundRows: result.fetchedCounts.fundRows,
+            writtenFundRows: result.insertedCounts.fundRows,
+            canonicalRowsWritten: result.metricsUpdated.snapshotsWritten,
+            publishBuildId: result.publish.buildId,
+            publishListRows: result.publish.listRows,
+            publishDetailRows: result.publish.detailRows,
+            publishCompareRows: result.publish.compareRows,
+            publishDiscoveryRows: result.publish.discoveryRows,
+            publishCoverageRatio: result.publish.fundCoverageRatio,
             firstFailedStep: result.firstFailedStep,
             failureKind: result.failureKind,
             staleRunRecovered,
@@ -448,8 +478,13 @@ export async function GET(req: NextRequest) {
               phase: "daily_sync",
               runKey,
               trigger: "cron_route",
+              outcome: failureKind === "timeout_suspected" ? "timeout_suspected" : "failed",
               sourceStatus: statuses.sourceStatus,
               publishStatus: statuses.publishStatus,
+              sourceQuality: "partial_source_failure",
+              sourceQualityReason: message.slice(0, 400),
+              processedSnapshotDate: null,
+              publishBuildId: null,
               firstFailedStep,
               failureKind,
               staleRunRecovered,

@@ -6,6 +6,9 @@ import type { ScoresApiPayload } from "@/lib/services/fund-scores-types";
 const basePayload: ScoresApiPayload = {
   mode: "BEST",
   total: 2,
+  universeTotal: 2,
+  matchedTotal: 2,
+  returnedCount: 2,
   funds: [
     {
       fundId: "1",
@@ -64,4 +67,19 @@ test("discovery orchestrator marks healthy payload as trusted", () => {
   });
   assert.equal(health.overallDiscoveryHealth, "healthy");
   assert.equal(health.trustAsFinal, true);
+});
+
+test("discovery orchestrator marks theme scope mismatch as invalid", () => {
+  const health = deriveDiscoveryHealth({
+    payload: basePayload,
+    scope: { mode: "BEST", categoryCode: "CAT", theme: "precious_metals", queryTrim: "" },
+    source: "snapshot",
+    degradedReason: null,
+    failureClass: null,
+    stale: false,
+    requestConsistent: true,
+  });
+  assert.equal(health.scopeHealth, "invalid");
+  assert.equal(health.overallDiscoveryHealth, "invalid");
+  assert.equal(health.trustAsFinal, false);
 });

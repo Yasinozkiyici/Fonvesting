@@ -1,5 +1,43 @@
 import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { config as loadDotenv } from "dotenv";
 import { ReleaseDecision } from "./release-verification-common.mjs";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+for (const name of [".env.production.local", ".env.local", ".env.production", ".env"]) {
+  loadDotenv({ path: resolve(repoRoot, name), quiet: true });
+}
+
+function sanitizeDbEnvValue(raw) {
+  if (raw == null) return "";
+  let s = String(raw).trim();
+  s = s.replace(/\\n$/g, "").replace(/\\r$/g, "").trim();
+  s = s.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  return s;
+}
+
+function prismaRuntimeEnvKeyForLog() {
+  const p = sanitizeDbEnvValue(process.env.POSTGRES_PRISMA_URL);
+  if (p) {
+    try {
+      const u = new URL(p);
+      const proto = u.protocol.toLowerCase();
+      if (proto === "postgresql:" || proto === "postgres:" || proto === "prisma:") {
+        return "POSTGRES_PRISMA_URL";
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (sanitizeDbEnvValue(process.env.DATABASE_URL)) return "DATABASE_URL";
+  return "none";
+}
+
+console.log(
+  `[release-readiness-env] dotenv_chain=.env.production.local>.env.local>.env.production>.env ` +
+    `prisma_runtime_env_key=${prismaRuntimeEnvKeyForLog()}`
+);
 
 const previewUrl = String(process.env.RELEASE_PREVIEW_URL || "").trim();
 const productionUrl = String(process.env.RELEASE_PRODUCTION_URL || "").trim();

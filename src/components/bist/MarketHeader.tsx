@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, BarChart3, Activity, DollarSign, Layers } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, BarChart3, Activity, DollarSign, Layers } from "@/components/icons";
 
 const SHOW_CLIENT_ERRORS = process.env.NODE_ENV !== "production";
 

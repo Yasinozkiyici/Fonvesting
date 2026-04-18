@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Search, Menu, X, Sun, Moon } from "lucide-react";
+import { Search, Menu, X, Sun, Moon } from "@/components/icons";
 import { useTheme } from "@/context/ThemeContext";
 import { SiteLogoLink } from "@/components/SiteLogo";
 

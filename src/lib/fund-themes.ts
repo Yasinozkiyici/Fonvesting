@@ -108,8 +108,9 @@ export const FUND_THEMES: FundThemeDef[] = [
   },
 ];
 
-function normalizeText(value: string): string {
-  return value
+function normalizeText(value: string | null | undefined): string {
+  if (value == null) return "";
+  return String(value)
     .toLocaleLowerCase("tr-TR")
     .replace(/ı/g, "i")
     .replace(/ğ/g, "g")
@@ -154,9 +155,10 @@ function tokenMatchesText(text: string, token: string): boolean {
   return false;
 }
 
-export function parseFundThemeParam(raw: string): FundThemeId | null {
-  if (!raw) return null;
-  const key = raw.trim().toLowerCase();
+export function parseFundThemeParam(raw: string | null | undefined): FundThemeId | null {
+  if (raw == null) return null;
+  const key = String(raw).trim().toLowerCase();
+  if (!key) return null;
   if (key === "technology") return "technology";
   if (key === "artificial_intelligence") return "artificial_intelligence";
   if (key === "green_energy") return "green_energy";
@@ -176,8 +178,8 @@ export function fundMatchesTheme(fund: ScoredFund, themeId: FundThemeId | null):
   const theme = getFundTheme(themeId);
   if (!theme) return true;
 
-  const nameText = stripInstitutionPrefix(fund.name);
-  const shortText = fund.shortName ? stripInstitutionPrefix(fund.shortName) : "";
+  const nameText = stripInstitutionPrefix(String(fund.name ?? ""));
+  const shortText = fund.shortName ? stripInstitutionPrefix(String(fund.shortName)) : "";
   const searchText = [nameText, shortText].filter(Boolean).join(" ").trim();
   if (!searchText) return false;
 

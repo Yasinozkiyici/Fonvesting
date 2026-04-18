@@ -1,4 +1,5 @@
 import { runDailySourceRefresh, type DailySourceRefreshResult } from "@/lib/services/daily-source-refresh.service";
+import { classifyDailySourceQuality } from "@/lib/pipeline/daily-run-classification";
 import {
   runServingDailyIncremental,
   ServingStepError,
@@ -55,6 +56,23 @@ export type DailyPipelineRunResult = {
     history: number;
     macro: number;
   };
+  sourceQuality: {
+    kind: "success_with_data" | "successful_noop" | "empty_source_anomaly" | "partial_source_failure";
+    reason: string;
+  };
+  publish: {
+    buildId: string | null;
+    listRows: number;
+    detailRows: number;
+    compareRows: number;
+    discoveryRows: number;
+    fundCoverageRatio: number;
+    parseFailureCount: number;
+    failedSourceCount: number;
+    trusted: boolean;
+    outcome: "success" | "partial" | "failed";
+  };
+  processedSnapshotDate: string | null;
   steps: DailyPipelineStepState[];
   firstFailedStep: DailyStepName | null;
   failureKind: "none" | "exception" | "timeout_suspected";
@@ -286,6 +304,38 @@ export async function runDailyPipeline(options?: DailyPipelineOptions): Promise<
     },
     latestDateInDb,
     sourceAttempts: sourceResult.attempts,
+    sourceQuality: classifyDailySourceQuality({
+      historyOk: sourceResult.history.ok,
+      macroOk: sourceResult.macro.ok,
+      fetchedRows: sourceResult.history.fetchedRows,
+      writtenRows: sourceResult.history.writtenRows,
+    }),
+    publish: {
+      buildId: servingResult.v2Serving.buildId,
+      listRows: servingResult.v2Serving.listRows,
+      detailRows: servingResult.v2Serving.detailRows,
+      compareRows: servingResult.v2Serving.compareRows,
+      discoveryRows: servingResult.v2Serving.discoveryRows,
+      fundCoverageRatio: servingResult.v2Serving.fundCoverageRatio,
+      parseFailureCount: servingResult.v2Serving.parseFailureCount,
+      failedSourceCount: servingResult.v2Serving.failedSourceCount,
+      trusted:
+        Boolean(servingResult.v2Serving.buildId) &&
+        servingResult.v2Serving.listRows > 0 &&
+        servingResult.v2Serving.detailRows > 0 &&
+        servingResult.v2Serving.compareRows > 0 &&
+        servingResult.v2Serving.discoveryRows > 0 &&
+        servingResult.v2Serving.fundCoverageRatio >= 0.95,
+      outcome:
+        Boolean(servingResult.v2Serving.buildId) &&
+        servingResult.v2Serving.listRows > 0 &&
+        servingResult.v2Serving.detailRows > 0 &&
+        servingResult.v2Serving.compareRows > 0 &&
+        servingResult.v2Serving.discoveryRows > 0
+          ? "success"
+          : "partial",
+    },
+    processedSnapshotDate: servingResult.snapshotDate ?? null,
     steps,
     firstFailedStep,
     failureKind,

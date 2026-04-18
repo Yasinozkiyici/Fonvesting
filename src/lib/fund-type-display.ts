@@ -40,7 +40,10 @@ export function fundTypeSortKey(fundType: { code: number; name: string } | null 
 export function normalizeScoresPayloadFundTypes(payload: ScoresApiPayload): ScoresApiPayload {
   return {
     mode: payload.mode,
-    total: payload.total,
+    total: payload.universeTotal ?? payload.total,
+    universeTotal: payload.universeTotal ?? payload.total,
+    matchedTotal: payload.matchedTotal ?? payload.total,
+    returnedCount: payload.returnedCount ?? payload.funds.length,
     ...(payload.appliedQuery ? { appliedQuery: payload.appliedQuery } : {}),
     funds: payload.funds.map((f) => ({
       fundId: f.fundId,

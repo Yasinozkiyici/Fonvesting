@@ -80,4 +80,15 @@ test("detail orchestrator keeps healthy payload trusted", () => {
   assert.equal(out.overall.reliabilityClass, "current");
   assert.equal(out.overall.trustAsFinal, true);
   assert.equal(out.overall.overallDetailHealth, "healthy");
+  assert.equal(out.sectionHealth.profileHealth, "healthy");
+});
+
+test("detail orchestrator forces low-data policy into untrusted final", () => {
+  const out = orchestrateDetailPayload(
+    makePayload({
+      priceSeries: Array.from({ length: 10 }, (_, index) => ({ t: 1_700_000_000_000 + index * 86_400_000, p: 10 + index })),
+    })
+  );
+  assert.equal(out.overall.trustAsFinal, false);
+  assert.equal(out.payload.degraded?.reasons.includes("low_data_policy_insufficient"), true);
 });

@@ -11,6 +11,7 @@ import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
 
 const MIN_POINTS_1Y = 42;
 const MIN_POINTS_3Y = 126;
+const LOW_DATA_MAX_POINTS = 12;
 
 export type DetailSectionHealth = {
   chartHealth: HealthState;
@@ -18,6 +19,7 @@ export type DetailSectionHealth = {
   fundSizeTrendHealth: HealthState;
   compareHealth: HealthState;
   alternativesHealth: HealthState;
+  profileHealth: HealthState;
 };
 
 export type DetailOverallHealth = {
@@ -70,6 +72,7 @@ export function orchestrateDetailPayload(rawPayload: FundDetailPageData): Detail
   if (horizon1Y !== "valid") horizonReasons.push(`horizon_1y_${horizon1Y}`);
   if (horizon3Y !== "valid") horizonReasons.push(`horizon_3y_${horizon3Y}`);
   const horizonInvalid = horizon1Y === "too_short" || horizon3Y === "too_short";
+  const lowDataLikely = payload.priceSeries.length > 0 && payload.priceSeries.length <= LOW_DATA_MAX_POINTS;
 
   const decision = normalizeReliabilityDecision(
     evaluateDetailReliability({
@@ -102,18 +105,23 @@ export function orchestrateDetailPayload(rawPayload: FundDetailPageData): Detail
     alternativesHealth: healthFromReliabilityClass(
       hasMeaningfulAlternatives(payload) ? "current" : "invalid_insufficient"
     ),
+    profileHealth: healthFromReliabilityClass(
+      payload.fund.code.trim().length > 0 && payload.fund.name.trim().length > 0 ? "current" : "invalid_insufficient"
+    ),
   };
 
   const overallDetailHealth = rollupHealth(Object.values(sectionHealth));
+  const finalReasons = [...decision.reasons];
+  if (lowDataLikely) finalReasons.push("low_data_policy_insufficient");
   payload.degraded = {
     active: decision.class === "degraded" || decision.class === "invalid_insufficient",
     stale,
     partial: decision.class !== "current",
-    reasons: decision.reasons,
+    reasons: finalReasons,
     failedSteps,
     generatedAt: payload.degraded?.generatedAt ?? new Date().toISOString(),
     reliabilityClass: decision.class,
-    canTrustAsFinal: decision.canPresentAsTrustedFinalState && overallDetailHealth === "healthy",
+    canTrustAsFinal: decision.canPresentAsTrustedFinalState && overallDetailHealth === "healthy" && !lowDataLikely,
     sourceTier: decision.sourceTier,
   };
 
@@ -124,7 +132,7 @@ export function orchestrateDetailPayload(rawPayload: FundDetailPageData): Detail
       overallDetailHealth,
       trustAsFinal: payload.degraded.canTrustAsFinal ?? false,
       reliabilityClass: decision.class,
-      reasons: decision.reasons,
+      reasons: finalReasons,
     },
   };
 }

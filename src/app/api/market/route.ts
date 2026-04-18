@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
-import { getMarketSummaryFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
 import type { MarketSnapshotSummaryPayload } from "@/lib/services/fund-daily-snapshot.service";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
+import {
+  enforceServingRouteTrust,
+  readServingFundListPrimary,
+  readServingSystemPrimary,
+  servingHeaders,
+} from "@/lib/data-platform/read-side-serving";
+import {
+  isServingStrictModeEnabled,
+  servingStrictHeaders,
+} from "@/lib/data-platform/serving-strict-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,7 +28,10 @@ type MarketRouteCacheEntry = {
 
 type MarketRouteState = {
   cache?: MarketRouteCacheEntry;
-  inflight?: Promise<MarketSnapshotSummaryPayload | null>;
+  inflight?: Promise<{
+    payload: MarketSnapshotSummaryPayload;
+    world: Awaited<ReturnType<typeof readServingSystemPrimary>>["world"];
+  } | null>;
 };
 
 function parseEnvMs(name: string, fallback: number, min: number, max: number): number {
@@ -58,7 +70,9 @@ function shouldDegradeForDbCategory(category: string): boolean {
     category === "transaction_timeout" ||
     category === "connection_closed" ||
     category === "connect_timeout" ||
-    category === "network_unreachable"
+    category === "network_unreachable" ||
+    category === "auth_failed" ||
+    category === "invalid_datasource"
   );
 }
 
@@ -88,8 +102,9 @@ function buildMarketFallbackPayload(): MarketSnapshotSummaryPayload {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const startedAt = Date.now();
+  const strictMode = isServingStrictModeEnabled({ headers: request.headers, url: request.url });
   const dbEnvStatus = getDbEnvStatus();
   const dbHeaders = {
     "X-Db-Env-Status": dbEnvStatus.failureCategory ?? "ok",
@@ -97,7 +112,7 @@ export async function GET() {
   };
   const state = getMarketRouteState();
   const cached = state.cache;
-  if (cached && Date.now() - cached.updatedAt <= MARKET_CACHE_TTL_MS) {
+  if (!strictMode && cached && Date.now() - cached.updatedAt <= MARKET_CACHE_TTL_MS) {
     return NextResponse.json(cached.payload, {
       headers: {
         "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate",
@@ -105,26 +120,101 @@ export async function GET() {
         "X-Market-Failure-Class": "none",
         "X-Market-Fallback-Used": "0",
         "X-Db-Failure-Class": "none",
+        ...servingStrictHeaders({ enabled: strictMode, violated: false }),
         ...dbHeaders,
       },
     });
   }
 
   try {
-    const task = state.inflight ?? withTimeout(getMarketSummaryFromDailySnapshot(), MARKET_TIMEOUT_MS);
+    const task =
+      state.inflight ??
+      withTimeout(
+        Promise.all([readServingFundListPrimary(), readServingSystemPrimary()]).then(([servingList, servingSystem]) => {
+          const rows = servingList.payload?.funds ?? [];
+          if (rows.length === 0) return null;
+          const totalPortfolioSize = rows.reduce((sum, row) => sum + row.portfolioSize, 0);
+          const totalInvestorCount = rows.reduce((sum, row) => sum + row.investorCount, 0);
+          const returns = rows.map((row) => row.dailyReturn).filter((value) => Number.isFinite(value));
+          const avgDailyReturn =
+            returns.length > 0 ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
+          const advancers = returns.filter((value) => value > 0).length;
+          const decliners = returns.filter((value) => value < 0).length;
+          const unchanged = Math.max(0, rows.length - advancers - decliners);
+          const payload: MarketSnapshotSummaryPayload = {
+            summary: { avgDailyReturn, totalFundCount: rows.length },
+            fundCount: rows.length,
+            totalPortfolioSize,
+            totalInvestorCount,
+            advancers,
+            decliners,
+            unchanged,
+            lastSyncedAt: servingSystem.payload?.snapshotAsOf ?? null,
+            snapshotDate: servingSystem.payload?.snapshotAsOf ?? null,
+            usdTry: null,
+            eurTry: null,
+            topGainers: [],
+            topLosers: [],
+            formatted: {
+              totalPortfolioSize: `₺${Math.round(totalPortfolioSize).toLocaleString("tr-TR")}`,
+              totalInvestorCount: Math.round(totalInvestorCount).toLocaleString("tr-TR"),
+            },
+          };
+          return {
+            payload,
+            world: servingSystem.world ?? servingList.world,
+          };
+        }),
+        MARKET_TIMEOUT_MS
+      );
     state.inflight = task;
-    const payload = await task;
+    const resolved = await task;
     state.inflight = undefined;
-    if (!payload) {
+    if (!resolved) {
       console.warn("[api/market] payload_empty reason=summary_null");
       return NextResponse.json({ error: "market_empty" }, { status: 404 });
     }
+    const payload = resolved.payload;
     console.info(
       `[api/market] source=primary fallback_used=0 fund_count=${payload.fundCount} portfolio=${Math.round(
         payload.totalPortfolioSize
       )} investor=${Math.round(payload.totalInvestorCount)}`
     );
     state.cache = { payload, updatedAt: Date.now() };
+    const servingWorld = resolved.world;
+    const routeTrust = enforceServingRouteTrust({
+      world: servingWorld,
+      source: "serving_system_status",
+      requiredBuilds: ["fundList", "system"],
+      payloadAvailable: true,
+      fallbackUsed: false,
+    });
+    if (strictMode && !routeTrust.trustAsFinal) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/market",
+          reason: routeTrust.degradedReason ?? "market_not_serving_final",
+        },
+        {
+          status: 503,
+          headers: {
+            ...servingHeaders({
+              world: servingWorld,
+              trust: routeTrust,
+              routeSource: "serving_system_status",
+              fallbackUsed: false,
+            }),
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason: routeTrust.degradedReason ?? routeTrust.degradedKind,
+            }),
+            ...dbHeaders,
+          },
+        }
+      );
+    }
     return NextResponse.json(payload, {
       headers: {
         "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate",
@@ -132,6 +222,13 @@ export async function GET() {
         "X-Market-Failure-Class": "none",
         "X-Market-Fallback-Used": "0",
         "X-Db-Failure-Class": "none",
+        ...servingHeaders({
+          world: servingWorld,
+          trust: routeTrust,
+          routeSource: "serving_system_status",
+          fallbackUsed: false,
+        }),
+        ...servingStrictHeaders({ enabled: strictMode, violated: false }),
         ...dbHeaders,
       },
     });
@@ -140,6 +237,27 @@ export async function GET() {
     const classified = classifyDatabaseError(e);
     const marketFailureClass = isMarketTimeoutError(e) ? "route_timeout" : classified.category;
     const marketFallbackEligible = isMarketTimeoutError(e) || shouldDegradeForDbCategory(classified.category);
+    if (strictMode) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/market",
+          reason: `fallback_path_blocked:${marketFailureClass}`,
+        },
+        {
+          status: 503,
+          headers: {
+            "X-Market-Failure-Class": marketFailureClass,
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason: `fallback_path_blocked:${marketFailureClass}`,
+            }),
+            ...dbHeaders,
+          },
+        }
+      );
+    }
     const stale = state.cache;
     if (stale && Date.now() - stale.updatedAt <= MARKET_STALE_TTL_MS) {
       console.warn(

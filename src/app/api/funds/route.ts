@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
 import { getFundsPage, type FundListSortField } from "@/lib/services/fund-list.service";
-import { prisma } from "@/lib/prisma";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
 import { getScoresPayloadServerCachedSafe } from "@/lib/services/fund-scores-cache.service";
+import {
+  enforceServingRouteTrust,
+  readServingFundListPrimary,
+  servingHeaders,
+  type ServingListRow,
+} from "@/lib/data-platform/read-side-serving";
+import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
+import {
+  isServingStrictModeEnabled,
+  servingStrictHeaders,
+} from "@/lib/data-platform/serving-strict-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,8 +27,6 @@ const MAX_FILTER_LENGTH = 32;
 const FUNDS_TIMEOUT_MS = parseEnvMs("FUNDS_ROUTE_TIMEOUT_MS", 5_000, 2_500, 20_000);
 const FUNDS_CACHE_TTL_MS = parseEnvMs("FUNDS_ROUTE_CACHE_TTL_MS", 90_000, 10_000, 10 * 60_000);
 const FUNDS_STALE_TTL_MS = parseEnvMs("FUNDS_ROUTE_STALE_TTL_MS", 10 * 60_000, 30_000, 60 * 60_000);
-const FUNDS_LIGHT_LATEST_TIMEOUT_MS = parseEnvMs("FUNDS_LIGHT_LATEST_TIMEOUT_MS", 1_000, 400, 6_000);
-const FUNDS_LIGHT_ROWS_TIMEOUT_MS = parseEnvMs("FUNDS_LIGHT_ROWS_TIMEOUT_MS", 1_200, 500, 6_000);
 const FUNDS_LIGHT_SERVING_LIMIT = parseEnvMs("FUNDS_LIGHT_SERVING_LIMIT", 180, 30, 320);
 const FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS = parseEnvMs(
   "FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS",
@@ -122,77 +130,74 @@ function shouldFastDegradeForDb(category: string): boolean {
   );
 }
 
-async function buildLightFundsFallback(page: number, pageSize: number): Promise<FundsPayload> {
-  const latest = await withTimeout(
-    prisma.fundDailySnapshot.findFirst({
-      orderBy: { date: "desc" },
-      select: { date: true },
-    }),
-    FUNDS_LIGHT_LATEST_TIMEOUT_MS
-  ).catch(() => null);
-
-  if (!latest) {
-    return { items: [], page, pageSize, total: 0, totalPages: 1 };
-  }
-
-  const rows =
-    (await withTimeout(
-      prisma.fundDailySnapshot.findMany({
-        where: { date: latest.date },
-        orderBy: [{ portfolioSize: "desc" }, { code: "asc" }],
-        take: Math.max(1, Math.min(pageSize, 20)),
-        select: {
-          fundId: true,
-          code: true,
-          name: true,
-          shortName: true,
-          logoUrl: true,
-          portfolioSize: true,
-          lastPrice: true,
-          dailyReturn: true,
-          monthlyReturn: true,
-          yearlyReturn: true,
-          investorCount: true,
-          categoryCode: true,
-          categoryName: true,
-          fundTypeCode: true,
-          fundTypeName: true,
-        },
-      }),
-      FUNDS_LIGHT_ROWS_TIMEOUT_MS
-    ).catch(() => [])) ?? [];
-
+function toFundsPayloadRow(row: ServingListRow) {
   return {
-    items: rows.map((row) => ({
-      id: row.fundId,
-      code: row.code,
-      name: row.name,
-      shortName: row.shortName,
-      logoUrl: row.logoUrl,
-      portfolioSize: row.portfolioSize,
-      lastPrice: row.lastPrice,
-      dailyReturn: row.dailyReturn,
-      weeklyReturn: 0,
-      monthlyReturn: row.monthlyReturn,
-      yearlyReturn: row.yearlyReturn,
-      investorCount: row.investorCount,
-      shareCount: 0,
-      category:
-        row.categoryCode && row.categoryName
-          ? { code: row.categoryCode, name: row.categoryName, color: null }
-          : null,
-      fundType:
-        row.fundTypeCode != null && row.fundTypeName
-          ? { code: row.fundTypeCode, name: row.fundTypeName }
-          : null,
-      sparkline: [],
-      sparklineTrend:
-        row.dailyReturn > 0 ? ("up" as const) : row.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
-    })),
-    page,
-    pageSize,
-    total: rows.length,
-    totalPages: 1,
+    id: row.code,
+    code: row.code,
+    name: row.name,
+    shortName: row.shortName,
+    logoUrl: null,
+    portfolioSize: row.portfolioSize,
+    lastPrice: row.lastPrice,
+    dailyReturn: row.dailyReturn,
+    weeklyReturn: 0,
+    monthlyReturn: row.monthlyReturn,
+    yearlyReturn: row.yearlyReturn,
+    investorCount: Math.round(row.investorCount),
+    shareCount: 0,
+    category:
+      row.categoryCode
+        ? { code: row.categoryCode, name: row.categoryCode, color: null }
+        : null,
+    fundType: row.fundTypeCode != null ? { code: row.fundTypeCode, name: String(row.fundTypeCode) } : null,
+    sparkline: [] as number[],
+    sparklineTrend:
+      row.dailyReturn > 0 ? ("up" as const) : row.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+  };
+}
+
+function readSortableValue(row: ServingListRow, field: FundListSortField): number {
+  if (field === "portfolioSize") return row.portfolioSize;
+  if (field === "dailyReturn") return row.dailyReturn;
+  if (field === "lastPrice") return row.lastPrice;
+  if (field === "investorCount") return row.investorCount;
+  if (field === "monthlyReturn") return row.monthlyReturn;
+  if (field === "yearlyReturn") return row.yearlyReturn;
+  return 0;
+}
+
+function queryMatchesRow(row: ServingListRow, qLower: string): boolean {
+  if (!qLower) return true;
+  return row.searchHaystack.includes(qLower);
+}
+
+function buildPrimaryServingFundsPage(input: {
+  rows: ServingListRow[];
+  page: number;
+  pageSize: number;
+  q: string;
+  category: string;
+  fundType: string;
+  sortField: FundListSortField;
+  sortDir: "asc" | "desc";
+}): FundsPayload {
+  const filtered = input.rows
+    .filter((row) => queryMatchesRow(row, input.q))
+    .filter((row) => (input.category ? row.categoryCode === input.category : true))
+    .filter((row) => (input.fundType ? String(row.fundTypeCode ?? "") === input.fundType : true));
+  filtered.sort((left, right) => {
+    const delta = readSortableValue(left, input.sortField) - readSortableValue(right, input.sortField);
+    if (delta !== 0) return input.sortDir === "asc" ? delta : -delta;
+    return left.code.localeCompare(right.code, "tr", { sensitivity: "base" });
+  });
+  const start = Math.max(0, (input.page - 1) * input.pageSize);
+  const pageRows = filtered.slice(start, start + input.pageSize);
+  return {
+    items: pageRows.map(toFundsPayloadRow),
+    page: input.page,
+    pageSize: input.pageSize,
+    total: filtered.length,
+    totalPages: Math.max(1, Math.ceil(filtered.length / input.pageSize)),
   };
 }
 
@@ -294,6 +299,7 @@ async function buildScoresCacheFundsFallback(input: {
 
 export async function GET(req: NextRequest) {
   const startedAt = Date.now();
+  const strictMode = isServingStrictModeEnabled(req);
   const dbEnvStatus = getDbEnvStatus();
   const dbHeaders = {
     "X-Db-Env-Status": dbEnvStatus.failureCategory ?? "ok",
@@ -314,72 +320,97 @@ export async function GET(req: NextRequest) {
       : "portfolioSize";
     const sortDir = sortDirRaw === "asc" ? "asc" : "desc";
     const cacheKey = [page, pageSize, q, category, fundType, sortField, sortDir].join("|");
-    const lightMode = searchParams.get("light") === "1";
     const state = getFundsRouteState();
     const cached = state.cache.get(cacheKey);
-    if (cached && Date.now() - cached.updatedAt <= FUNDS_CACHE_TTL_MS) {
+    if (!strictMode && cached && Date.now() - cached.updatedAt <= FUNDS_CACHE_TTL_MS) {
+      const servingWorld = await readUiServingWorldMetaCached().catch(() => null);
       return NextResponse.json(cached.payload, {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "hit",
           "X-Funds-Source": "memory",
           "X-Db-Failure-Class": "none",
+          "X-Serving-World-Id": servingWorld?.worldId ?? "none",
+          "X-Serving-World-Aligned": servingWorld?.worldAligned ? "1" : "0",
+          "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",
+          ...servingStrictHeaders({ enabled: strictMode, violated: false }),
           ...dbHeaders,
         },
       });
     }
 
-    if (lightMode) {
-      const lightPayload = await buildLightFundsFallback(page, pageSize);
-      if (lightPayload.items.length > 0) {
-        state.cache.set(cacheKey, { payload: lightPayload, updatedAt: Date.now() });
-        return NextResponse.json(lightPayload, {
+    const servingPrimary = await readServingFundListPrimary();
+    const servingWorld = servingPrimary.world;
+    const hasServingPrimary = Boolean(servingPrimary.payload?.funds.length);
+    const routeTrust = enforceServingRouteTrust({
+      world: servingWorld,
+      source: "serving_fund_list",
+      requiredBuilds: ["fundList", "system"],
+      payloadAvailable: hasServingPrimary,
+      fallbackUsed: !hasServingPrimary,
+      fallbackReason: hasServingPrimary ? null : "serving_list_unavailable",
+    });
+    if (strictMode && (!hasServingPrimary || !routeTrust.trustAsFinal)) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/funds",
+          reason: routeTrust.degradedReason ?? "strict_mode_requires_serving_primary",
+          degradedKind: routeTrust.degradedKind,
+        },
+        {
+          status: 503,
           headers: {
-            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
-            "X-Funds-Cache": "light",
-            "X-Funds-Source": "snapshot-light",
-            "X-Db-Failure-Class": "none",
+            ...servingHeaders({
+              world: servingWorld,
+              trust: routeTrust,
+              routeSource: hasServingPrimary ? "serving_fund_list" : "legacy_fallback",
+              fallbackUsed: !hasServingPrimary,
+            }),
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason: routeTrust.degradedReason ?? routeTrust.degradedKind,
+            }),
             ...dbHeaders,
           },
-        });
-      }
-      const servingPayload = await buildServingFundsFallback(page, pageSize);
-      return NextResponse.json(servingPayload, {
-        headers: {
-          "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
-          "X-Funds-Cache": servingPayload.items.length > 0 ? "serving-light" : "empty",
-          "X-Funds-Source": servingPayload.items.length > 0 ? "serving" : "empty",
-          "X-Db-Failure-Class": "none",
-          ...dbHeaders,
-        },
-      });
+        }
+      );
     }
-
-    const result = await withTimeout(
-      getFundsPage({
-        page,
-        pageSize,
-        q,
-        category,
-        fundType,
-        sortField,
-        sortDir,
-      }),
-      FUNDS_TIMEOUT_MS
-    );
-
-    const payload: FundsPayload = {
-      items: result.items.map((item) => ({
-        ...item,
-        sparkline: [] as number[],
-        sparklineTrend:
-          item.dailyReturn > 0 ? "up" : item.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
-      })),
-      page,
-      pageSize: result.pageSize,
-      total: result.total,
-      totalPages: result.totalPages,
-    };
+    const payload: FundsPayload = hasServingPrimary
+      ? buildPrimaryServingFundsPage({
+          rows: servingPrimary.payload?.funds ?? [],
+          page,
+          pageSize,
+          q,
+          category,
+          fundType,
+          sortField,
+          sortDir,
+        })
+      : await withTimeout(
+          getFundsPage({
+            page,
+            pageSize,
+            q,
+            category,
+            fundType,
+            sortField,
+            sortDir,
+          }).then((result) => ({
+            items: result.items.map((item) => ({
+              ...item,
+              sparkline: [] as number[],
+              sparklineTrend:
+                item.dailyReturn > 0 ? "up" : item.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+            })),
+            page,
+            pageSize: result.pageSize,
+            total: result.total,
+            totalPages: result.totalPages,
+          })),
+          FUNDS_TIMEOUT_MS
+        );
     if (payload.items.length === 0) {
       const scoresFallback = await buildScoresCacheFundsFallback({
         page,
@@ -399,6 +430,10 @@ export async function GET(req: NextRequest) {
             "X-Funds-Source": "scores-cache",
             "X-Funds-Degraded": "empty_result_repaired",
             "X-Db-Failure-Class": "none",
+            "X-Serving-World-Id": servingWorld?.worldId ?? "none",
+            "X-Serving-World-Aligned": servingWorld?.worldAligned ? "1" : "0",
+            "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",
+          ...servingStrictHeaders({ enabled: strictMode, violated: false }),
             ...dbHeaders,
           },
         });
@@ -407,18 +442,34 @@ export async function GET(req: NextRequest) {
     state.cache.set(cacheKey, { payload, updatedAt: Date.now() });
 
     return NextResponse.json(
-      payload,
+      {
+        ...payload,
+        meta: {
+          servingWorld,
+          trustAsFinal: routeTrust.trustAsFinal,
+          degradedKind: routeTrust.degradedKind,
+          degradedReason: routeTrust.degradedReason,
+        },
+      },
       {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Funds-Cache": "miss",
-          "X-Funds-Source": result.source ?? "unknown",
+          "X-Funds-Source": hasServingPrimary ? "serving_fund_list" : "legacy_fallback",
           "X-Db-Failure-Class": "none",
+          ...servingHeaders({
+            world: servingWorld,
+            trust: routeTrust,
+            routeSource: hasServingPrimary ? "serving_fund_list" : "legacy_fallback",
+            fallbackUsed: !hasServingPrimary,
+          }),
+          ...servingStrictHeaders({ enabled: strictMode, violated: false }),
           ...dbHeaders,
         },
       }
     );
   } catch (e) {
+    const servingWorld = await readUiServingWorldMetaCached().catch(() => null);
     const { searchParams } = req.nextUrl;
     const page = Math.min(MAX_PAGE, Math.max(1, Number(searchParams.get("page") ?? "1")));
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(searchParams.get("pageSize") ?? "50")));
@@ -435,6 +486,26 @@ export async function GET(req: NextRequest) {
     const cacheKey = [page, pageSize, q, category, fundType, sortField, sortDir].join("|");
     const state = getFundsRouteState();
     const stale = state.cache.get(cacheKey);
+    if (strictMode) {
+      return NextResponse.json(
+        {
+          error: "serving_strict_violation",
+          route: "/api/funds",
+          reason: "exception_path_requires_fallback",
+        },
+        {
+          status: 503,
+          headers: {
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason: "exception_path_requires_fallback",
+            }),
+            ...dbHeaders,
+          },
+        }
+      );
+    }
     if (stale && Date.now() - stale.updatedAt <= FUNDS_STALE_TTL_MS) {
       return NextResponse.json(stale.payload, {
         status: 200,
@@ -450,20 +521,6 @@ export async function GET(req: NextRequest) {
 
     const classified = classifyDatabaseError(e);
     if (isFundsTimeoutError(e) || shouldFastDegradeForDb(classified.category)) {
-      const fastLightFallback = await buildLightFundsFallback(page, pageSize);
-      if (fastLightFallback.items.length > 0) {
-        return NextResponse.json(fastLightFallback, {
-          status: 200,
-          headers: {
-            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
-            "X-Funds-Cache": "light-fast",
-            "X-Funds-Source": "snapshot-light",
-            "X-Funds-Degraded": classified.category,
-            "X-Db-Failure-Class": classified.category,
-            ...dbHeaders,
-          },
-        });
-      }
       const servingFallback = await buildServingFundsFallback(page, pageSize);
       if (servingFallback.items.length > 0) {
         return NextResponse.json(servingFallback, {
@@ -474,6 +531,16 @@ export async function GET(req: NextRequest) {
             "X-Funds-Source": "serving",
             "X-Funds-Degraded": classified.category,
             "X-Db-Failure-Class": classified.category,
+            ...servingHeaders({
+              world: servingWorld,
+              trust: {
+                trustAsFinal: false,
+                degradedKind: "legacy_fallback",
+                degradedReason: classified.category,
+              },
+              routeSource: "legacy_fallback",
+              fallbackUsed: true,
+            }),
             ...dbHeaders,
           },
         });
@@ -533,7 +600,7 @@ export async function GET(req: NextRequest) {
       durationMs: Date.now() - startedAt,
       timestamp: new Date().toISOString(),
     });
-    const fallback = await buildLightFundsFallback(page, pageSize);
+    const fallback = await buildServingFundsFallback(page, pageSize);
     if (fallback.items.length === 0) {
       const scoresFallback = await buildScoresCacheFundsFallback({
         page,
@@ -562,9 +629,19 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
-        "X-Funds-Cache": fallback.items.length > 0 ? "light-fallback" : "empty",
-        "X-Funds-Source": fallback.items.length > 0 ? "snapshot-light" : "empty",
+        "X-Funds-Cache": fallback.items.length > 0 ? "serving-fallback" : "empty",
+        "X-Funds-Source": fallback.items.length > 0 ? "serving" : "empty",
         "X-Db-Failure-Class": classified.category,
+        ...servingHeaders({
+          world: servingWorld,
+          trust: {
+            trustAsFinal: false,
+            degradedKind: "legacy_fallback",
+            degradedReason: classified.category,
+          },
+          routeSource: "legacy_fallback",
+          fallbackUsed: true,
+        }),
         ...dbHeaders,
       },
     });

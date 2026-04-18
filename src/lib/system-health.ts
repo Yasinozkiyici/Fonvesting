@@ -10,7 +10,8 @@ import {
   type DbRuntimeTargetDiagnostics,
 } from "@/lib/db-runtime-diagnostics";
 import { resolveHealthDbFailureCategory } from "@/lib/health-db-diagnostics";
-import { getEffectiveDatabaseUrl, prisma } from "@/lib/prisma";
+import { readRawDatabaseUrlFromProcessEnv, resolvePrismaDatasourceUrl } from "@/lib/db/db-connection-profile";
+import { prisma } from "@/lib/prisma";
 import { getFundDetailCoreServingReadiness } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import {
@@ -151,29 +152,76 @@ export interface SystemHealthJobSnapshot {
   errorMessage: string | null;
 }
 
-type DailySyncRunMeta = {
+export type DailySyncRunMeta = {
   phase?: string;
   runKey?: string;
   trigger?: string;
+  outcome?: "running" | "success" | "partial" | "failed" | "timeout_suspected";
   sourceStatus?: string;
   publishStatus?: string;
+  sourceQuality?: "success_with_data" | "successful_noop" | "empty_source_anomaly" | "partial_source_failure";
+  sourceQualityReason?: string;
+  processedSnapshotDate?: string | null;
+  fetchedFundRows?: number;
+  writtenFundRows?: number;
+  canonicalRowsWritten?: number;
+  publishBuildId?: string | null;
+  publishListRows?: number;
+  publishDetailRows?: number;
+  publishCompareRows?: number;
+  publishDiscoveryRows?: number;
+  publishCoverageRatio?: number;
   firstFailedStep?: string | null;
   failureKind?: "none" | "exception" | "timeout_suspected";
   staleRunRecovered?: boolean;
 };
 
+type LatestPipelineJobRunRow = {
+  syncType: string;
+  status: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  durationMs: number | null;
+  errorMessage: string | null;
+  fundsUpdated: number;
+};
+
 type DailySyncStatusView = {
   runKey: string | null;
   trigger: string | null;
+  outcome: "unknown" | "running" | "success" | "partial" | "failed" | "timeout_suspected";
   sourceStatus: "unknown" | "success" | "failed";
   publishStatus: "unknown" | "success" | "failed";
+  sourceQuality: "unknown" | "success_with_data" | "successful_noop" | "empty_source_anomaly" | "partial_source_failure";
+  sourceQualityReason: string | null;
+  processedSnapshotDate: string | null;
+  fetchedFundRows: number | null;
+  writtenFundRows: number | null;
+  canonicalRowsWritten: number | null;
+  publishBuildId: string | null;
+  publishListRows: number | null;
+  publishDetailRows: number | null;
+  publishCompareRows: number | null;
+  publishDiscoveryRows: number | null;
+  publishCoverageRatio: number | null;
   firstFailedStep: string | null;
   failureKind: "none" | "exception" | "timeout_suspected" | "unknown";
   staleRunRecovered: boolean;
   missedSlaToday: boolean;
 };
 
-function parseDailySyncRunMeta(message: string | null | undefined): DailySyncRunMeta | null {
+function selectLatestJobByType(jobs: LatestPipelineJobRunRow[], syncType: string) {
+  return jobs.find((job) => job.syncType === syncType) ?? null;
+}
+
+function selectLatestDailySyncJob(jobs: LatestPipelineJobRunRow[]) {
+  const dailyJobs = jobs.filter((job) => job.syncType === "daily_sync");
+  if (dailyJobs.length === 0) return null;
+  const terminal = dailyJobs.find((job) => job.completedAt != null && job.status !== "RUNNING");
+  return terminal ?? dailyJobs[0] ?? null;
+}
+
+export function parseDailySyncRunMeta(message: string | null | undefined): DailySyncRunMeta | null {
   if (!message) return null;
   try {
     const parsed = JSON.parse(message) as DailySyncRunMeta;
@@ -433,7 +481,7 @@ export async function getSystemHealthSnapshot(options?: {
   lightweight?: boolean;
 }): Promise<SystemHealthSnapshot> {
   const checkedAt = new Date().toISOString();
-  const rawDbUrl = (process.env.DATABASE_URL ?? "").trim();
+  const rawDbUrl = readRawDatabaseUrlFromProcessEnv();
   const isProduction = process.env.NODE_ENV === "production";
   const dbEnvStatus = getDbEnvStatus({
     requireDirectUrl: (process.env.HEALTH_REQUIRE_DIRECT_URL ?? "").trim() === "1",
@@ -454,7 +502,7 @@ export async function getSystemHealthSnapshot(options?: {
   let effectivePort: number | null = null;
   let effectiveParams: Record<string, string> = {};
   try {
-    effectiveDbUrl = getEffectiveDatabaseUrl();
+    effectiveDbUrl = resolvePrismaDatasourceUrl();
     try {
       const url = new URL(effectiveDbUrl);
       effectiveHost = url.hostname || null;
@@ -872,16 +920,7 @@ export async function getSystemHealthSnapshot(options?: {
       select: { status: true },
     })
   );
-  const latestJobRunsResult = await safeQuery<
-    Array<{
-      syncType: string;
-      status: string;
-      startedAt: Date;
-      completedAt: Date | null;
-      durationMs: number | null;
-      errorMessage: string | null;
-    }>
-  >("latest_job_runs", [], () =>
+  const latestJobRunsResult = await safeQuery<LatestPipelineJobRunRow[]>("latest_job_runs", [], () =>
     prisma.syncLog.findMany({
       where: {
         syncType: {
@@ -897,6 +936,7 @@ export async function getSystemHealthSnapshot(options?: {
         completedAt: true,
         durationMs: true,
         errorMessage: true,
+        fundsUpdated: true,
       },
     })
   );
@@ -934,13 +974,10 @@ export async function getSystemHealthSnapshot(options?: {
   const latestFundSnapshotDate = latestFundSnapshotResult.value?.date ?? null;
   const latestMarketSnapshotDate = latestMarketSnapshotResult.value?.date ?? null;
   const latestMacroObservationDate = latestMacroObservationResult.value?.date ?? null;
-  const latestJobsByType = new Map(
-    latestJobRunsResult.value.map((job) => [job.syncType, job] as const)
-  );
-  const sourceRefreshJob = latestJobsByType.get("source_refresh") ?? null;
-  const servingRebuildJob = latestJobsByType.get("serving_rebuild") ?? null;
-  const warmScoresJob = latestJobsByType.get("warm_scores") ?? null;
-  const dailySyncJob = latestJobsByType.get("daily_sync") ?? null;
+  const sourceRefreshJob = selectLatestJobByType(latestJobRunsResult.value, "source_refresh");
+  const servingRebuildJob = selectLatestJobByType(latestJobRunsResult.value, "serving_rebuild");
+  const warmScoresJob = selectLatestJobByType(latestJobRunsResult.value, "warm_scores");
+  const dailySyncJob = selectLatestDailySyncJob(latestJobRunsResult.value);
 
   const latestSnapshotCoverageResult = latestFundSnapshotDate
     ? await safeQuery("latest_snapshot_coverage", 0, () =>
@@ -1054,14 +1091,65 @@ export async function getSystemHealthSnapshot(options?: {
   const dailySyncStatus: DailySyncStatusView = {
     runKey: dailySyncMeta?.runKey ?? null,
     trigger: dailySyncMeta?.trigger ?? null,
+    outcome:
+      dailySyncMeta?.outcome === "running" ||
+      dailySyncMeta?.outcome === "success" ||
+      dailySyncMeta?.outcome === "partial" ||
+      dailySyncMeta?.outcome === "failed" ||
+      dailySyncMeta?.outcome === "timeout_suspected"
+        ? dailySyncMeta.outcome
+        : dailySyncJob?.status === "RUNNING"
+          ? "running"
+          : dailySyncJob?.status === "SUCCESS"
+            ? "success"
+            : dailySyncJob?.status === "FAILED" || dailySyncJob?.status === "TIMEOUT"
+              ? "failed"
+              : "unknown",
     sourceStatus:
       dailySyncMeta?.sourceStatus === "success" || dailySyncMeta?.sourceStatus === "failed"
         ? dailySyncMeta.sourceStatus
-        : "unknown",
+        : dailySyncJob?.status === "SUCCESS"
+          ? "success"
+          : dailySyncJob?.status === "FAILED" || dailySyncJob?.status === "TIMEOUT"
+            ? "failed"
+            : "unknown",
     publishStatus:
       dailySyncMeta?.publishStatus === "success" || dailySyncMeta?.publishStatus === "failed"
         ? dailySyncMeta.publishStatus
+        : dailySyncJob?.status === "SUCCESS"
+          ? "success"
+          : dailySyncJob?.status === "FAILED" || dailySyncJob?.status === "TIMEOUT"
+            ? "failed"
+            : "unknown",
+    sourceQuality:
+      dailySyncMeta?.sourceQuality === "success_with_data" ||
+      dailySyncMeta?.sourceQuality === "successful_noop" ||
+      dailySyncMeta?.sourceQuality === "empty_source_anomaly" ||
+      dailySyncMeta?.sourceQuality === "partial_source_failure"
+        ? dailySyncMeta.sourceQuality
+        : dailySyncJob?.status === "SUCCESS"
+          ? ((dailySyncJob?.fundsUpdated ?? 0) > 0 ? "success_with_data" : "successful_noop")
         : "unknown",
+    sourceQualityReason: dailySyncMeta?.sourceQualityReason ?? null,
+    processedSnapshotDate: dailySyncMeta?.processedSnapshotDate ?? latestFundSnapshotDate?.toISOString() ?? null,
+    fetchedFundRows:
+      typeof dailySyncMeta?.fetchedFundRows === "number"
+        ? dailySyncMeta.fetchedFundRows
+        : dailySyncJob?.fundsUpdated ?? null,
+    writtenFundRows:
+      typeof dailySyncMeta?.writtenFundRows === "number"
+        ? dailySyncMeta.writtenFundRows
+        : dailySyncJob?.fundsUpdated ?? null,
+    canonicalRowsWritten:
+      typeof dailySyncMeta?.canonicalRowsWritten === "number" ? dailySyncMeta.canonicalRowsWritten : null,
+    publishBuildId: typeof dailySyncMeta?.publishBuildId === "string" ? dailySyncMeta.publishBuildId : null,
+    publishListRows: typeof dailySyncMeta?.publishListRows === "number" ? dailySyncMeta.publishListRows : null,
+    publishDetailRows: typeof dailySyncMeta?.publishDetailRows === "number" ? dailySyncMeta.publishDetailRows : null,
+    publishCompareRows: typeof dailySyncMeta?.publishCompareRows === "number" ? dailySyncMeta.publishCompareRows : null,
+    publishDiscoveryRows:
+      typeof dailySyncMeta?.publishDiscoveryRows === "number" ? dailySyncMeta.publishDiscoveryRows : null,
+    publishCoverageRatio:
+      typeof dailySyncMeta?.publishCoverageRatio === "number" ? dailySyncMeta.publishCoverageRatio : null,
     firstFailedStep: dailySyncMeta?.firstFailedStep ?? null,
     failureKind:
       dailySyncMeta?.failureKind === "none" ||
@@ -1140,6 +1228,14 @@ export async function getSystemHealthSnapshot(options?: {
   }
   dailySyncStatus.missedSlaToday = issues.some((issue) => issue.code === "daily_sync_missed_sla");
 
+  if (dailySyncStatus.missedSlaToday && dailySyncStatus.outcome !== "success") {
+    issues.push({
+      code: "daily_sync_not_completed_today",
+      severity: "error",
+      message: "Gunluk pipeline bugun SLA icinde basarili tamamlanmadi.",
+    });
+  }
+
   for (const job of [sourceRefreshJob, servingRebuildJob, warmScoresJob, dailySyncJob]) {
     if (!job) continue;
     if ((job.status === "FAILED" || job.status === "TIMEOUT") && toIstanbulDateKey(job.startedAt) === istanbulNow.dateKey) {
@@ -1176,6 +1272,35 @@ export async function getSystemHealthSnapshot(options?: {
         message: "Daily sync tamamlandı görünse de publish aşaması başarılı değil.",
       });
     }
+  }
+
+  if (dailySyncStatus.sourceQuality === "empty_source_anomaly") {
+    issues.push({
+      code: "daily_sync_empty_source_anomaly",
+      severity: "error",
+      message: "Gunluk kaynak verisi anomali: fetch/write sifir gorunuyor.",
+    });
+  }
+  if (dailySyncStatus.sourceQuality === "partial_source_failure") {
+    issues.push({
+      code: "daily_sync_partial_source_failure",
+      severity: "error",
+      message: "Gunluk kaynak asamalarindan en az biri basarisiz.",
+    });
+  }
+  if (dailySyncStatus.publishStatus === "failed") {
+    issues.push({
+      code: "daily_sync_publish_failed",
+      severity: "error",
+      message: "Gunluk publish asamasi basarisiz.",
+    });
+  }
+  if (dailySyncStatus.publishStatus === "success" && (daysSinceLatestFundSnapshot ?? 0) > 1) {
+    issues.push({
+      code: "daily_sync_publish_lag",
+      severity: "error",
+      message: "Gunluk publish basarili gorunse de canonical/serving tazelik sozlesmesi bozulmus.",
+    });
   }
 
   if (!detailCoreServingReadiness.fileExists) {

@@ -7,6 +7,9 @@ function payload(): ScoresApiPayload {
   return {
     mode: "BEST",
     total: 3,
+    universeTotal: 3,
+    matchedTotal: 3,
+    returnedCount: 3,
     funds: [
       {
         fundId: "1",

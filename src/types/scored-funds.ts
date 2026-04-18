@@ -17,7 +17,17 @@ export interface ScoredFund {
 
 export interface ScoredResponse {
   mode: RankingMode;
+  /**
+   * Tam keşif evreni toplamı (`universeTotal` ile aynı; geriye dönük alan).
+   * @deprecated Doğrudan `universeTotal` tercih edilir.
+   */
   total: number;
+  /** Tam keşif evreni (tema / istemci araması öncesi, sunucu kapsamı). */
+  universeTotal?: number;
+  /** Sunucu tema + sunucu q ile eşleşen fon sayısı. */
+  matchedTotal?: number;
+  /** Sunucunun döndürdüğü satır sayısı. */
+  returnedCount?: number;
   funds: ScoredFund[];
   /** Sunucu metin filtresi uygulandıysa (q/query) */
   appliedQuery?: string;

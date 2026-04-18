@@ -22,6 +22,7 @@ import {
   loadPriceHistoryByFundId,
 } from "@/lib/services/fund-daily-snapshot.service";
 import type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
+import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
 
@@ -574,10 +575,11 @@ export async function getScoresPayloadFromDerivedMetrics(
     };
   });
 
-  return {
+  return createScoresPayload({
     mode,
-    total: funds.length,
     funds,
+    universeTotal: funds.length,
+    matchedTotal: funds.length,
     ...(q ? { appliedQuery: q } : {}),
-  };
+  });
 }

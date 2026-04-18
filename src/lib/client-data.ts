@@ -11,6 +11,8 @@ type JsonRecord = Record<string, unknown>;
 export interface MarketApiPayload {
   summary: { avgDailyReturn: number; totalFundCount: number };
   fundCount: number;
+  /** False when fundCount is a subset shell (serving preview); must not be labeled as full universe. */
+  snapshotFundCountIsCanonicalUniverse?: boolean;
   totalPortfolioSize: number;
   totalInvestorCount: number;
   advancers: number;
@@ -529,9 +531,18 @@ export function normalizeScoredResponse(value: unknown): ScoredResponse | null {
   const funds = value.funds
     .map((item) => normalizeScoredFund(item))
     .filter((item): item is ScoredFund => item !== null);
+  const returnedCount = funds.length;
+  const legacyTotal = readNumber(value.total, returnedCount);
+  const universeTotal = readFiniteNumber(value.universeTotal) ?? legacyTotal;
+  const matchedTotalRaw = readFiniteNumber(value.matchedTotal);
+  const matchedTotal =
+    matchedTotalRaw != null ? Math.max(matchedTotalRaw, returnedCount) : Math.max(legacyTotal, returnedCount);
   return {
     mode: normalizeRankingMode(value.mode),
-    total: readNumber(value.total, funds.length),
+    universeTotal,
+    matchedTotal,
+    returnedCount,
+    total: universeTotal,
     funds,
     ...(typeof value.appliedQuery === "string" && value.appliedQuery.trim()
       ? { appliedQuery: value.appliedQuery }
@@ -549,12 +560,19 @@ export function normalizeMarketApi(value: unknown): MarketApiPayload | null {
     return null;
   }
 
+  const snapshotFundCountIsCanonicalUniverse =
+    typeof (value as { snapshotFundCountIsCanonicalUniverse?: unknown }).snapshotFundCountIsCanonicalUniverse ===
+    "boolean"
+      ? Boolean((value as { snapshotFundCountIsCanonicalUniverse: boolean }).snapshotFundCountIsCanonicalUniverse)
+      : true;
+
   return {
     summary: {
       avgDailyReturn,
       totalFundCount,
     },
     fundCount: readNumber(value.fundCount),
+    snapshotFundCountIsCanonicalUniverse,
     totalPortfolioSize: readNumber(value.totalPortfolioSize),
     totalInvestorCount: readNumber(value.totalInvestorCount),
     advancers: readNumber(value.advancers),
