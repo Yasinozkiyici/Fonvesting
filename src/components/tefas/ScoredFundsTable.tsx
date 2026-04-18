@@ -24,7 +24,7 @@ import {
   normalizeFundListResponse,
   normalizeScoredResponse,
 } from "@/lib/client-data";
-import { readScoresMatchedTotal, readScoresUniverseTotal } from "@/lib/scores-response-counts";
+import { readScoresUniverseTotal } from "@/lib/scores-response-counts";
 import { shouldStopBootstrapRetries } from "@/lib/scored-funds-bootstrap";
 import { fundMatchesTheme, getFundTheme, type FundThemeId } from "@/lib/fund-themes";
 import { fundTypeSortKey } from "@/lib/fund-type-display";
@@ -34,6 +34,10 @@ import {
   type FundIntentId,
 } from "@/lib/fund-intents";
 import { fundSearchMatches, normalizeFundSearchText } from "@/lib/fund-search";
+import {
+  deriveHomepageDiscoveryTableSurfaceState,
+  resolveHomepageRegisteredTotal,
+} from "@/lib/data-flow/homepage-discovery-surface";
 
 export type { ScoredFund, ScoredResponse };
 
@@ -1057,15 +1061,31 @@ export default function ScoredFundsTable({
 
   const totalPages = Math.max(1, Math.ceil(filteredFunds.length / pageSize));
   const paginatedFunds = filteredFunds.slice((page - 1) * pageSize, page * pageSize);
-  const showTableLoadingSkeleton =
-    (loading || bootstrapFallbackActive) &&
-    paginatedFunds.length === 0 &&
-    !(
-      Boolean(normalizeFundSearchText(deferredSearch)) &&
-      themeScopedFunds.length > 0 &&
-      filteredFunds.length === 0
-    );
   const hasFilters = Boolean(search || (enableCategoryFilter && category) || activeIntent || activeTheme);
+  const tableSurfaceState = useMemo(
+    () =>
+      deriveHomepageDiscoveryTableSurfaceState({
+        loading,
+        bootstrapFallbackActive,
+        error,
+        paginatedCount: paginatedFunds.length,
+        hasFilters,
+        scoresMeta: {
+          degraded: lastScoresMeta.degraded,
+          emptyResult: lastScoresMeta.emptyResult,
+        },
+      }),
+    [
+      bootstrapFallbackActive,
+      error,
+      hasFilters,
+      lastScoresMeta.degraded,
+      lastScoresMeta.emptyResult,
+      loading,
+      paginatedFunds.length,
+    ]
+  );
+  const showTableLoadingSkeleton = tableSurfaceState.kind === "loading";
   useEffect(() => {
     console.info(
       `[discover-client-filter] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
@@ -1245,34 +1265,24 @@ export default function ScoredFundsTable({
     if (!quickStartActive || !quickStartLabel) return null;
     const shown = filteredFunds.length;
     const shownStr = shown.toLocaleString("tr-TR");
-    const clientWidenedUniverse =
-      payloadForCurrentScope &&
-      readScoresUniverseTotal(payloadForCurrentScope) > payloadForCurrentScope.funds.length
-        ? readScoresUniverseTotal(payloadForCurrentScope)
-        : null;
-    const registeredTotal =
-      referenceUniverseTotal ??
-      clientWidenedUniverse ??
-      (routeScopedMatchCount > 0 ? routeScopedMatchCount : null);
+    const registeredTotal = resolveHomepageRegisteredTotal({
+      hasFilters,
+      canonicalUniverseTotal: referenceUniverseTotal,
+      scopedPayload: payloadForCurrentScope ?? null,
+    });
     const regStr = registeredTotal != null ? registeredTotal.toLocaleString("tr-TR") : "—";
     return { shownStr, contextLabel: quickStartLabel, universeStr: regStr };
-  }, [filteredFunds.length, payloadForCurrentScope, quickStartActive, quickStartLabel, referenceUniverseTotal, routeScopedMatchCount]);
+  }, [filteredFunds.length, hasFilters, payloadForCurrentScope, quickStartActive, quickStartLabel, referenceUniverseTotal]);
 
   const resultCountCaption = useMemo(() => {
     const shown = filteredFunds.length;
     const payload = displayPayload;
     const loadedCount = payload?.funds.length ?? shown;
-    const scopeMatchedTotal = (() => {
-      const p = payloadForCurrentScope ?? displayPayload;
-      if (!p) return loadedCount;
-      return readScoresMatchedTotal(p);
-    })();
-    const clientWidenedUniverse =
-      payloadForCurrentScope &&
-      readScoresUniverseTotal(payloadForCurrentScope) > payloadForCurrentScope.funds.length
-        ? readScoresUniverseTotal(payloadForCurrentScope)
-        : null;
-    const registeredTotal = hasFilters ? scopeMatchedTotal : referenceUniverseTotal ?? clientWidenedUniverse ?? null;
+    const registeredTotal = resolveHomepageRegisteredTotal({
+      hasFilters,
+      canonicalUniverseTotal: referenceUniverseTotal,
+      scopedPayload: payloadForCurrentScope ?? null,
+    });
     if (quickStartActive && quickStartLabel) {
       return null;
     }
@@ -1321,6 +1331,13 @@ export default function ScoredFundsTable({
       data-discovery-completeness-health={lastDiscoveryHealth.completeness}
       data-discovery-freshness-health={lastDiscoveryHealth.freshness}
       data-discovery-request-health={lastDiscoveryHealth.request}
+      data-discovery-table-surface-state={tableSurfaceState.kind}
+      data-surface-state={tableSurfaceState.kind}
+      data-surface-reason={
+        tableSurfaceState.kind === "degraded_empty" || tableSurfaceState.kind === "error"
+          ? tableSurfaceState.reason
+          : "none"
+      }
     >
       <header
         className="fund-table-chrome border-b px-3 py-2 sm:px-4 sm:py-2.5 md:py-2.5"
@@ -1631,7 +1648,7 @@ export default function ScoredFundsTable({
               </div>
             </div>
           ))
-        ) : error && paginatedFunds.length === 0 ? (
+        ) : tableSurfaceState.kind === "error" && paginatedFunds.length === 0 ? (
           <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="error">
             {error}
           </p>
@@ -1704,7 +1721,7 @@ export default function ScoredFundsTable({
                   </td>
                 </tr>
               ))
-            ) : error && paginatedFunds.length === 0 ? (
+            ) : tableSurfaceState.kind === "error" && paginatedFunds.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="error">
                   {error}

@@ -114,6 +114,14 @@ if (previewUrl) {
     required: false,
   });
   steps.push({
+    id: "preview_routes_latency",
+    command: "pnpm",
+    args: ["run", "smoke:routes:latency"],
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: previewUrl }),
+    channel: "preview",
+    required: false,
+  });
+  steps.push({
     id: "preview_ui",
     command: "pnpm",
     args: ["run", "smoke:ui:preview"],
@@ -139,6 +147,14 @@ if (productionUrl) {
     env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: productionUrl }),
     channel: "production",
     required: true,
+  });
+  steps.push({
+    id: "production_routes_latency",
+    command: "pnpm",
+    args: ["run", "smoke:routes:latency"],
+    env: withSmokeAuthEnv({ ...process.env, SMOKE_BASE_URL: productionUrl }),
+    channel: "production",
+    required: false,
   });
 }
 

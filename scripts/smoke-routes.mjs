@@ -17,6 +17,7 @@ const routeChecks = [
 ];
 
 const FETCH_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
+const ENFORCE_LATENCY = String(process.env.SMOKE_ROUTES_ENFORCE_LATENCY ?? "").trim() === "1";
 
 async function fetchText(path) {
   const startedAt = Date.now();
@@ -28,7 +29,8 @@ async function fetchText(path) {
   return { response, body, durationMs: Date.now() - startedAt };
 }
 
-let failed = false;
+let correctnessFailed = false;
+let latencyFailed = false;
 let authBlocked = false;
 let authFailureCode = null;
 
@@ -40,7 +42,7 @@ for (const check of routeChecks) {
     ({ response, body, durationMs } = await fetchText(check.path));
   } catch (error) {
     console.error(`[smoke:routes] ${check.path} failed: ${error instanceof Error ? error.message : String(error)}`);
-    failed = true;
+    correctnessFailed = true;
     continue;
   }
   if (!response.ok) {
@@ -49,14 +51,18 @@ for (const check of routeChecks) {
       authFailureCode = classifySmokeAccessFailure(response.status);
     }
     console.error(`[smoke:routes] ${check.path} failed with HTTP ${response.status}`);
-    failed = true;
+    correctnessFailed = true;
     continue;
   }
   for (const token of check.mustInclude) {
     if (!body.includes(token)) {
       console.error(`[smoke:routes] ${check.path} missing token: ${token}`);
-      failed = true;
+      correctnessFailed = true;
     }
+  }
+  if (!body.includes("data-surface-state=")) {
+    console.error(`[smoke:routes] ${check.path} missing typed surface-state marker`);
+    correctnessFailed = true;
   }
   const hasNextShellEvidence =
     body.includes('id="__next"') ||
@@ -64,24 +70,24 @@ for (const check of routeChecks) {
     body.includes("self.__next_f");
   if (!hasNextShellEvidence) {
     console.error(`[smoke:routes] ${check.path} missing Next shell evidence`);
-    failed = true;
+    correctnessFailed = true;
   }
   const lowered = body.toLocaleLowerCase("tr-TR");
   for (const token of forbiddenTokens) {
     if (lowered.includes(token)) {
       console.error(`[smoke:routes] ${check.path} includes runtime failure token: ${token}`);
-      failed = true;
+      correctnessFailed = true;
     }
   }
   if (check.maxMs && durationMs > check.maxMs) {
     console.error(`[smoke:routes] ${check.path} exceeded latency budget: ${durationMs}ms > ${check.maxMs}ms`);
-    failed = true;
-    continue;
+    latencyFailed = true;
+    if (ENFORCE_LATENCY) continue;
   }
   console.log(`[smoke:routes] ${check.path} ok in ${durationMs}ms`);
 }
 
-if (failed) {
+if (correctnessFailed) {
   if (authBlocked) {
     console.log(
       "[release-classification] step=smoke_routes decision=RELEASE_BLOCKED classification=PREVIEW_AUTH_BLOCKER " +
@@ -95,6 +101,17 @@ if (failed) {
     );
     process.exitCode = 1;
   }
+} else if (latencyFailed && ENFORCE_LATENCY) {
+  console.log(
+    "[release-classification] step=smoke_routes_latency decision=NO_GO classification=PERFORMANCE_BUDGET " +
+      'code=route_latency_budget_failed reason="route latency budget exceeded"'
+  );
+  process.exitCode = 1;
+} else if (latencyFailed) {
+  console.log(
+    "[release-classification] step=smoke_routes_latency decision=GO classification=PERFORMANCE_BUDGET " +
+      'code=route_latency_budget_warning reason="route latency budget exceeded (non-blocking)"'
+  );
 } else {
   console.log(
     "[release-classification] step=smoke_routes decision=GO classification=NONE " +

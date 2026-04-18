@@ -28,6 +28,7 @@ import {
   type CompareBoundaryFundRow,
 } from "@/lib/data-flow/compare-boundary";
 import type { CompareSurfaceState } from "@/lib/data-flow/contracts";
+import { guardSemanticInvariant } from "@/lib/data-flow/invariant-guard";
 
 type KiyasRefKey = "category" | "policy" | "bist100" | "gold" | "usdtry" | "eurtry";
 type KiyasPeriodId = "1m" | "3m" | "6m" | "1y" | "2y" | "3y";
@@ -578,7 +579,8 @@ export function ComparePageClient() {
         setRows(normalized.funds);
         setCompare((normalized.compare as CompareContext | null) ?? null);
         setCompareMeta(body.meta ?? null);
-        setSurfaceState(body.meta?.surfaceState ?? normalized.surfaceState);
+        // Freeze owner: compare UI surface state is derived only from boundary normalization.
+        setSurfaceState(normalized.surfaceState);
       }
     } catch (e) {
       if ((e as Error)?.name === "AbortError") return;
@@ -636,6 +638,25 @@ export function ComparePageClient() {
   }, [load]);
 
   const activeRef = refKey ?? compare?.defaultRef ?? null;
+  const canRenderReadySurface =
+    surfaceState.kind === "ready" &&
+    rows.length > 0 &&
+    Boolean(compare) &&
+    Boolean(activeRef);
+  const readyCompare = canRenderReadySurface ? compare : null;
+  useEffect(() => {
+    if (surfaceState.kind !== "ready") return;
+    if (canRenderReadySurface) return;
+    guardSemanticInvariant({
+      scope: "compare_surface_ready",
+      reason: "ready_state_without_renderable_surface",
+      payload: {
+        rows: rows.length,
+        hasCompare: Boolean(compare),
+        hasActiveRef: Boolean(activeRef),
+      },
+    });
+  }, [activeRef, canRenderReadySurface, compare, rows.length, surfaceState.kind]);
   const integrityNotice = useMemo(() => {
     if (surfaceState.kind === "degraded_insufficient_funds") {
       return "Karşılaştırma için en az 2 fon gerekli.";
@@ -793,6 +814,8 @@ export function ComparePageClient() {
     <div
       className="w-full min-w-0 max-w-full space-y-4 sm:space-y-5"
       data-compare-surface-state={surfaceState.kind}
+      data-surface-state={surfaceState.kind}
+      data-surface-reason={surfaceState.kind === "degraded_invalid_payload" ? surfaceState.reason : "none"}
     >
       {codes.length === 0 && !loading ? (
         <p className="text-sm leading-relaxed" style={{ color: "var(--text-secondary)" }}>
@@ -829,9 +852,11 @@ export function ComparePageClient() {
         </div>
       ) : null}
 
-      {rows.length > 0 && compare && activeRef && surfaceState.kind === "ready" ? (
+      {canRenderReadySurface ? (
         <section
           data-compare-surface-ready="1"
+          data-surface-state="ready"
+          data-surface-reason="none"
           className="w-full min-w-0 max-w-full rounded-[24px] border px-3 py-3.5 sm:px-4 sm:py-4.5"
           style={{
             borderColor: "var(--border-subtle)",
@@ -859,7 +884,7 @@ export function ComparePageClient() {
                   role="tablist"
                   aria-label="Referans"
                 >
-              {compare.refs.map((r) => {
+              {readyCompare!.refs.map((r) => {
                     const active = r.key === activeRef;
                     return (
                       <button
@@ -893,7 +918,7 @@ export function ComparePageClient() {
                   role="tablist"
                   aria-label="Dönem"
                 >
-                  {compare.periods.map((p) => {
+                  {readyCompare!.periods.map((p) => {
                     const active = p.id === periodId;
                     return (
                       <button
@@ -955,6 +980,8 @@ export function ComparePageClient() {
       {rows.length > 0 && (!compare || surfaceState.kind !== "ready") ? (
         <p
           data-compare-surface-degraded="1"
+          data-surface-state={surfaceState.kind}
+          data-surface-reason={surfaceState.kind === "degraded_invalid_payload" ? surfaceState.reason : surfaceState.kind}
           className="text-[11px] leading-snug max-md:line-clamp-2"
           style={{ color: "var(--text-tertiary)" }}
           title="Referans katmanı okunamıyor; tablo yine görünür."

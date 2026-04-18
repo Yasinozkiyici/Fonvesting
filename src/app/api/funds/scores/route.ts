@@ -37,6 +37,11 @@ import {
   isServingStrictModeEnabled,
   servingStrictHeaders,
 } from "@/lib/data-platform/serving-strict-mode";
+import {
+  resolveScoresApiSurfaceState,
+  validateScoresApiPayloadContract,
+} from "@/app/api/funds/scores/contract";
+import { guardSemanticInvariant } from "@/lib/data-flow/invariant-guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -677,11 +682,29 @@ export async function GET(request: NextRequest) {
       stale: false,
       requestConsistent: true,
     });
+    const contractCheck = validateScoresApiPayloadContract(limitedPayload);
+    if (!contractCheck.valid) {
+      guardSemanticInvariant({
+        scope: "scores_api_contract_serving_primary",
+        reason: contractCheck.reason ?? "unknown",
+        payload: {
+          mode,
+          categoryCode,
+          theme,
+          queryTrim,
+          returnedCount: limitedPayload.funds.length,
+          matchedTotal: limitedPayload.matchedTotal,
+          universeTotal: limitedPayload.universeTotal,
+        },
+      });
+    }
+    const surfaceState = resolveScoresApiSurfaceState({ payload: limitedPayload, degradedReason: null });
     return NextResponse.json(
       {
         ...limitedPayload,
         meta: {
           servingWorld,
+          surfaceState,
           reliability: {
             overall: discoveryHealth.overallDiscoveryHealth,
             scope: discoveryHealth.scopeHealth,
@@ -695,6 +718,7 @@ export async function GET(request: NextRequest) {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
           "X-Scores-Source": "serving_discovery_index",
           "X-Scores-Cache": "serving-primary",
+          "X-Scores-Surface-State": surfaceState,
           "X-Discover-Theme": theme ?? "none",
           "X-Discover-Server-Result-Count": String(limitedPayload.funds.length),
           "X-Discover-Universe-Total": String(limitedPayload.universeTotal),
@@ -1007,6 +1031,27 @@ export async function GET(request: NextRequest) {
     degradedReason,
     failureClass,
   });
+  const contractCheck = validateScoresApiPayloadContract(payload);
+  if (!contractCheck.valid) {
+    guardSemanticInvariant({
+      scope: "scores_api_contract",
+      reason: contractCheck.reason ?? "unknown",
+      payload: {
+        mode,
+        categoryCode,
+        theme,
+        queryTrim,
+        source,
+        returnedCount: payload.funds.length,
+        matchedTotal: payload.matchedTotal,
+        universeTotal: payload.universeTotal,
+      },
+    });
+  }
+  const surfaceState = resolveScoresApiSurfaceState({
+    payload,
+    degradedReason,
+  });
   if (payload.funds.length > 0 && String(cacheState) !== "stale") {
     state.cache.set(key, { payload: coerceScoresPayloadFromLegacy(payload), updatedAt: Date.now() });
   }
@@ -1049,6 +1094,7 @@ export async function GET(request: NextRequest) {
       ...payload,
       meta: {
         servingWorld,
+        surfaceState,
         reliability: {
           overall: discoveryHealth.overallDiscoveryHealth,
           scope: discoveryHealth.scopeHealth,
@@ -1062,6 +1108,7 @@ export async function GET(request: NextRequest) {
       "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
       "X-Scores-Source": source,
       "X-Scores-Cache": cacheState,
+      "X-Scores-Surface-State": surfaceState,
       "X-Discover-Theme": theme ?? "none",
       "X-Discover-Server-Result-Count": String(payload.funds.length),
       "X-Discover-Universe-Total": String(payload.universeTotal),

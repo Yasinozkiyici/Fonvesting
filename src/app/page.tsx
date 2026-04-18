@@ -217,6 +217,7 @@ export default async function Page({
   const initialQuery = readSearchParam(searchParams, "q", "query");
   const initialIntent = parseFundIntentParam(readSearchParam(searchParams, "intent"));
   const initialTheme = parseFundThemeParam(readSearchParam(searchParams, "theme"));
+  try {
   const servingRowsTask = withSoftTimeout(
     listFundDetailCoreServingRows(HOME_SSR_CORE_ROWS_LIMIT),
     HOME_SSR_CORE_ROWS_TIMEOUT_MS,
@@ -366,6 +367,33 @@ export default async function Page({
         <Footer />
     </SitePageShell>
   );
+  } catch (error) {
+    console.error("[homepage-route-fallback] render failed, serving safe fallback", error);
+    return (
+      <SitePageShell>
+          <Header />
+
+          <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-5 sm:pb-7 lg:px-8">
+            <MarketHeader initialData={null} exploreUniverseTotal={null} />
+
+            <HomePageClient
+              initialScoresPreview={null}
+              initialScoresPartial={true}
+              canonicalUniverseTotal={null}
+              categories={[]}
+              initialMode={requestedMode}
+              initialCategory={requestedCategory}
+              initialQuery={initialQuery}
+              initialIntent={initialIntent}
+              initialTheme={initialTheme}
+              marketDayTone={null}
+            />
+          </main>
+
+          <Footer />
+      </SitePageShell>
+    );
+  }
 }
 
 function parseRankingModeParam(raw: string): "BEST" | "LOW_RISK" | "HIGH_RETURN" | "STABLE" {

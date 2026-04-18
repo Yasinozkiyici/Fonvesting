@@ -394,18 +394,11 @@ export function HomePageClient({
   }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme]);
 
   const estimatedUniverseLabel = useMemo(() => {
-    const baseFunds = initialScoresPreview?.funds ?? [];
     if (!discoveryActive) return null;
-    if (effectiveTheme) {
-      const n = baseFunds.filter((f) => fundMatchesTheme(f, effectiveTheme)).length;
-      return n > 0 ? `${n.toLocaleString("tr-TR")} fon (tema evreni)` : universeScopeLabel("theme");
-    }
-    if (effectiveCategory) {
-      const n = baseFunds.filter((f) => f.category?.code === effectiveCategory).length;
-      return n > 0 ? `${n.toLocaleString("tr-TR")} fon (kategori evreni)` : universeScopeLabel("category");
-    }
+    if (effectiveTheme) return universeScopeLabel("theme");
+    if (effectiveCategory) return universeScopeLabel("category");
     return universeScopeLabel(null);
-  }, [discoveryActive, effectiveCategory, effectiveTheme, initialScoresPreview?.funds]);
+  }, [discoveryActive, effectiveCategory, effectiveTheme]);
 
   const fundsForSpotlights = discoveryActive ? (modeSpotlightPayload ?? initialScoresPreview) : initialScoresPreview;
 

@@ -184,6 +184,14 @@ async function assertDetailUsable(page, code) {
   }
 
   if (comparisonPanelState === "ready") {
+    const genericState = await page
+      .locator("[data-fund-detail-comparison-summary-state]")
+      .first()
+      .getAttribute("data-surface-state")
+      .catch(() => null);
+    if (genericState !== "ready") {
+      fail(`/fund/${code} comparison ready state missing generic surface-state`);
+    }
     if (!normalizedBody.includes("öncelikli net fark")) fail(`/fund/${code} missing comparison summary`);
     if (normalizedBody.includes("0 geçti •0 geride •0 başa baş") && normalizedBody.includes("veri yetersiz")) {
       fail(`/fund/${code} comparison rendered product-useless rows`);
@@ -200,10 +208,18 @@ async function assertDetailUsable(page, code) {
       .first()
       .getAttribute("data-fund-detail-comparison-degraded-reason")
       .catch(() => null);
+    const genericReason = await page
+      .locator("[data-fund-detail-comparison-summary-state]")
+      .first()
+      .getAttribute("data-surface-reason")
+      .catch(() => null);
     if (!degradedReason || degradedReason === "ready") {
       fail(
         `/fund/${code} comparison panel state=${comparisonPanelState} expected typed degraded reason (data-fund-detail-comparison-degraded-reason)`
       );
+    }
+    if (!genericReason || genericReason === "none" || genericReason === "ready") {
+      fail(`/fund/${code} comparison degraded state missing generic surface reason`);
     }
   }
 
@@ -256,6 +272,14 @@ async function assertCompareSurface(page) {
     .getAttribute("data-compare-surface-state")
     .catch(() => null);
   if (!uiReadyState) fail("/compare missing data-compare-surface-state");
+  const genericSurfaceState = await page
+    .locator("[data-compare-surface-state]")
+    .first()
+    .getAttribute("data-surface-state")
+    .catch(() => null);
+  if (!genericSurfaceState || genericSurfaceState !== uiReadyState) {
+    fail("/compare generic surface-state mismatch");
+  }
   if (readyState === "ready") {
     const readyMarkerCount = await page.locator("[data-compare-surface-ready='1']").count();
     if (readyMarkerCount < 1) fail("/compare ready state missing success surface marker");
@@ -292,6 +316,16 @@ async function assertHomepageDiscovery(page) {
   }
   if (response.status() >= 400) fail(`/ status ${response.status()}`);
   await waitForLoadingToSettle(page);
+  await page.waitForSelector("[data-discovery-result-list][data-surface-state]", { timeout: timeoutMs });
+  const initialSurfaceState = await page
+    .locator("[data-discovery-result-list]")
+    .first()
+    .getAttribute("data-surface-state")
+    .catch(() => null);
+  if (!initialSurfaceState) fail("homepage table missing typed surface state");
+  if (!["ready", "loading", "valid_empty", "degraded_empty", "empty_filtered", "error"].includes(initialSurfaceState)) {
+    fail(`homepage typed surface state invalid: ${String(initialSurfaceState)}`);
+  }
 
   const initialRows = await getHomepageRows(page);
   const initialCount = await initialRows.count();
@@ -305,13 +339,33 @@ async function assertHomepageDiscovery(page) {
 
   await input.fill("olmayan-fon-kodu");
   await page.waitForFunction(
-    () => document.body.innerText.toLocaleLowerCase("tr-TR").includes("bu kriterlere uygun fon yok"),
+    () => {
+      const root = document.querySelector("[data-discovery-result-list]");
+      const state = root?.getAttribute("data-surface-state");
+      return state === "empty_filtered" || state === "valid_empty" || state === "degraded_empty";
+    },
+    null,
+    { timeout: timeoutMs }
+  ).catch(() => undefined);
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector("[data-discovery-result-list]");
+      const state = root?.getAttribute("data-surface-state");
+      return state != null && state !== "loading";
+    },
     null,
     { timeout: timeoutMs }
   ).catch(() => undefined);
   await waitForLoadingToSettle(page);
-  const noResultShown = await getNoResultVisible(page);
-  if (!noResultShown) fail("no-result state did not render on explicit no-match");
+  const explicitNoMatchState = await page
+    .locator("[data-discovery-result-list]")
+    .first()
+    .getAttribute("data-surface-state")
+    .catch(() => null);
+  if (!explicitNoMatchState) fail("no-match flow missing typed discovery state");
+  if (!["empty_filtered", "valid_empty", "degraded_empty"].includes(explicitNoMatchState)) {
+    fail(`no-match flow unexpected typed state: ${String(explicitNoMatchState)}`);
+  }
 
   await input.fill("");
   await waitForLoadingToSettle(page);
@@ -330,6 +384,22 @@ async function assertHomepageDiscovery(page) {
   ).catch(() => undefined);
   const filteredRows = await getHomepageRows(page);
   const filteredCount = await filteredRows.count();
+  const filteredSurfaceState = await page
+    .locator("[data-discovery-result-list]")
+    .first()
+    .getAttribute("data-surface-state")
+    .catch(() => null);
+  if (!filteredSurfaceState) fail("filtered homepage missing typed surface state");
+  if (filteredSurfaceState === "degraded_empty") {
+    const reason = await page
+      .locator("[data-discovery-result-list]")
+      .first()
+      .getAttribute("data-surface-reason")
+      .catch(() => null);
+    if (!reason || reason === "none") {
+      fail("filtered homepage degraded state missing typed reason");
+    }
+  }
   const body = await visibleText(page);
   if (body.includes("Bu kriterlere uygun fon yok")) fail("growth discovery produced empty state");
 

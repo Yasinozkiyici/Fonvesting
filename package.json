@@ -13,6 +13,7 @@
     "lint": "next lint",
     "test:unit": "tsx --test $(find src -name '*.test.ts' -print)",
     "smoke:routes": "node scripts/smoke-routes.mjs",
+    "smoke:routes:latency": "SMOKE_ROUTES_ENFORCE_LATENCY=1 node scripts/smoke-routes.mjs",
     "smoke:data": "node scripts/smoke-data.mjs",
     "smoke:ui-functional": "node scripts/smoke-ui-functional.mjs",
     "smoke:ui:prodlike": "node scripts/smoke-ui-prodlike.mjs",

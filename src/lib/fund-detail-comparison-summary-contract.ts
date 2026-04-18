@@ -9,6 +9,11 @@ export type FundDetailComparisonSummaryPanelState =
   | "degraded_no_comparison_section"
   | "degraded_insufficient_rows";
 
+export type FundDetailComparisonSummaryInvariant = {
+  valid: boolean;
+  reason: string | null;
+};
+
 export function resolveFundDetailComparisonSummaryPanelState(input: {
   shouldRenderComparisonSection: boolean;
   comparisonRowCount: number;
@@ -28,4 +33,25 @@ export const COMPARISON_SUMMARY_INSUFFICIENT_ROWS_LEAD =
 
 export function comparisonSummaryCopyIncludesSmokeToken(copy: string, locale = "tr-TR"): boolean {
   return copy.trim().toLocaleLowerCase(locale).includes(FUND_DETAIL_COMPARISON_SUMMARY_SMOKE_SUBSTRING);
+}
+
+export function validateFundDetailComparisonSummaryState(input: {
+  panelState: FundDetailComparisonSummaryPanelState;
+  shouldRenderComparisonSection: boolean;
+  comparisonRowCount: number;
+  degradedReasonAttr: string;
+}): FundDetailComparisonSummaryInvariant {
+  if (input.panelState === "ready" && (!input.shouldRenderComparisonSection || input.comparisonRowCount <= 0)) {
+    return { valid: false, reason: "ready_state_without_renderable_rows" };
+  }
+  if (input.panelState !== "ready" && input.degradedReasonAttr === "ready") {
+    return { valid: false, reason: "degraded_state_marked_as_ready_reason" };
+  }
+  if (input.panelState === "degraded_no_comparison_section" && input.degradedReasonAttr !== "degraded_no_comparison_section") {
+    return { valid: false, reason: "missing_degraded_no_comparison_section_reason" };
+  }
+  if (input.panelState === "degraded_insufficient_rows" && input.degradedReasonAttr !== "degraded_insufficient_rows") {
+    return { valid: false, reason: "missing_degraded_insufficient_rows_reason" };
+  }
+  return { valid: true, reason: null };
 }

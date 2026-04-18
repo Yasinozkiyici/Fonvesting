@@ -32,8 +32,10 @@ import {
   COMPARISON_SUMMARY_DEGRADED_NO_SECTION_LEAD,
   COMPARISON_SUMMARY_INSUFFICIENT_ROWS_LEAD,
   resolveFundDetailComparisonSummaryPanelState,
+  validateFundDetailComparisonSummaryState,
 } from "@/lib/fund-detail-comparison-summary-contract";
 import { deriveFundDetailBehaviorContract, shouldRenderSectionFromContract } from "@/lib/fund-detail-section-status";
+import { guardSemanticInvariant } from "@/lib/data-flow/invariant-guard";
 import {
   buildLinearClosedAreaPathD,
   buildLinearPathD,
@@ -772,6 +774,12 @@ export function FundDetailChart({ data }: Props) {
       }),
     [comparisonRows.length, shouldRenderComparisonSection]
   );
+  const comparisonSummaryDegradedReasonAttr =
+    comparisonSummaryPanelState === "ready"
+      ? "ready"
+      : comparisonSummaryPanelState === "degraded_no_comparison_section"
+        ? "degraded_no_comparison_section"
+        : "degraded_insufficient_rows";
   const comparisonSummaryStateLogRef = useRef<string | null>(null);
   useEffect(() => {
     if (comparisonSummaryPanelState === "ready") {
@@ -807,6 +815,32 @@ export function FundDetailChart({ data }: Props) {
     data.fund.code,
     data.kiyasBlock,
     data.overallDetailHealth?.reliabilityClass,
+  ]);
+  useEffect(() => {
+    const invariant = validateFundDetailComparisonSummaryState({
+      panelState: comparisonSummaryPanelState,
+      shouldRenderComparisonSection,
+      comparisonRowCount: comparisonRows.length,
+      degradedReasonAttr: comparisonSummaryDegradedReasonAttr,
+    });
+    if (invariant.valid) return;
+    guardSemanticInvariant({
+      scope: "fund_detail_comparison_summary",
+      reason: invariant.reason ?? "unknown",
+      payload: {
+        code: data.fund.code,
+        panelState: comparisonSummaryPanelState,
+        rows: comparisonRows.length,
+        shouldRenderComparisonSection,
+        degradedReason: comparisonSummaryDegradedReasonAttr,
+      },
+    });
+  }, [
+    comparisonRows.length,
+    comparisonSummaryDegradedReasonAttr,
+    comparisonSummaryPanelState,
+    data.fund.code,
+    shouldRenderComparisonSection,
   ]);
   const comparisonRowsPrimary = useMemo(() => comparisonRows.slice(0, 3), [comparisonRows]);
   const comparisonPrimary = comparisonView.primaryRow;
@@ -1310,6 +1344,8 @@ export function FundDetailChart({ data }: Props) {
           boxShadow: "var(--shadow-xs)",
         }}
         data-fund-detail-comparison-summary-state={comparisonSummaryPanelState}
+        data-surface-state={comparisonSummaryPanelState}
+        data-surface-reason={comparisonSummaryDegradedReasonAttr}
         data-fund-detail-comparison-server-valid-refs={String(behavior.comparisonValidRefs)}
         data-fund-detail-comparison-server-total-refs={String(behavior.comparisonTotalRefs)}
         data-fund-detail-comparison-rows={String(comparisonRows.length)}
@@ -1347,7 +1383,7 @@ export function FundDetailChart({ data }: Props) {
               background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
               color: "var(--text-secondary)",
             }}
-            data-fund-detail-comparison-degraded-reason="degraded_no_comparison_section"
+            data-fund-detail-comparison-degraded-reason={comparisonSummaryDegradedReasonAttr}
           >
             <p className="font-semibold" style={{ color: "var(--text-primary)" }}>
               {COMPARISON_SUMMARY_DEGRADED_NO_SECTION_LEAD}
@@ -1363,7 +1399,7 @@ export function FundDetailChart({ data }: Props) {
           <p
             className="mt-2 text-sm"
             style={{ color: "var(--text-muted)" }}
-            data-fund-detail-comparison-degraded-reason="degraded_insufficient_rows"
+            data-fund-detail-comparison-degraded-reason={comparisonSummaryDegradedReasonAttr}
           >
             {COMPARISON_SUMMARY_INSUFFICIENT_ROWS_LEAD}
           </p>
@@ -1382,7 +1418,7 @@ export function FundDetailChart({ data }: Props) {
             <div
               className="grid gap-2 sm:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)] sm:items-stretch sm:gap-2.5"
               aria-label="Karşılaştırma özeti"
-              data-fund-detail-comparison-degraded-reason="ready"
+              data-fund-detail-comparison-degraded-reason={comparisonSummaryDegradedReasonAttr}
             >
               <div
                 className="flex min-h-0 flex-col justify-center rounded-[0.72rem] border px-3 py-2.5 shadow-[var(--shadow-xs)] sm:px-3.5 sm:py-2.5"
