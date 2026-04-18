@@ -46,8 +46,8 @@ type SortField = "portfolioSize" | "dailyReturn" | "investorCount" | "lastPrice"
 type SortDir = "asc" | "desc";
 const DEFAULT_SORT_FIELD: SortField = "portfolioSize";
 const DEFAULT_SORT_DIR: SortDir = "desc";
-const SCORES_FETCH_TIMEOUT_MS_DEFAULT = 12_000;
-const SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN = 14_000;
+const SCORES_FETCH_TIMEOUT_MS_DEFAULT = 16_000;
+const SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN = 18_000;
 const SCORES_BOOTSTRAP_RETRY_MS = 3_500;
 const SCORES_BOOTSTRAP_MAX_RETRY = 3;
 const SCORES_CORE_ROWS_FALLBACK_TIMEOUT_MS = 6_500;
@@ -707,6 +707,8 @@ export default function ScoredFundsTable({
         });
         const degradedEmpty = isDegradedEmptyResponse(headers, json);
         const validBusinessEmpty = isValidBusinessEmptyResponse(headers, json);
+        const cachedScopeForMode = modePayloadScopesRef.current[rankingMode] ?? null;
+        const modePayloadScopeMatchesFetch = cachedScopeForMode === currentFetchScopeKey;
 
         let uiAction:
           | "replace_rows"
@@ -714,7 +716,7 @@ export default function ScoredFundsTable({
           | "keep_last_good_rows"
           | "show_bootstrap_fallback"
           | "show_valid_empty" = "replace_rows";
-        if (degradedEmpty && previousRows > 0) {
+        if (degradedEmpty && previousRows > 0 && modePayloadScopeMatchesFetch) {
           uiAction = "keep_previous_rows";
           setDegradedNotice("Skor verisi geçici olarak alınamadı. Son başarılı tablo gösteriliyor.");
           console.warn(
@@ -722,13 +724,33 @@ export default function ScoredFundsTable({
               sourceHeader || "none"
             } degraded=${degradedHeader || "none"}`
           );
-        } else if (degradedEmpty && previousRows === 0 && fallbackRows > 0) {
+        } else if (degradedEmpty && previousRows > 0 && !modePayloadScopeMatchesFetch) {
+          uiAction = "replace_rows";
+          setDegradedNotice(
+            "Skor verisi geçici olarak alınamadı. Yeni arama/filtre için sonuç güncellenemedi; lütfen kısa süre sonra tekrar deneyin."
+          );
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=degraded_empty action=replace_stale_scope funds=${fundsCount} source=${
+              sourceHeader || "none"
+            } degraded=${degradedHeader || "none"} cached_scope=${cachedScopeForMode ?? "none"} expected=${currentFetchScopeKey}`
+          );
+        } else if (degradedEmpty && previousRows === 0 && fallbackRows > 0 && lastGoodScopeKey === currentFetchScopeKey) {
           uiAction = "keep_last_good_rows";
           setDegradedNotice("Skor verisi geçici olarak alınamadı. Son başarılı liste korunuyor.");
           console.warn(
             `[funds_table_scores_degraded] mode=${rankingMode} reason=degraded_empty action=keep_last_good_rows funds=${fundsCount} source=${
               sourceHeader || "none"
             } degraded=${degradedHeader || "none"}`
+          );
+        } else if (degradedEmpty && previousRows === 0 && fallbackRows > 0 && lastGoodScopeKey !== currentFetchScopeKey) {
+          uiAction = "replace_rows";
+          setDegradedNotice(
+            "Skor verisi geçici olarak alınamadı. Yeni arama/filtre için sonuç güncellenemedi; lütfen kısa süre sonra tekrar deneyin."
+          );
+          console.warn(
+            `[funds_table_scores_degraded] mode=${rankingMode} reason=degraded_empty action=replace_stale_last_good funds=${fundsCount} source=${
+              sourceHeader || "none"
+            } degraded=${degradedHeader || "none"} last_good_scope=${lastGoodScopeKey ?? "none"} expected=${currentFetchScopeKey}`
           );
         } else if (degradedEmpty) {
           uiAction = "show_bootstrap_fallback";

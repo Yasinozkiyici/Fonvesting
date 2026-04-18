@@ -14,6 +14,7 @@ test("resolveFundDetailComparisonSummaryPanelState covers gate paths", () => {
     resolveFundDetailComparisonSummaryPanelState({
       shouldRenderComparisonSection: false,
       comparisonRowCount: 0,
+      meaningfulComparableRowCount: 0,
     }),
     "degraded_no_comparison_section"
   );
@@ -21,6 +22,7 @@ test("resolveFundDetailComparisonSummaryPanelState covers gate paths", () => {
     resolveFundDetailComparisonSummaryPanelState({
       shouldRenderComparisonSection: true,
       comparisonRowCount: 0,
+      meaningfulComparableRowCount: 0,
     }),
     "degraded_insufficient_rows"
   );
@@ -28,8 +30,17 @@ test("resolveFundDetailComparisonSummaryPanelState covers gate paths", () => {
     resolveFundDetailComparisonSummaryPanelState({
       shouldRenderComparisonSection: true,
       comparisonRowCount: 3,
+      meaningfulComparableRowCount: 3,
     }),
     "ready"
+  );
+  assert.equal(
+    resolveFundDetailComparisonSummaryPanelState({
+      shouldRenderComparisonSection: true,
+      comparisonRowCount: 6,
+      meaningfulComparableRowCount: 0,
+    }),
+    "degraded_insufficient_rows"
   );
 });
 
@@ -44,6 +55,7 @@ test("validateFundDetailComparisonSummaryState catches ready/degraded drift", ()
     panelState: "ready",
     shouldRenderComparisonSection: false,
     comparisonRowCount: 0,
+    meaningfulComparableRowCount: 0,
     degradedReasonAttr: "ready",
   });
   assert.equal(invalidReady.valid, false);
@@ -52,6 +64,7 @@ test("validateFundDetailComparisonSummaryState catches ready/degraded drift", ()
     panelState: "degraded_insufficient_rows",
     shouldRenderComparisonSection: true,
     comparisonRowCount: 0,
+    meaningfulComparableRowCount: 0,
     degradedReasonAttr: "ready",
   });
   assert.equal(invalidReason.valid, false);
@@ -60,6 +73,7 @@ test("validateFundDetailComparisonSummaryState catches ready/degraded drift", ()
     panelState: "degraded_no_comparison_section",
     shouldRenderComparisonSection: false,
     comparisonRowCount: 0,
+    meaningfulComparableRowCount: 0,
     degradedReasonAttr: "degraded_no_comparison_section",
   });
   assert.equal(valid.valid, true);

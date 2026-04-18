@@ -17,9 +17,12 @@ export type FundDetailComparisonSummaryInvariant = {
 export function resolveFundDetailComparisonSummaryPanelState(input: {
   shouldRenderComparisonSection: boolean;
   comparisonRowCount: number;
+  /** Gerçekten pp farkı üretilebilen satır sayısı (tüm satırlar insufficient iken ready sayılmamalı). */
+  meaningfulComparableRowCount: number;
 }): FundDetailComparisonSummaryPanelState {
   if (!input.shouldRenderComparisonSection) return "degraded_no_comparison_section";
   if (input.comparisonRowCount === 0) return "degraded_insufficient_rows";
+  if (input.meaningfulComparableRowCount <= 0) return "degraded_insufficient_rows";
   return "ready";
 }
 
@@ -39,9 +42,15 @@ export function validateFundDetailComparisonSummaryState(input: {
   panelState: FundDetailComparisonSummaryPanelState;
   shouldRenderComparisonSection: boolean;
   comparisonRowCount: number;
+  meaningfulComparableRowCount: number;
   degradedReasonAttr: string;
 }): FundDetailComparisonSummaryInvariant {
-  if (input.panelState === "ready" && (!input.shouldRenderComparisonSection || input.comparisonRowCount <= 0)) {
+  if (
+    input.panelState === "ready" &&
+    (!input.shouldRenderComparisonSection ||
+      input.comparisonRowCount <= 0 ||
+      input.meaningfulComparableRowCount <= 0)
+  ) {
     return { valid: false, reason: "ready_state_without_renderable_rows" };
   }
   if (input.panelState !== "ready" && input.degradedReasonAttr === "ready") {

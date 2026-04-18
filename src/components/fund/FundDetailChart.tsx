@@ -373,7 +373,7 @@ export function FundDetailChart({ data }: Props) {
     compareAbortRef.current?.abort();
     const controller = new AbortController();
     compareAbortRef.current = controller;
-    const timeoutMs = 9_000;
+    const timeoutMs = 12_000;
     const timeoutId = setTimeout(() => {
       controller.abort(new DOMException(`compare_series_timeout_${timeoutMs}ms`, "AbortError"));
     }, timeoutMs);
@@ -760,8 +760,13 @@ export function FundDetailChart({ data }: Props) {
     [comparisonRows]
   );
   const comparisonHasMeaningfulData = comparableRows.length > 0;
-  /** Yalnızca en az bir referansta gerçek fark hesabı varsa tablo/özet göster; boş satır ızgarası yok. */
-  const comparisonHasRenderablePayload = comparisonHasMeaningfulData;
+  /**
+   * Sunucu kıyas blok sayacı (kiyasBlock) bazen seri penceresiyle hizasız kalıp 0 sayılırken,
+   * grafik penceresinde referans serileri ve kıyas satırları yine üretilebilir — bölümü tamamen gizleme.
+   */
+  const comparisonHasRenderablePayload =
+    comparisonHasMeaningfulData ||
+    (comparisonRows.length > 0 && mainChartHasRenderablePayload);
   const shouldRenderComparisonSection = shouldRenderSectionFromContract(
     behavior.canRenderComparison,
     comparisonHasRenderablePayload
@@ -771,8 +776,9 @@ export function FundDetailChart({ data }: Props) {
       resolveFundDetailComparisonSummaryPanelState({
         shouldRenderComparisonSection,
         comparisonRowCount: comparisonRows.length,
+        meaningfulComparableRowCount: comparableRows.length,
       }),
-    [comparisonRows.length, shouldRenderComparisonSection]
+    [comparableRows.length, comparisonRows.length, shouldRenderComparisonSection]
   );
   const comparisonSummaryDegradedReasonAttr =
     comparisonSummaryPanelState === "ready"
@@ -821,6 +827,7 @@ export function FundDetailChart({ data }: Props) {
       panelState: comparisonSummaryPanelState,
       shouldRenderComparisonSection,
       comparisonRowCount: comparisonRows.length,
+      meaningfulComparableRowCount: comparableRows.length,
       degradedReasonAttr: comparisonSummaryDegradedReasonAttr,
     });
     if (invariant.valid) return;
@@ -836,6 +843,7 @@ export function FundDetailChart({ data }: Props) {
       },
     });
   }, [
+    comparableRows.length,
     comparisonRows.length,
     comparisonSummaryDegradedReasonAttr,
     comparisonSummaryPanelState,
