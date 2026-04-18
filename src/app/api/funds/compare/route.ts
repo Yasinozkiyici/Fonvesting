@@ -114,6 +114,7 @@ function emptyServingCompareEnvelope(reason: string): ServingCompareEnvelope {
     world: null,
     payload: null,
     trust: { trustAsFinal: false, degradedKind: "serving_payload_missing", degradedReason: reason },
+    envelopeRead: "latest_updated",
   };
 }
 
@@ -122,6 +123,7 @@ function emptyServingListEnvelope(reason: string): ServingListEnvelope {
     world: null,
     payload: null,
     trust: { trustAsFinal: false, degradedKind: "serving_payload_missing", degradedReason: reason },
+    envelopeRead: "latest_updated",
   };
 }
 
@@ -361,12 +363,19 @@ export async function GET(req: NextRequest) {
   const trace = createComparePathTrace("compare");
   try {
     const strictMode = isServingStrictModeEnabled(req);
-    const [servingCompare, servingList, servingWorldMeta] = await Promise.all([
+    const metaStarted = performance.now();
+    const servingWorldMeta = await readUiServingWorldMetaCached();
+    trace.record(
+      "serving_world_meta",
+      Math.round(performance.now() - metaStarted),
+      servingWorldMeta.buildIds.fundDetail ? "ok" : "empty"
+    );
+    const [servingCompare, servingList] = await Promise.all([
       (async () => {
         const s = performance.now();
         try {
           const v = await withTimeout(
-            readServingComparePrimary(),
+            readServingComparePrimary(servingWorldMeta),
             COMPARE_ROUTE_SERVING_COMPARE_TIMEOUT_MS,
             "compare_route_serving_compare_primary"
           );
@@ -388,7 +397,7 @@ export async function GET(req: NextRequest) {
         const s = performance.now();
         try {
           const v = await withTimeout(
-            readServingFundListPrimary(),
+            readServingFundListPrimary(servingWorldMeta),
             COMPARE_ROUTE_SERVING_FUND_LIST_TIMEOUT_MS,
             "compare_route_serving_fund_list_primary"
           );
@@ -405,16 +414,6 @@ export async function GET(req: NextRequest) {
           );
           return emptyServingListEnvelope("compare_serving_fund_list_primary_failed");
         }
-      })(),
-      (async () => {
-        const s = performance.now();
-        const v = await readUiServingWorldMetaCached();
-        trace.record(
-          "serving_world_meta",
-          Math.round(performance.now() - s),
-          v.buildIds.fundDetail ? "ok" : "empty"
-        );
-        return v;
       })(),
     ]);
     const servingWorld = servingCompare.world ?? servingList.world ?? servingWorldMeta;

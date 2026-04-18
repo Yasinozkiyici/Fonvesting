@@ -31,3 +31,10 @@ test("getIstanbulWallClock exposes current Istanbul minute of day", () => {
   assert.equal(wallClock.dateKey, "2026-04-10");
   assert.equal(wallClock.minutesOfDay, DAILY_SOURCE_REFRESH_CUTOFF_MINUTES + 5);
 });
+
+test("latestExpectedBusinessSessionDate uses Istanbul calendar when UTC day lags", () => {
+  // 18 Nisan 2026 01:00 TR = 17 Nisan 2026 22:00 UTC; "dün" TR takvimine göre 17 Nisan olmalı.
+  const now = new Date("2026-04-17T22:00:00.000Z");
+  const expected = latestExpectedBusinessSessionDate(now);
+  assert.equal(toIstanbulDateKey(expected), "2026-04-17");
+});

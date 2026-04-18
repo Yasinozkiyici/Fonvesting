@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveHomepageTrueUniverseTotal } from "@/lib/homepage-fund-counts";
+import {
+  resolveHomepageTrueUniverseTotal,
+  shouldAttemptFundTableUniverseFallback,
+} from "@/lib/homepage-fund-counts";
 import type { ScoredResponse } from "@/types/scored-funds";
 
 function makeScores(
@@ -33,6 +36,12 @@ function makeScores(
     funds,
   };
 }
+
+test("shouldAttemptFundTableUniverseFallback: yalnızca güvenli bilinmeyen nedenler", () => {
+  assert.equal(shouldAttemptFundTableUniverseFallback("scores_total_equals_row_count_at_preview_cap"), true);
+  assert.equal(shouldAttemptFundTableUniverseFallback("serving_core_rows_without_canonical_market_snapshot"), true);
+  assert.equal(shouldAttemptFundTableUniverseFallback("arbitrary_unknown"), false);
+});
 
 test("resolveHomepageTrueUniverseTotal: serving_core asla preview total kullanmaz", () => {
   const r = resolveHomepageTrueUniverseTotal({

@@ -17,6 +17,7 @@ import {
 import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
 import type { ScoredResponse } from "@/types/scored-funds";
 import {
+  augmentHomepageTrueUniverseWithFundTableCount,
   buildHomepageTotalsEvidence,
   formatHomepageTotalsEvidenceLog,
   resolveHomepageTrueUniverseTotal,
@@ -34,11 +35,12 @@ import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 export const revalidate = LIVE_DATA_PAGE_REVALIDATE_SEC;
 export const dynamic = "force-dynamic";
 const HOME_SSR_SCORES_TIMEOUT_MS = parseEnvMs("HOME_SSR_SCORES_TIMEOUT_MS", 1_600, 1_200, 10_000);
-const HOME_SSR_SCORES_LIMIT = parseEnvMs("HOME_SSR_SCORES_LIMIT", 180, 60, 600);
-const HOME_SSR_CORE_ROWS_TIMEOUT_MS = parseEnvMs("HOME_SSR_CORE_ROWS_TIMEOUT_MS", 700, 250, 5_000);
-const HOME_SSR_CORE_ROWS_LIMIT = parseEnvMs("HOME_SSR_CORE_ROWS_LIMIT", 180, 30, 500);
-const HOME_SSR_CATEGORY_TIMEOUT_MS = parseEnvMs("HOME_SSR_CATEGORY_TIMEOUT_MS", 1_200, 250, 8_000);
-const HOME_SSR_MARKET_TIMEOUT_MS = parseEnvMs("HOME_SSR_MARKET_TIMEOUT_MS", 1_500, 250, 8_000);
+const HOME_SSR_SCORES_LIMIT = parseEnvMs("HOME_SSR_SCORES_LIMIT", 400, 60, 600);
+const HOME_SSR_CORE_ROWS_TIMEOUT_MS = parseEnvMs("HOME_SSR_CORE_ROWS_TIMEOUT_MS", 900, 250, 5_000);
+const HOME_SSR_CORE_ROWS_LIMIT = parseEnvMs("HOME_SSR_CORE_ROWS_LIMIT", 400, 30, 500);
+const HOME_SSR_CATEGORY_TIMEOUT_MS = parseEnvMs("HOME_SSR_CATEGORY_TIMEOUT_MS", 2_200, 250, 8_000);
+const HOME_SSR_MARKET_TIMEOUT_MS = parseEnvMs("HOME_SSR_MARKET_TIMEOUT_MS", 2_800, 250, 8_000);
+const HOME_SSR_FUND_COUNT_TIMEOUT_MS = parseEnvMs("HOME_SSR_FUND_COUNT_TIMEOUT_MS", 2_200, 400, 8_000);
 // Launch-readiness için ana sayfada gerçek evren/özet metriklerini SSR'da zorunlu yükle.
 const HOME_SSR_DB_SCORES_ENABLED = true;
 const HOME_SSR_MARKET_ENABLED = true;
@@ -291,14 +293,17 @@ export default async function Page({
   const marketSnapshotCanonical = marketData?.snapshotFundCountIsCanonicalUniverse !== false;
   const marketSnapshotFundCount =
     marketSnapshotCanonical && marketData?.fundCount != null && marketData.fundCount > 0 ? marketData.fundCount : null;
-  const universeResolution = resolveHomepageTrueUniverseTotal({
-    initialScores,
-    initialRowsSource,
-    scoresTimedOut: initialScoresMeta.timedOut,
-    scoresPreviewLimit: HOME_SSR_SCORES_LIMIT,
-    marketSnapshotFundCount,
-    marketSnapshotCanonical,
-  });
+  const universeResolution = await augmentHomepageTrueUniverseWithFundTableCount(
+    resolveHomepageTrueUniverseTotal({
+      initialScores,
+      initialRowsSource,
+      scoresTimedOut: initialScoresMeta.timedOut,
+      scoresPreviewLimit: HOME_SSR_SCORES_LIMIT,
+      marketSnapshotFundCount,
+      marketSnapshotCanonical,
+    }),
+    HOME_SSR_FUND_COUNT_TIMEOUT_MS
+  );
   const exploreUniverseTotal = universeResolution.kind === "known" ? universeResolution.value : null;
   const totalsEvidence = buildHomepageTotalsEvidence({
     resolution: universeResolution,
@@ -323,6 +328,8 @@ export default async function Page({
     loaded_preview_rows: totalsSemantic.loadedPreviewRowCount,
     true_universe_kind: totalsSemantic.trueUniverse.kind,
     true_universe_value: totalsSemantic.trueUniverse.kind === "known" ? totalsSemantic.trueUniverse.value : null,
+    true_universe_source:
+      totalsSemantic.trueUniverse.kind === "known" ? totalsSemantic.trueUniverse.source : null,
   });
   const initialScoresPreviewRows = initialScoresPreviewForClient?.funds.length ?? 0;
   const knownUniverseFloor =

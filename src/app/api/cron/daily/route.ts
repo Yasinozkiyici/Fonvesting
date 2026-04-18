@@ -11,6 +11,7 @@ import { stringifySyncLogMeta } from "@/lib/sync-log-meta-json";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 /** Serverless invocations cannot outlive `maxDuration`; RUNNING rows left by timeout/crash must recover faster than this. */
+/** Vercel Hobby üst sınırı 300s (build reddeder). Pro: bu değeri 800'e çıkarın; aksi halde günlük pipeline erken kesilebilir. */
 export const maxDuration = 300;
 /** Overlap guard: block only while a run may still be alive (maxDuration + buffer). Stale RUNNING older than this is finalized in-tx. */
 const _ttlRaw = Number(process.env.CRON_DAILY_ACTIVE_RUN_TTL_MS ?? 8 * 60 * 1000);

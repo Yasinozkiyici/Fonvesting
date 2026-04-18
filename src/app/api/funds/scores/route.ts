@@ -3,6 +3,7 @@ import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/
 import type { RankingMode } from "@/lib/scoring";
 import type { ScoresApiPayload } from "@/lib/services/fund-scores-types";
 import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-snapshot.service";
+import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import {
   filterScoresPayloadByQuery,
   filterScoresPayloadByTheme,
@@ -34,6 +35,7 @@ import {
   readServingFundListPrimary,
   servingHeaders,
 } from "@/lib/data-platform/read-side-serving";
+import type { ServingReadTrust } from "@/lib/data-platform/read-side-serving-trust";
 import {
   isServingStrictModeEnabled,
   servingStrictHeaders,
@@ -44,6 +46,8 @@ import {
 } from "@/app/api/funds/scores/contract";
 import { guardSemanticInvariant } from "@/lib/data-flow/invariant-guard";
 import { deriveFreshnessContract } from "@/lib/freshness-contract";
+import { ScoresRouteTrace } from "@/app/api/funds/scores/scores-route-trace";
+import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -53,7 +57,7 @@ const MAX_CATEGORY_LENGTH = 32;
 const MAX_QUERY_LENGTH = 64;
 const MAX_LIMIT = 2500;
 
-const SCORES_SERVER_TIMEOUT_MS = parseEnvMs("SCORES_SERVER_TIMEOUT_MS", 4_500, 2_500, 20_000);
+const SCORES_SERVER_TIMEOUT_MS = parseEnvMs("SCORES_SERVER_TIMEOUT_MS", 6_500, 2_500, 25_000);
 const SCORES_FRESH_TTL_MS = parseEnvMs("SCORES_ROUTE_CACHE_TTL_MS", 90_000, 10_000, 10 * 60_000);
 const SCORES_STALE_TTL_MS = parseEnvMs("SCORES_ROUTE_STALE_TTL_MS", 10 * 60_000, 30_000, 60 * 60_000);
 const SCORES_PERSISTED_CACHE_TIMEOUT_MS = parseEnvMs("SCORES_PERSISTED_CACHE_TIMEOUT_MS", 1_000, 400, 5_000);
@@ -76,6 +80,13 @@ const SCORES_LIGHT_FALLBACK_LIMIT = 300;
 const SCORES_FRESHNESS_FRESH_MS = parseEnvMs("SCORES_FRESHNESS_FRESH_MS", 6 * 60 * 60_000, 60_000, 48 * 60 * 60_000);
 const SCORES_FRESHNESS_STALE_MS = parseEnvMs("SCORES_FRESHNESS_STALE_MS", 36 * 60 * 60_000, 5 * 60_000, 7 * 24 * 60 * 60_000);
 const SCORES_SERVING_PRIMARY_CACHE_TTL_MS = parseEnvMs("SCORES_SERVING_PRIMARY_CACHE_TTL_MS", 6_000, 500, 30_000);
+/** Serving discovery + fund-list Prisma okuması; sınır yoksa pool/checkout gecikmesi 504'e kadar uzayabiliyor. */
+const SCORES_SERVING_PRIMARY_BUNDLE_TIMEOUT_MS = parseEnvMs(
+  "SCORES_SERVING_PRIMARY_BUNDLE_TIMEOUT_MS",
+  6_500,
+  800,
+  25_000
+);
 
 type ScoresCacheEntry = {
   payload: ScoresApiPayload;
@@ -125,32 +136,91 @@ function getScoresRouteState(): ScoresRuntimeState {
   return g.__scoresRouteState;
 }
 
-async function readServingPrimaryCached(state: ScoresRuntimeState): Promise<{
+function emptyServingPrimaryBundle(reason: string): {
+  discovery: Awaited<ReturnType<typeof readServingDiscoveryPrimary>>;
+  fundList: Awaited<ReturnType<typeof readServingFundListPrimary>>;
+} {
+  const trust: ServingReadTrust = {
+    trustAsFinal: false,
+    degradedKind: "serving_payload_missing",
+    degradedReason: reason,
+  };
+  const envelope = { world: null, payload: null, trust, envelopeRead: "latest_updated" as const };
+  return { discovery: envelope, fundList: envelope };
+}
+
+async function readServingPrimaryCached(
+  state: ScoresRuntimeState,
+  trace?: ScoresRouteTrace
+): Promise<{
   discovery: Awaited<ReturnType<typeof readServingDiscoveryPrimary>>;
   fundList: Awaited<ReturnType<typeof readServingFundListPrimary>>;
 }> {
   const now = Date.now();
   if (state.servingPrimaryCache && state.servingPrimaryCache.expiresAt > now) {
+    trace?.mark("serving_primary", "cache_hit");
     return {
       discovery: state.servingPrimaryCache.discovery,
       fundList: state.servingPrimaryCache.fundList,
     };
   }
-  if (state.servingPrimaryInflight) return state.servingPrimaryInflight;
-  state.servingPrimaryInflight = Promise.all([
-    readServingDiscoveryPrimary(),
-    readServingFundListPrimary(),
-  ]).then(([discovery, fundList]) => {
-    state.servingPrimaryCache = {
-      expiresAt: Date.now() + SCORES_SERVING_PRIMARY_CACHE_TTL_MS,
-      discovery,
-      fundList,
-    };
-    return { discovery, fundList };
-  }).finally(() => {
+  if (state.servingPrimaryInflight) {
+    trace?.mark("serving_primary", "inflight_wait");
+    return state.servingPrimaryInflight;
+  }
+  const run = (async () => {
+    trace?.mark("serving_primary_fetch_start");
+    try {
+      const world = await readUiServingWorldMetaCached().catch(() => null);
+      const [discovery, fundList] = await withTimeout(
+        Promise.all([readServingDiscoveryPrimary(world), readServingFundListPrimary(world)]),
+        SCORES_SERVING_PRIMARY_BUNDLE_TIMEOUT_MS
+      );
+      state.servingPrimaryCache = {
+        expiresAt: Date.now() + SCORES_SERVING_PRIMARY_CACHE_TTL_MS,
+        discovery,
+        fundList,
+      };
+      trace?.mark("serving_primary_fetch_ok");
+      return { discovery, fundList };
+    } catch (error) {
+      const timeout = isTimeoutError(error);
+      if (timeout && trace) {
+        trace.servingBundleTimeout = true;
+      }
+      trace?.mark(
+        "serving_primary_fetch_fail",
+        timeout ? `timeout_${SCORES_SERVING_PRIMARY_BUNDLE_TIMEOUT_MS}ms` : String((error as Error)?.message ?? error)
+      );
+      return emptyServingPrimaryBundle(
+        timeout ? "serving_primary_bundle_timeout" : "serving_primary_bundle_error"
+      );
+    }
+  })();
+  state.servingPrimaryInflight = run.finally(() => {
     state.servingPrimaryInflight = null;
   });
   return state.servingPrimaryInflight;
+}
+
+function scoresTraceResponseHeaders(
+  trace: ScoresRouteTrace,
+  outcome: string,
+  source: string | null,
+  logExtra?: Record<string, unknown>
+): Record<string, string> {
+  trace.outcome = outcome;
+  trace.source = source;
+  trace.mark("response");
+  trace.logJson(logExtra ?? {});
+  return {
+    "X-Scores-Trace-Id": trace.traceId,
+    "X-Scores-Trace-Outcome": outcome,
+    "X-Scores-Trace-Source": source ?? "none",
+    "X-Scores-Trace-Total-Ms": String(trace.totalMs()),
+    "X-Scores-Trace-Steps": trace.toStepsHeader(),
+    "X-Scores-Serving-Bundle-Timeout": trace.servingBundleTimeout ? "1" : "0",
+  };
 }
 
 function baseScoresKey(mode: RankingMode, categoryCode: string, limit: number | null): string {
@@ -598,6 +668,8 @@ async function resolveBasePayload(
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now();
+  const trace = new ScoresRouteTrace(crypto.randomUUID());
+  trace.mark("init");
   const strictMode = isServingStrictModeEnabled(request);
   const dbEnvStatus = getDbEnvStatus();
   const dbConnProfile = resolveDbConnectionProfile();
@@ -618,10 +690,12 @@ export async function GET(request: NextRequest) {
   const key = responseScoresKey(mode, categoryCode, limit, queryTrim, theme);
   const scopeRequestKey = requestScopeKey(mode, categoryCode, queryTrim, theme);
   const state = getScoresRouteState();
+  trace.mark("params");
   if (!strictMode) {
     const warmScopeCache = pickFreshCache(state, key);
     if (warmScopeCache && warmScopeCache.funds.length > 0) {
       const surfaceState = resolveScoresApiSurfaceState({ payload: warmScopeCache, degradedReason: null });
+      trace.mark("warm_scope_hit");
       return NextResponse.json(
         {
           ...warmScopeCache,
@@ -658,12 +732,20 @@ export async function GET(request: NextRequest) {
             "X-Discovery-Request-Key": scopeRequestKey,
             ...dbHeaders,
             ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+            ...scoresTraceResponseHeaders(trace, surfaceState, "memory", {
+              scopeRequestKey,
+              mode,
+              categoryCode: categoryCode || "all",
+              theme: theme ?? "none",
+              q: queryTrim ? 1 : 0,
+            }),
           },
         }
       );
     }
   }
-  const { discovery: servingDiscovery, fundList: servingFundList } = await readServingPrimaryCached(state);
+  const { discovery: servingDiscovery, fundList: servingFundList } = await readServingPrimaryCached(state, trace);
+  trace.mark("serving_branch");
   const servingWorld = servingDiscovery.world ?? servingFundList.world ?? null;
   const servingPrimaryTrust = enforceServingRouteTrust({
     world: servingWorld,
@@ -709,6 +791,11 @@ export async function GET(request: NextRequest) {
               },
               routeSource: "serving_discovery_index",
               fallbackUsed: false,
+              envelopeRead:
+                servingFundList.envelopeRead === "aligned_build" &&
+                servingDiscovery.envelopeRead === "aligned_build"
+                  ? "aligned_build"
+                  : servingFundList.envelopeRead,
             }),
             ...servingStrictHeaders({
               enabled: strictMode,
@@ -719,6 +806,10 @@ export async function GET(request: NextRequest) {
                 servingFundList.trust.degradedReason ??
                 "serving_primary_not_final",
             }),
+            ...scoresTraceResponseHeaders(trace, "strict_violation", "serving_discovery_index", {
+              scopeRequestKey,
+              strictMode: 1,
+            }),
           },
         }
       );
@@ -726,6 +817,10 @@ export async function GET(request: NextRequest) {
     const fundsByCode = new Map(
       servingFundList.payload.funds.map((fund) => [fund.code.trim().toUpperCase(), fund])
     );
+    const fundListRows = servingFundList.payload.funds;
+    const scopeUniverseTotal = categoryCode
+      ? fundListRows.filter((row) => row.categoryCode === categoryCode).length
+      : servingFundList.payload.total;
     const rankedRows = [...servingDiscovery.payload.funds]
       .filter((row) => (categoryCode ? row.categoryCode === categoryCode : true))
       .sort((left, right) => left.rank - right.rank);
@@ -738,7 +833,9 @@ export async function GET(request: NextRequest) {
         code: fund.code,
         name: fund.name,
         shortName: fund.shortName,
-        logoUrl: null,
+        // Serving fund-list payload'ı `logoUrl` taşımıyor; isim tabanlı kural seti
+        // (PORTFOLIO_COMPANY_RULES) ve manifest üzerinden çözüp boş slotları engelliyoruz.
+        logoUrl: getFundLogoUrlForUi(fund.code, fund.code, null, fund.name),
         lastPrice: fund.lastPrice,
         dailyReturn: fund.dailyReturn,
         portfolioSize: fund.portfolioSize,
@@ -748,10 +845,19 @@ export async function GET(request: NextRequest) {
         finalScore: row.score,
       });
     }
+    if (rankedRows.length > 0 && servingFunds.length < rankedRows.length) {
+      console.warn("[scores-api][serving-join-drift]", {
+        ranked: rankedRows.length,
+        joined: servingFunds.length,
+        category: categoryCode || "all",
+        listEnvelope: servingFundList.envelopeRead,
+        discoveryEnvelope: servingDiscovery.envelopeRead,
+      });
+    }
     const materialized = createScoresPayload({
       mode,
       funds: servingFunds,
-      universeTotal: rankedRows.length,
+      universeTotal: scopeUniverseTotal,
       matchedTotal: servingFunds.length,
     });
     const queryPayload = queryTrim ? filterScoresPayloadByQuery(materialized, queryTrim) : materialized;
@@ -834,6 +940,11 @@ export async function GET(request: NextRequest) {
             },
             routeSource: "serving_discovery_index",
             fallbackUsed: false,
+            envelopeRead:
+              servingFundList.envelopeRead === "aligned_build" &&
+              servingDiscovery.envelopeRead === "aligned_build"
+                ? "aligned_build"
+                : servingFundList.envelopeRead,
           }),
           "X-Discovery-Reliability-Class": discoveryHealth.reliabilityClass,
           "X-Discovery-Trust-Final": discoveryHealth.trustAsFinal ? "1" : "0",
@@ -847,6 +958,13 @@ export async function GET(request: NextRequest) {
           "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
           "X-Discovery-Request-Key": scopeRequestKey,
           ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+          ...scoresTraceResponseHeaders(trace, surfaceState, "serving_discovery_index", {
+            scopeRequestKey,
+            mode,
+            categoryCode: categoryCode || "all",
+            theme: theme ?? "none",
+            q: queryTrim ? 1 : 0,
+          }),
         },
       }
     );
@@ -873,11 +991,16 @@ export async function GET(request: NextRequest) {
             reason: "serving_discovery_or_fund_list_unavailable",
           }),
           ...dbHeaders,
+          ...scoresTraceResponseHeaders(trace, "strict_violation", "legacy_fallback", {
+            scopeRequestKey,
+            strictMode: 1,
+          }),
         },
       }
     );
   }
 
+  trace.mark("legacy_fallback");
   let cacheState: "hit" | "miss" | "dedupe" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "miss";
   let source: "snapshot" | "memory" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "snapshot";
   let degradedReason: string | null = null;
@@ -1250,6 +1373,16 @@ export async function GET(request: NextRequest) {
       "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",
       "X-Serving-Discovery-Build-Id": servingWorld?.buildIds.discovery ?? "none",
       ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+      ...scoresTraceResponseHeaders(trace, surfaceState, source, {
+        scopeRequestKey,
+        mode,
+        categoryCode: categoryCode || "all",
+        theme: theme ?? "none",
+        q: queryTrim ? 1 : 0,
+        cacheState,
+        degradedReason,
+        failureClass,
+      }),
     },
   }
   );

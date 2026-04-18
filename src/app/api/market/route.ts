@@ -7,17 +7,26 @@ import {
   readServingFundListPrimary,
   readServingSystemPrimary,
   servingHeaders,
+  type ServingEnvelopeReadStrategy,
 } from "@/lib/data-platform/read-side-serving";
+import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
 import {
   isServingStrictModeEnabled,
   servingStrictHeaders,
 } from "@/lib/data-platform/serving-strict-mode";
+import { getMarketSummaryFromDailySnapshotSafe } from "@/lib/services/fund-daily-snapshot.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const preferredRegion = ["fra1"];
 
 const MARKET_TIMEOUT_MS = parseEnvMs("MARKET_ROUTE_TIMEOUT_MS", 4_000, 1_200, 10_000);
+const MARKET_SNAPSHOT_FALLBACK_TIMEOUT_MS = parseEnvMs(
+  "MARKET_SNAPSHOT_FALLBACK_TIMEOUT_MS",
+  8_000,
+  2_000,
+  20_000
+);
 const MARKET_CACHE_TTL_MS = parseEnvMs("MARKET_ROUTE_CACHE_TTL_MS", 60_000, 5_000, 10 * 60_000);
 const MARKET_STALE_TTL_MS = parseEnvMs("MARKET_ROUTE_STALE_TTL_MS", 10 * 60_000, 20_000, 60 * 60_000);
 
@@ -31,6 +40,7 @@ type MarketRouteState = {
   inflight?: Promise<{
     payload: MarketSnapshotSummaryPayload;
     world: Awaited<ReturnType<typeof readServingSystemPrimary>>["world"];
+    envelopeRead?: ServingEnvelopeReadStrategy;
   } | null>;
 };
 
@@ -78,6 +88,26 @@ function shouldDegradeForDbCategory(category: string): boolean {
 
 function isMarketTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("market_timeout_");
+}
+
+async function loadMarketSummaryFromSnapshotFallback(): Promise<MarketSnapshotSummaryPayload | null> {
+  try {
+    return await withTimeout(
+      getMarketSummaryFromDailySnapshotSafe(),
+      MARKET_SNAPSHOT_FALLBACK_TIMEOUT_MS
+    );
+  } catch {
+    return null;
+  }
+}
+
+function isUsableMarketSnapshotPayload(payload: MarketSnapshotSummaryPayload | null): payload is MarketSnapshotSummaryPayload {
+  return Boolean(
+    payload &&
+      payload.fundCount > 0 &&
+      Number.isFinite(payload.totalPortfolioSize) &&
+      payload.totalPortfolioSize > 0
+  );
 }
 
 function buildMarketFallbackPayload(): MarketSnapshotSummaryPayload {
@@ -130,9 +160,18 @@ export async function GET(request: Request) {
     const task =
       state.inflight ??
       withTimeout(
-        Promise.all([readServingFundListPrimary(), readServingSystemPrimary()]).then(([servingList, servingSystem]) => {
+        (async () => {
+          const world = await readUiServingWorldMetaCached().catch(() => null);
+          const [servingList, servingSystem] = await Promise.all([
+            readServingFundListPrimary(world),
+            readServingSystemPrimary(world),
+          ]);
           const rows = servingList.payload?.funds ?? [];
           if (rows.length === 0) return null;
+          const canonicalFundCount =
+            typeof servingList.payload?.total === "number" && Number.isFinite(servingList.payload.total)
+              ? Math.max(0, Math.trunc(servingList.payload.total))
+              : rows.length;
           const totalPortfolioSize = rows.reduce((sum, row) => sum + row.portfolioSize, 0);
           const totalInvestorCount = rows.reduce((sum, row) => sum + row.investorCount, 0);
           const returns = rows.map((row) => row.dailyReturn).filter((value) => Number.isFinite(value));
@@ -142,8 +181,9 @@ export async function GET(request: Request) {
           const decliners = returns.filter((value) => value < 0).length;
           const unchanged = Math.max(0, rows.length - advancers - decliners);
           const payload: MarketSnapshotSummaryPayload = {
-            summary: { avgDailyReturn, totalFundCount: rows.length },
-            fundCount: rows.length,
+            summary: { avgDailyReturn, totalFundCount: canonicalFundCount },
+            fundCount: canonicalFundCount,
+            snapshotFundCountIsCanonicalUniverse: Boolean(servingList.trust.trustAsFinal),
             totalPortfolioSize,
             totalInvestorCount,
             advancers,
@@ -163,8 +203,9 @@ export async function GET(request: Request) {
           return {
             payload,
             world: servingSystem.world ?? servingList.world,
+            envelopeRead: servingList.envelopeRead,
           };
-        }),
+        })(),
         MARKET_TIMEOUT_MS
       );
     state.inflight = task;
@@ -172,6 +213,27 @@ export async function GET(request: Request) {
     state.inflight = undefined;
     if (!resolved) {
       console.warn("[api/market] payload_empty reason=summary_null");
+      if (!strictMode) {
+        const snap = await loadMarketSummaryFromSnapshotFallback();
+        if (isUsableMarketSnapshotPayload(snap)) {
+          state.cache = { payload: snap, updatedAt: Date.now() };
+          console.info(
+            `[api/market] source=daily_snapshot_fallback fund_count=${snap.fundCount} ms=${Date.now() - startedAt}`
+          );
+          return NextResponse.json(snap, {
+            headers: {
+              "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate",
+              "X-Market-Cache": "snapshot_fallback",
+              "X-Market-Source": "daily_snapshot",
+              "X-Market-Failure-Class": "none",
+              "X-Market-Fallback-Used": "1",
+              "X-Db-Failure-Class": "none",
+              ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+              ...dbHeaders,
+            },
+          });
+        }
+      }
       return NextResponse.json({ error: "market_empty" }, { status: 404 });
     }
     const payload = resolved.payload;
@@ -182,6 +244,7 @@ export async function GET(request: Request) {
     );
     state.cache = { payload, updatedAt: Date.now() };
     const servingWorld = resolved.world;
+    const envelopeRead = resolved.envelopeRead;
     const routeTrust = enforceServingRouteTrust({
       world: servingWorld,
       source: "serving_system_status",
@@ -204,6 +267,7 @@ export async function GET(request: Request) {
               trust: routeTrust,
               routeSource: "serving_system_status",
               fallbackUsed: false,
+              ...(envelopeRead ? { envelopeRead } : {}),
             }),
             ...servingStrictHeaders({
               enabled: strictMode,
@@ -227,6 +291,7 @@ export async function GET(request: Request) {
           trust: routeTrust,
           routeSource: "serving_system_status",
           fallbackUsed: false,
+          ...(envelopeRead ? { envelopeRead } : {}),
         }),
         ...servingStrictHeaders({ enabled: strictMode, violated: false }),
         ...dbHeaders,
@@ -279,6 +344,28 @@ export async function GET(request: Request) {
       });
     }
     if (marketFallbackEligible) {
+      const snap = await loadMarketSummaryFromSnapshotFallback();
+      if (isUsableMarketSnapshotPayload(snap)) {
+        state.cache = { payload: snap, updatedAt: Date.now() };
+        console.warn(
+          `[api/market] snapshot_recovery market_failure_class=${marketFailureClass} market_fallback_used=1 fund_count=${snap.fundCount} ms=${
+            Date.now() - startedAt
+          }`
+        );
+        return NextResponse.json(snap, {
+          status: 200,
+          headers: {
+            "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate",
+            "X-Market-Cache": "snapshot_fallback",
+            "X-Market-Source": "daily_snapshot",
+            "X-Market-Degraded": marketFailureClass,
+            "X-Market-Failure-Class": marketFailureClass,
+            "X-Market-Fallback-Used": "1",
+            "X-Db-Failure-Class": marketFailureClass,
+            ...dbHeaders,
+          },
+        });
+      }
       console.warn(
         `[api/market] empty_fallback market_failure_class=${marketFailureClass} market_fallback_used=1 retryable=${classified.retryable ? 1 : 0} ms=${
           Date.now() - startedAt

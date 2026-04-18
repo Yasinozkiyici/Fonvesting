@@ -5,6 +5,7 @@ import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
 import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-serving.service";
 import { getScoresPayloadServerCachedSafe } from "@/lib/services/fund-scores-cache.service";
+import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import {
   enforceServingRouteTrust,
   readServingFundListPrimary,
@@ -27,7 +28,7 @@ const MAX_FILTER_LENGTH = 32;
 const FUNDS_TIMEOUT_MS = parseEnvMs("FUNDS_ROUTE_TIMEOUT_MS", 5_000, 2_500, 20_000);
 const FUNDS_CACHE_TTL_MS = parseEnvMs("FUNDS_ROUTE_CACHE_TTL_MS", 90_000, 10_000, 10 * 60_000);
 const FUNDS_STALE_TTL_MS = parseEnvMs("FUNDS_ROUTE_STALE_TTL_MS", 10 * 60_000, 30_000, 60 * 60_000);
-const FUNDS_LIGHT_SERVING_LIMIT = parseEnvMs("FUNDS_LIGHT_SERVING_LIMIT", 180, 30, 320);
+const FUNDS_LIGHT_SERVING_LIMIT = parseEnvMs("FUNDS_LIGHT_SERVING_LIMIT", 400, 30, 3200);
 const FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS = parseEnvMs(
   "FUNDS_SCORES_CACHE_FALLBACK_TIMEOUT_MS",
   1_800,
@@ -136,7 +137,9 @@ function toFundsPayloadRow(row: ServingListRow) {
     code: row.code,
     name: row.name,
     shortName: row.shortName,
-    logoUrl: null,
+    // Serving fund-list payload'ı `logoUrl` taşımıyor; isim tabanlı kural
+    // (PORTFOLIO_COMPANY_RULES) ve manifest üzerinden çözüp boş slotları engelliyoruz.
+    logoUrl: getFundLogoUrlForUi(row.code, row.code, null, row.name),
     portfolioSize: row.portfolioSize,
     lastPrice: row.lastPrice,
     dailyReturn: row.dailyReturn,

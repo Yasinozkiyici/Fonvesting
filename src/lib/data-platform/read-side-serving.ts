@@ -67,10 +67,13 @@ type ServingSystemPayload = {
   };
 };
 
-type ServingReadEnvelope<T> = {
+export type ServingEnvelopeReadStrategy = "aligned_build" | "latest_updated";
+
+export type ServingReadEnvelope<T> = {
   world: UiServingWorldMeta | null;
   payload: T | null;
   trust: ServingReadTrust;
+  envelopeRead: ServingEnvelopeReadStrategy;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -224,48 +227,88 @@ async function readServingWorld(): Promise<UiServingWorldMeta | null> {
   return readUiServingWorldMetaCached().catch(() => null);
 }
 
-export async function readServingFundListPrimary(): Promise<ServingReadEnvelope<ServingListPayload>> {
-  const world = await readServingWorld();
-  const row = await prisma.servingFundList.findFirst({ orderBy: { updatedAt: "desc" } }).catch(() => null);
-  const payload = row ? normalizeListPayload(row.payload) : null;
+function resolveAlignedBuildId(world: UiServingWorldMeta | null): string | null {
+  if (!world?.worldAligned) return null;
+  const trimmed = (world.worldId ?? "").trim();
+  return trimmed || null;
+}
+
+type ServingEnvelopeKind = "fundList" | "compare" | "discovery" | "system";
+
+async function fetchServingEnvelopeRow(
+  kind: ServingEnvelopeKind,
+  buildId: string | null
+): Promise<{ payload: unknown } | null> {
+  const latest = { orderBy: { updatedAt: "desc" as const } };
+  if (buildId) {
+    if (kind === "fundList") return prisma.servingFundList.findFirst({ where: { buildId } }).catch(() => null);
+    if (kind === "compare") return prisma.servingCompareInputs.findFirst({ where: { buildId } }).catch(() => null);
+    if (kind === "discovery") return prisma.servingDiscoveryIndex.findFirst({ where: { buildId } }).catch(() => null);
+    return prisma.servingSystemStatus.findFirst({ where: { buildId } }).catch(() => null);
+  }
+  if (kind === "fundList") return prisma.servingFundList.findFirst(latest).catch(() => null);
+  if (kind === "compare") return prisma.servingCompareInputs.findFirst(latest).catch(() => null);
+  if (kind === "discovery") return prisma.servingDiscoveryIndex.findFirst(latest).catch(() => null);
+  return prisma.servingSystemStatus.findFirst(latest).catch(() => null);
+}
+
+async function readServingEnvelope<TPayload>(
+  kind: ServingEnvelopeKind,
+  normalize: (raw: unknown) => TPayload | null,
+  worldHint?: UiServingWorldMeta | null
+): Promise<ServingReadEnvelope<TPayload>> {
+  const world = worldHint === undefined ? await readServingWorld() : worldHint;
+  const alignedId = resolveAlignedBuildId(world);
+  if (alignedId) {
+    const row = await fetchServingEnvelopeRow(kind, alignedId);
+    if (!row) {
+      return {
+        world,
+        payload: null,
+        trust: classifyServingRead(world, true, false),
+        envelopeRead: "aligned_build",
+      };
+    }
+    const payload = normalize(row.payload);
+    return {
+      world,
+      payload,
+      trust: classifyServingRead(world, false, Boolean(row && !payload)),
+      envelopeRead: "aligned_build",
+    };
+  }
+  const row = await fetchServingEnvelopeRow(kind, null);
+  const payload = row ? normalize(row.payload) : null;
   return {
     world,
     payload,
     trust: classifyServingRead(world, !row, Boolean(row && !payload)),
+    envelopeRead: "latest_updated",
   };
 }
 
-export async function readServingComparePrimary(): Promise<ServingReadEnvelope<ServingComparePayload>> {
-  const world = await readServingWorld();
-  const row = await prisma.servingCompareInputs.findFirst({ orderBy: { updatedAt: "desc" } }).catch(() => null);
-  const payload = row ? normalizeComparePayload(row.payload) : null;
-  return {
-    world,
-    payload,
-    trust: classifyServingRead(world, !row, Boolean(row && !payload)),
-  };
+export async function readServingFundListPrimary(
+  worldHint?: UiServingWorldMeta | null
+): Promise<ServingReadEnvelope<ServingListPayload>> {
+  return readServingEnvelope("fundList", normalizeListPayload, worldHint);
 }
 
-export async function readServingDiscoveryPrimary(): Promise<ServingReadEnvelope<ServingDiscoveryPayload>> {
-  const world = await readServingWorld();
-  const row = await prisma.servingDiscoveryIndex.findFirst({ orderBy: { updatedAt: "desc" } }).catch(() => null);
-  const payload = row ? normalizeDiscoveryPayload(row.payload) : null;
-  return {
-    world,
-    payload,
-    trust: classifyServingRead(world, !row, Boolean(row && !payload)),
-  };
+export async function readServingComparePrimary(
+  worldHint?: UiServingWorldMeta | null
+): Promise<ServingReadEnvelope<ServingComparePayload>> {
+  return readServingEnvelope("compare", normalizeComparePayload, worldHint);
 }
 
-export async function readServingSystemPrimary(): Promise<ServingReadEnvelope<ServingSystemPayload>> {
-  const world = await readServingWorld();
-  const row = await prisma.servingSystemStatus.findFirst({ orderBy: { updatedAt: "desc" } }).catch(() => null);
-  const payload = row ? normalizeSystemPayload(row.payload) : null;
-  return {
-    world,
-    payload,
-    trust: classifyServingRead(world, !row, Boolean(row && !payload)),
-  };
+export async function readServingDiscoveryPrimary(
+  worldHint?: UiServingWorldMeta | null
+): Promise<ServingReadEnvelope<ServingDiscoveryPayload>> {
+  return readServingEnvelope("discovery", normalizeDiscoveryPayload, worldHint);
+}
+
+export async function readServingSystemPrimary(
+  worldHint?: UiServingWorldMeta | null
+): Promise<ServingReadEnvelope<ServingSystemPayload>> {
+  return readServingEnvelope("system", normalizeSystemPayload, worldHint);
 }
 
 export function servingHeaders(input: {
@@ -273,6 +316,7 @@ export function servingHeaders(input: {
   trust: ServingReadTrust;
   routeSource: ServingRouteSource | string;
   fallbackUsed: boolean;
+  envelopeRead?: ServingEnvelopeReadStrategy;
 }): Record<string, string> {
   return {
     "X-Serving-World-Id": input.world?.worldId ?? "none",
@@ -286,6 +330,7 @@ export function servingHeaders(input: {
     "X-Serving-Discovery-Build-Id": input.world?.buildIds.discovery ?? "none",
     "X-Serving-Compare-Build-Id": input.world?.buildIds.compare ?? "none",
     "X-Serving-System-Build-Id": input.world?.buildIds.system ?? "none",
+    ...(input.envelopeRead ? { "X-Serving-Envelope-Read": input.envelopeRead } : {}),
   };
 }
 

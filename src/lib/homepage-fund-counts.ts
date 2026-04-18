@@ -3,6 +3,7 @@
  * Önizleme satır sayısı, sayfa boyutu veya serving-core alt kümesi asla “gerçek evren toplamı” olarak kullanılmaz.
  */
 
+import { countActiveFundsWithTimeout } from "@/lib/homepage-active-fund-count";
 import { readScoresUniverseTotal } from "@/lib/scores-response-counts";
 import type { ScoredResponse } from "@/types/scored-funds";
 
@@ -94,6 +95,34 @@ export function resolveHomepageTrueUniverseTotal(input: {
   }
 
   return { kind: "known", value: total, source: "scores_db_snapshot" };
+}
+
+/** Test / gözlem: hangi bilinmeyen evren nedenlerinde Fund tablosu sayımı denenebilir. */
+export function shouldAttemptFundTableUniverseFallback(reason: string): boolean {
+  return (
+    reason === "scores_total_equals_row_count_at_preview_cap" ||
+    reason === "serving_core_rows_without_canonical_market_snapshot" ||
+    reason === "scores_unavailable_or_timed_out" ||
+    reason === "no_scores_and_no_market" ||
+    reason === "scores_total_invalid" ||
+    reason === "scores_total_inconsistent_with_rows"
+  );
+}
+
+/**
+ * Market özeti kanonik değilken veya skor evreni önizleme tavanına takıldığında aktif fon sayısı ile tamamlar.
+ */
+export async function augmentHomepageTrueUniverseWithFundTableCount(
+  resolution: TrueUniverseTotalResolution,
+  timeoutMs: number
+): Promise<TrueUniverseTotalResolution> {
+  if (resolution.kind === "known") return resolution;
+  if (!shouldAttemptFundTableUniverseFallback(resolution.reason)) return resolution;
+  const count = await countActiveFundsWithTimeout(timeoutMs);
+  if (count != null && count > 0) {
+    return { kind: "known", value: count, source: "fund_table_active_count" };
+  }
+  return resolution;
 }
 
 export function buildHomepageTotalsEvidence(input: {

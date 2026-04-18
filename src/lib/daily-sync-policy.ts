@@ -64,7 +64,21 @@ export function latestExpectedBusinessSessionDate(
   cutoffMinutes: number = DAILY_SOURCE_REFRESH_CUTOFF_MINUTES
 ): Date {
   const wallClock = getIstanbulWallClock(now);
-  const cursor = startOfUtcDay(now);
+  // Oturum anahtarı TEFAS ile uyumlu UTC günü; takvim günü İstanbul duvar saatiyle
+  // hizalanmalı. Aksi halde (ör. TR'de yeni gün, UTC hâlâ önceki gün) "dün" bir gün kayar.
+  const parts = wallClock.dateKey.split("-").map((segment) => Number.parseInt(segment, 10));
+  const y = parts[0];
+  const mo = parts[1];
+  const d = parts[2];
+  const cursor =
+    typeof y === "number" &&
+    typeof mo === "number" &&
+    typeof d === "number" &&
+    Number.isFinite(y) &&
+    Number.isFinite(mo) &&
+    Number.isFinite(d)
+      ? new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0))
+      : startOfUtcDay(now);
 
   if (wallClock.minutesOfDay < cutoffMinutes) {
     cursor.setUTCDate(cursor.getUTCDate() - 1);
