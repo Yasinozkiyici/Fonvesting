@@ -744,7 +744,25 @@ export async function GET(request: NextRequest) {
       );
     }
   }
-  const { discovery: servingDiscovery, fundList: servingFundList } = await readServingPrimaryCached(state, trace);
+  const worldPeek = await readUiServingWorldMetaCached().catch(() => null);
+  const skipServingPrimary = !strictMode && worldPeek != null && worldPeek.headsPresent.length === 0;
+  const { discovery: servingDiscovery, fundList: servingFundList } = skipServingPrimary
+    ? (() => {
+        trace.mark("serving_skipped_no_heads");
+        const trust: ServingReadTrust = {
+          trustAsFinal: false,
+          degradedKind: "serving_payload_missing",
+          degradedReason: "no_serving_heads",
+        };
+        const envelope = {
+          world: worldPeek,
+          payload: null,
+          trust,
+          envelopeRead: "latest_updated" as const,
+        };
+        return { discovery: envelope, fundList: envelope };
+      })()
+    : await readServingPrimaryCached(state, trace);
   trace.mark("serving_branch");
   const servingWorld = servingDiscovery.world ?? servingFundList.world ?? null;
   const servingPrimaryTrust = enforceServingRouteTrust({
@@ -1091,6 +1109,17 @@ export async function GET(request: NextRequest) {
     const stale = pickStaleCache(state, key);
     if (stale) {
       applyResolvedPayload(stale, "stale", "stale");
+      handledByCriticalPath = true;
+    }
+  }
+
+  if (!handledByCriticalPath && categoryCode) {
+    const earlyCategoryList: ScoresApiPayload | null = await readFundsListFallback(mode, categoryCode, queryTrim);
+    if (earlyCategoryList != null && earlyCategoryList.funds.length > 0) {
+      applyResolvedPayload(earlyCategoryList, "funds-list", "funds-list");
+      handledByCriticalPath = true;
+    } else if (earlyCategoryList != null && earlyCategoryList.universeTotal === 0) {
+      applyResolvedPayload(earlyCategoryList, "funds-list", "funds-list");
       handledByCriticalPath = true;
     }
   }
