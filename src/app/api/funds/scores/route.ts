@@ -19,6 +19,7 @@ import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { buildDbAccessResolutionLog, logDbAccessResolution } from "@/lib/db/db-access-resolution-log";
 import { resolveDbConnectionProfile } from "@/lib/db/db-connection-profile";
 import { getDbEnvStatus, sanitizeFailureDetail } from "@/lib/db-env-validation";
+import { normalizeFundSearchText } from "@/lib/fund-search";
 import { parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
 import { getFundDetailCoreServingUniversePayloads } from "@/lib/services/fund-detail-core-serving.service";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
@@ -42,6 +43,7 @@ import {
   validateScoresApiPayloadContract,
 } from "@/app/api/funds/scores/contract";
 import { guardSemanticInvariant } from "@/lib/data-flow/invariant-guard";
+import { deriveFreshnessContract } from "@/lib/freshness-contract";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -71,6 +73,9 @@ const SCORES_CORE_SERVING_FALLBACK_TIMEOUT_MS = parseEnvMs(
   6_000
 );
 const SCORES_LIGHT_FALLBACK_LIMIT = 300;
+const SCORES_FRESHNESS_FRESH_MS = parseEnvMs("SCORES_FRESHNESS_FRESH_MS", 6 * 60 * 60_000, 60_000, 48 * 60 * 60_000);
+const SCORES_FRESHNESS_STALE_MS = parseEnvMs("SCORES_FRESHNESS_STALE_MS", 36 * 60 * 60_000, 5 * 60_000, 7 * 24 * 60 * 60_000);
+const SCORES_SERVING_PRIMARY_CACHE_TTL_MS = parseEnvMs("SCORES_SERVING_PRIMARY_CACHE_TTL_MS", 6_000, 500, 30_000);
 
 type ScoresCacheEntry = {
   payload: ScoresApiPayload;
@@ -80,6 +85,15 @@ type ScoresCacheEntry = {
 type ScoresRuntimeState = {
   cache: Map<string, ScoresCacheEntry>;
   inflight: Map<string, Promise<ScoresApiPayload>>;
+  servingPrimaryCache: {
+    expiresAt: number;
+    discovery: Awaited<ReturnType<typeof readServingDiscoveryPrimary>>;
+    fundList: Awaited<ReturnType<typeof readServingFundListPrimary>>;
+  } | null;
+  servingPrimaryInflight: Promise<{
+    discovery: Awaited<ReturnType<typeof readServingDiscoveryPrimary>>;
+    fundList: Awaited<ReturnType<typeof readServingFundListPrimary>>;
+  }> | null;
 };
 
 type ScoresApiCacheRestRow = {
@@ -101,9 +115,42 @@ function parseEnvMs(name: string, fallback: number, min: number, max: number): n
 function getScoresRouteState(): ScoresRuntimeState {
   const g = globalThis as GlobalWithScoresRouteState;
   if (!g.__scoresRouteState) {
-    g.__scoresRouteState = { cache: new Map<string, ScoresCacheEntry>(), inflight: new Map<string, Promise<ScoresApiPayload>>() };
+    g.__scoresRouteState = {
+      cache: new Map<string, ScoresCacheEntry>(),
+      inflight: new Map<string, Promise<ScoresApiPayload>>(),
+      servingPrimaryCache: null,
+      servingPrimaryInflight: null,
+    };
   }
   return g.__scoresRouteState;
+}
+
+async function readServingPrimaryCached(state: ScoresRuntimeState): Promise<{
+  discovery: Awaited<ReturnType<typeof readServingDiscoveryPrimary>>;
+  fundList: Awaited<ReturnType<typeof readServingFundListPrimary>>;
+}> {
+  const now = Date.now();
+  if (state.servingPrimaryCache && state.servingPrimaryCache.expiresAt > now) {
+    return {
+      discovery: state.servingPrimaryCache.discovery,
+      fundList: state.servingPrimaryCache.fundList,
+    };
+  }
+  if (state.servingPrimaryInflight) return state.servingPrimaryInflight;
+  state.servingPrimaryInflight = Promise.all([
+    readServingDiscoveryPrimary(),
+    readServingFundListPrimary(),
+  ]).then(([discovery, fundList]) => {
+    state.servingPrimaryCache = {
+      expiresAt: Date.now() + SCORES_SERVING_PRIMARY_CACHE_TTL_MS,
+      discovery,
+      fundList,
+    };
+    return { discovery, fundList };
+  }).finally(() => {
+    state.servingPrimaryInflight = null;
+  });
+  return state.servingPrimaryInflight;
 }
 
 function baseScoresKey(mode: RankingMode, categoryCode: string, limit: number | null): string {
@@ -111,7 +158,7 @@ function baseScoresKey(mode: RankingMode, categoryCode: string, limit: number | 
 }
 
 function normalizeScoresScopePart(value: string): string {
-  return value.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+  return normalizeFundSearchText(value);
 }
 
 function responseScoresKey(
@@ -571,10 +618,52 @@ export async function GET(request: NextRequest) {
   const key = responseScoresKey(mode, categoryCode, limit, queryTrim, theme);
   const scopeRequestKey = requestScopeKey(mode, categoryCode, queryTrim, theme);
   const state = getScoresRouteState();
-  const [servingDiscovery, servingFundList] = await Promise.all([
-    readServingDiscoveryPrimary(),
-    readServingFundListPrimary(),
-  ]);
+  if (!strictMode) {
+    const warmScopeCache = pickFreshCache(state, key);
+    if (warmScopeCache && warmScopeCache.funds.length > 0) {
+      const surfaceState = resolveScoresApiSurfaceState({ payload: warmScopeCache, degradedReason: null });
+      return NextResponse.json(
+        {
+          ...warmScopeCache,
+          meta: {
+            servingWorld: null,
+            surfaceState,
+            freshness: {
+              state: "fresh",
+              asOf: null,
+              ageMs: null,
+              reason: "asof_unknown",
+            },
+            reliability: {
+              overall: "healthy",
+              scope: "healthy",
+              trustAsFinal: true,
+            },
+          },
+        },
+        {
+          status: 200,
+          headers: {
+            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            "X-Scores-Source": "memory",
+            "X-Scores-Cache": "hit",
+            "X-Scores-Surface-State": surfaceState,
+            "X-Discover-Theme": theme ?? "none",
+            "X-Discover-Server-Result-Count": String(warmScopeCache.funds.length),
+            "X-Discover-Universe-Total": String(warmScopeCache.universeTotal),
+            "X-Data-Freshness-State": "fresh",
+            "X-Data-Freshness-Reason": "asof_unknown",
+            "X-Data-Freshness-As-Of": "unknown",
+            "X-Data-Freshness-Age-Ms": "unknown",
+            "X-Discovery-Request-Key": scopeRequestKey,
+            ...dbHeaders,
+            ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+          },
+        }
+      );
+    }
+  }
+  const { discovery: servingDiscovery, fundList: servingFundList } = await readServingPrimaryCached(state);
   const servingWorld = servingDiscovery.world ?? servingFundList.world ?? null;
   const servingPrimaryTrust = enforceServingRouteTrust({
     world: servingWorld,
@@ -683,6 +772,11 @@ export async function GET(request: NextRequest) {
       requestConsistent: true,
     });
     const contractCheck = validateScoresApiPayloadContract(limitedPayload);
+    const freshness = deriveFreshnessContract({
+      asOf: servingDiscovery.payload.snapshotAsOf ?? servingFundList.payload.snapshotAsOf ?? null,
+      freshTtlMs: SCORES_FRESHNESS_FRESH_MS,
+      staleTtlMs: SCORES_FRESHNESS_STALE_MS,
+    });
     if (!contractCheck.valid) {
       guardSemanticInvariant({
         scope: "scores_api_contract_serving_primary",
@@ -705,6 +799,7 @@ export async function GET(request: NextRequest) {
         meta: {
           servingWorld,
           surfaceState,
+          freshness,
           reliability: {
             overall: discoveryHealth.overallDiscoveryHealth,
             scope: discoveryHealth.scopeHealth,
@@ -744,6 +839,12 @@ export async function GET(request: NextRequest) {
           "X-Discovery-Trust-Final": discoveryHealth.trustAsFinal ? "1" : "0",
           "X-Discovery-Scope-Aligned": discoveryHealth.scopeHealth === "healthy" ? "1" : "0",
           "X-Discovery-Overall-Health": discoveryHealth.overallDiscoveryHealth,
+          "X-Discovery-Freshness-Health":
+            freshness.state === "fresh" ? "healthy" : freshness.state === "stale_ok" ? "healthy" : "degraded",
+          "X-Data-Freshness-State": freshness.state,
+          "X-Data-Freshness-Reason": freshness.reason,
+          "X-Data-Freshness-As-Of": freshness.asOf ?? "unknown",
+          "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
           "X-Discovery-Request-Key": scopeRequestKey,
           ...servingStrictHeaders({ enabled: strictMode, violated: false }),
         },
@@ -1021,6 +1122,16 @@ export async function GET(request: NextRequest) {
     stale: (degradedReason ?? "").includes("stale"),
     requestConsistent: true,
   });
+  const freshness = deriveFreshnessContract({
+    asOf:
+      servingWorld?.snapshotAsOf.discovery ??
+      servingWorld?.snapshotAsOf.fundList ??
+      servingWorld?.snapshotAsOf.system ??
+      null,
+    freshTtlMs: SCORES_FRESHNESS_FRESH_MS,
+    staleTtlMs: SCORES_FRESHNESS_STALE_MS,
+    unknownAsDegraded: Boolean(degradedReason),
+  });
   const scopeAligned = discoveryHealth.scopeHealth === "healthy";
   const reliability = evaluateDiscoveryReliability({
     sourceTier: reliabilitySourceFromDiscoverySource(source),
@@ -1095,6 +1206,7 @@ export async function GET(request: NextRequest) {
       meta: {
         servingWorld,
         surfaceState,
+        freshness,
         reliability: {
           overall: discoveryHealth.overallDiscoveryHealth,
           scope: discoveryHealth.scopeHealth,
@@ -1124,10 +1236,15 @@ export async function GET(request: NextRequest) {
       "X-Discovery-Reliability-Reasons": discoveryHealth.reasons.join(",") || "none",
       "X-Discovery-Scope-Health": discoveryHealth.scopeHealth,
       "X-Discovery-Completeness-Health": discoveryHealth.resultCompletenessHealth,
-      "X-Discovery-Freshness-Health": discoveryHealth.freshnessHealth,
+      "X-Discovery-Freshness-Health":
+        freshness.state === "fresh" ? "healthy" : freshness.state === "stale_ok" ? "healthy" : "degraded",
       "X-Discovery-Request-Health": discoveryHealth.requestConsistencyHealth,
       "X-Discovery-Overall-Health": discoveryHealth.overallDiscoveryHealth,
       "X-Discovery-Request-Key": scopeRequestKey,
+      "X-Data-Freshness-State": freshness.state,
+      "X-Data-Freshness-Reason": freshness.reason,
+      "X-Data-Freshness-As-Of": freshness.asOf ?? "unknown",
+      "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
       "X-Serving-World-Id": servingWorld?.worldId ?? "none",
       "X-Serving-World-Aligned": servingWorld?.worldAligned ? "1" : "0",
       "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",

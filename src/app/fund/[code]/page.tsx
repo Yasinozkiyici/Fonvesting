@@ -165,6 +165,23 @@ export default async function FundDetailPage({ params }: Props) {
         />
         <FundDetailStabilityProbe fundCode={safeData.fund.code} />
         <FundDetailHero data={safeData} />
+        <p
+          className="mt-2 text-[11px] font-medium"
+          style={{ color: "var(--text-tertiary)" }}
+          data-detail-freshness-state={
+            safeData.degraded?.stale
+              ? "stale_ok"
+              : safeData.degraded?.active
+                ? "degraded_outdated"
+                : "fresh"
+          }
+        >
+          {safeData.degraded?.stale
+            ? "Data is slightly stale."
+            : safeData.degraded?.active
+              ? "Data is degraded or outdated."
+              : "Data is fresh."}
+        </p>
 
         <FundDetailMobileTabNav showRiskTab={showRiskTab} showCompareTab={showCompareTab} />
 

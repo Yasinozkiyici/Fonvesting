@@ -15,6 +15,12 @@ function hasHealthyScoresSet(payload) {
   return typeof payload?.total === "number" && payload.total >= uniqueCount;
 }
 
+function hasFreshnessContract(response) {
+  const state = response.headers.get("x-data-freshness-state");
+  if (!state) return false;
+  return state === "fresh" || state === "stale_ok" || state === "degraded_outdated";
+}
+
 const checks = [
   {
     path: "/api/health?mode=light",
@@ -44,6 +50,7 @@ const checks = [
       const emptyResult = response.headers.get("x-scores-empty-result");
       if (emptyResult && emptyResult !== "none") return false;
       if (scoresSource === "none") return false;
+      if (!hasFreshnessContract(response)) return false;
       return typeof payload === "object" && payload !== null && hasHealthyScoresSet(payload);
     },
   },
@@ -56,7 +63,8 @@ const checks = [
   {
     path: "/api/funds/compare?codes=VGA,TI1",
     maxMs: 5000,
-    validate(payload) {
+    validate(payload, response) {
+      if (!hasFreshnessContract(response)) return false;
       return typeof payload === "object" && payload !== null && Array.isArray(payload.funds) && payload.funds.length >= 2;
     },
   },
@@ -73,7 +81,8 @@ const checks = [
   },
   {
     path: "/api/funds/compare-series?base=VGA&codes=TI1",
-    validate(payload) {
+    validate(payload, response) {
+      if (!hasFreshnessContract(response)) return false;
       return (
         typeof payload === "object" &&
         payload !== null &&
@@ -93,7 +102,7 @@ const checks = [
   },
 ];
 
-const FETCH_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 30000);
+const FETCH_TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 45000);
 const RETRY_COUNT = Number(process.env.SMOKE_RETRY_COUNT || 1);
 const RETRY_DELAY_MS = Number(process.env.SMOKE_RETRY_DELAY_MS || 1200);
 

@@ -30,17 +30,24 @@ import {
   isServingStrictModeEnabled,
   servingStrictHeaders,
 } from "@/lib/data-platform/serving-strict-mode";
+import { deriveFreshnessContract } from "@/lib/freshness-contract";
+import { createComparePathTrace } from "@/lib/compare-path-instrumentation";
+import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX = 4;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
+const COMPARE_ROUTE_SERVING_COMPARE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_COMPARE_TIMEOUT_MS ?? "1600");
+const COMPARE_ROUTE_SERVING_FUND_LIST_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_FUND_LIST_TIMEOUT_MS ?? "1600");
 const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "1400");
 const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "900");
 const COMPARE_SERVING_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_UNIVERSE_TIMEOUT_MS ?? "1400");
 const COMPARE_SERVING_CODE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_CODE_TIMEOUT_MS ?? "1800");
 const COMPARE_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_REGISTRY_TIMEOUT_MS ?? "1800");
+const COMPARE_FRESHNESS_FRESH_MS = Number(process.env.COMPARE_FRESHNESS_FRESH_MS ?? 6 * 60 * 60_000);
+const COMPARE_FRESHNESS_STALE_MS = Number(process.env.COMPARE_FRESHNESS_STALE_MS ?? 36 * 60 * 60_000);
 
 type CompareFundRow = {
   fundId: string;
@@ -97,6 +104,25 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 function isTimeoutLike(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /timeout|timed out|aborted/i.test(message);
+}
+
+type ServingCompareEnvelope = Awaited<ReturnType<typeof readServingComparePrimary>>;
+type ServingListEnvelope = Awaited<ReturnType<typeof readServingFundListPrimary>>;
+
+function emptyServingCompareEnvelope(reason: string): ServingCompareEnvelope {
+  return {
+    world: null,
+    payload: null,
+    trust: { trustAsFinal: false, degradedKind: "serving_payload_missing", degradedReason: reason },
+  };
+}
+
+function emptyServingListEnvelope(reason: string): ServingListEnvelope {
+  return {
+    world: null,
+    payload: null,
+    trust: { trustAsFinal: false, degradedKind: "serving_payload_missing", degradedReason: reason },
+  };
 }
 
 function normalizeCode(value: string): string | null {
@@ -332,13 +358,66 @@ async function loadContextForRows(rows: CompareFundRow[]): Promise<ContextLoadOu
 }
 
 export async function GET(req: NextRequest) {
+  const trace = createComparePathTrace("compare");
   try {
     const strictMode = isServingStrictModeEnabled(req);
-    const [servingCompare, servingList] = await Promise.all([
-      readServingComparePrimary(),
-      readServingFundListPrimary(),
+    const [servingCompare, servingList, servingWorldMeta] = await Promise.all([
+      (async () => {
+        const s = performance.now();
+        try {
+          const v = await withTimeout(
+            readServingComparePrimary(),
+            COMPARE_ROUTE_SERVING_COMPARE_TIMEOUT_MS,
+            "compare_route_serving_compare_primary"
+          );
+          const ms = Math.round(performance.now() - s);
+          trace.record("serving_compare_primary", ms, v.payload ? "ok" : "empty");
+          return v;
+        } catch (e) {
+          const ms = Math.round(performance.now() - s);
+          trace.record(
+            "serving_compare_primary",
+            ms,
+            isTimeoutLike(e) ? "timeout" : "error",
+            isTimeoutLike(e) ? "db_or_serving_read" : undefined
+          );
+          return emptyServingCompareEnvelope("compare_serving_compare_primary_failed");
+        }
+      })(),
+      (async () => {
+        const s = performance.now();
+        try {
+          const v = await withTimeout(
+            readServingFundListPrimary(),
+            COMPARE_ROUTE_SERVING_FUND_LIST_TIMEOUT_MS,
+            "compare_route_serving_fund_list_primary"
+          );
+          const ms = Math.round(performance.now() - s);
+          trace.record("serving_fund_list_primary", ms, v.payload ? "ok" : "empty");
+          return v;
+        } catch (e) {
+          const ms = Math.round(performance.now() - s);
+          trace.record(
+            "serving_fund_list_primary",
+            ms,
+            isTimeoutLike(e) ? "timeout" : "error",
+            isTimeoutLike(e) ? "db_or_serving_read" : undefined
+          );
+          return emptyServingListEnvelope("compare_serving_fund_list_primary_failed");
+        }
+      })(),
+      (async () => {
+        const s = performance.now();
+        const v = await readUiServingWorldMetaCached();
+        trace.record(
+          "serving_world_meta",
+          Math.round(performance.now() - s),
+          v.buildIds.fundDetail ? "ok" : "empty"
+        );
+        return v;
+      })(),
     ]);
-    const servingWorld = servingCompare.world ?? servingList.world ?? null;
+    const servingWorld = servingCompare.world ?? servingList.world ?? servingWorldMeta;
     const codes = parseCodes(req.nextUrl.searchParams.get("codes"));
     if (codes.length === 0) {
       const surfaceState = resolveCompareSurfaceState({
@@ -362,7 +441,10 @@ export async function GET(req: NextRequest) {
           },
         },
         {
-          headers: { "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC) },
+          headers: {
+            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            ...trace.finish({ httpStatus: 200, classification: "empty_request", rowSource: "empty_request" }),
+          },
         }
       );
     }
@@ -401,17 +483,30 @@ export async function GET(req: NextRequest) {
     let degradedSource: string | null = null;
     if (rows.length > 0) degradedSource = "serving_compare_inputs";
     if (rows.length === 0) {
+      const snapT = performance.now();
       rows = await loadRowsFromSnapshot(codes).catch(() => []);
+      trace.record(
+        "snapshot_rows",
+        Math.round(performance.now() - snapT),
+        rows.length > 0 ? "ok" : "empty"
+      );
       if (rows.length > 0) degradedSource = "snapshot_fallback";
     }
     if (rows.length === 0) {
+      const regT = performance.now();
       rows = await loadRowsFromFundRegistry(codes).catch(() => []);
+      trace.record(
+        "registry_rows",
+        Math.round(performance.now() - regT),
+        rows.length > 0 ? "ok" : "empty"
+      );
       if (rows.length > 0) degradedSource = "registry";
     }
 
     const activeRows = rows.filter((row) => row.isActive);
     const byCode = new Map(activeRows.map((row) => [row.code.trim().toUpperCase(), row]));
     const ordered = codes.map((code) => byCode.get(code)).filter(Boolean) as CompareFundRow[];
+    const ctxT = performance.now();
     const contextOutcome = shouldUseFastCompareContextFallback(ordered)
       ? {
           compare: buildDegradedCompareContext(ordered.map((row) => row.code.trim().toUpperCase())),
@@ -420,6 +515,12 @@ export async function GET(req: NextRequest) {
           failureClass: "context_optional_skipped",
         }
       : await loadContextForRows(ordered);
+    trace.record(
+      "compare_context",
+      Math.round(performance.now() - ctxT),
+      contextOutcome.degraded ? "degraded" : "ok",
+      contextOutcome.failureClass ?? undefined
+    );
     const compare = contextOutcome.compare;
     const extrasById = contextOutcome.extrasById;
     if (contextOutcome.degraded && !degradedSource) degradedSource = "context_fallback";
@@ -439,6 +540,12 @@ export async function GET(req: NextRequest) {
       fallbackReason: degradedSource ?? "serving_compare_unavailable",
     });
     const strictTrust = compareHealth.trustAsFinal && routeTrust.trustAsFinal;
+    const freshness = deriveFreshnessContract({
+      asOf: servingCompare.payload?.snapshotAsOf ?? servingList.payload?.snapshotAsOf ?? null,
+      freshTtlMs: COMPARE_FRESHNESS_FRESH_MS,
+      staleTtlMs: COMPARE_FRESHNESS_STALE_MS,
+      unknownAsDegraded: degradedSource !== "serving_compare_inputs",
+    });
     if (strictMode && (degradedSource !== "serving_compare_inputs" || !strictTrust)) {
       return NextResponse.json(
         {
@@ -452,6 +559,12 @@ export async function GET(req: NextRequest) {
         {
           status: 503,
           headers: {
+            ...trace.finish({
+              httpStatus: 503,
+              classification: "strict_violation",
+              failureClass: contextOutcome.failureClass,
+              rowSource: degradedSource ?? null,
+            }),
             ...servingHeaders({
               world: servingWorld,
               trust: {
@@ -535,6 +648,7 @@ export async function GET(req: NextRequest) {
         compare,
         meta: {
           servingWorld,
+          freshness,
           compareHealth: compareHealth.compareHealth,
           trustAsFinal: compareHealth.trustAsFinal && routeTrust.trustAsFinal,
           degradedSource: degradedSource ?? null,
@@ -545,10 +659,20 @@ export async function GET(req: NextRequest) {
       {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+          ...trace.finish({
+            httpStatus: 200,
+            classification: compareHealth.compareHealth === "healthy" ? "ok" : "degraded_response",
+            failureClass: contextOutcome.failureClass,
+            rowSource: degradedSource ?? null,
+          }),
           ...(degradedSource ? { "X-Compare-Degraded-Source": degradedSource } : {}),
           ...(contextOutcome.failureClass ? { "X-Compare-Failure-Class": contextOutcome.failureClass } : {}),
           "X-Compare-Health": compareHealth.compareHealth,
           "X-Compare-Trust-Final": compareHealth.trustAsFinal ? "1" : "0",
+          "X-Data-Freshness-State": freshness.state,
+          "X-Data-Freshness-Reason": freshness.reason,
+          "X-Data-Freshness-As-Of": freshness.asOf ?? "unknown",
+          "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
           ...servingStrictHeaders({ enabled: strictMode, violated: false }),
           ...servingHeaders({
             world: servingWorld,
@@ -574,11 +698,18 @@ export async function GET(req: NextRequest) {
         },
         {
           status: 503,
-          headers: servingStrictHeaders({
-            enabled: strictMode,
-            violated: true,
-            reason: "exception_requires_fallback",
-          }),
+          headers: {
+            ...trace.finish({
+              httpStatus: 503,
+              classification: "strict_exception",
+              failureClass: "exception_requires_fallback",
+            }),
+            ...servingStrictHeaders({
+              enabled: strictMode,
+              violated: true,
+              reason: "exception_requires_fallback",
+            }),
+          },
         }
       );
     }
@@ -638,6 +769,12 @@ export async function GET(req: NextRequest) {
         {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            ...trace.finish({
+              httpStatus: 200,
+              classification: "exception_fallback_rows",
+              failureClass,
+              rowSource: "serving_exception_fallback",
+            }),
             "X-Compare-Degraded-Source": "serving_exception_fallback",
             "X-Compare-Failure-Class": failureClass,
           },
@@ -647,6 +784,16 @@ export async function GET(req: NextRequest) {
     if (process.env.NODE_ENV !== "production") {
       console.error("[funds/compare]", e);
     }
-    return NextResponse.json({ error: "compare_failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "compare_failed" },
+      {
+        status: 500,
+        headers: trace.finish({
+          httpStatus: 500,
+          classification: "server_error",
+          failureClass: isTimeoutLike(e) ? "timeout" : "compare_failed",
+        }),
+      }
+    );
   }
 }

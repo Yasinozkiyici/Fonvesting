@@ -110,6 +110,776 @@
       ],
       "occurrences": 1,
       "last_seen": "2026-04-11T00:00:00.000Z"
+    },
+    {
+      "id": "bug-007",
+      "timestamp": "2026-04-12T12:00:00.000Z",
+      "error_message": "Keşif/tema rotalarında yanlış boş tablo; fon detayında sürekli “güncelleniyor” ve bölümlerin upgrading görünmesi.",
+      "file": "src/components/tefas/ScoredFundsTable.tsx, src/components/home/HomePageClient.tsx, src/lib/services/fund-detail.service.ts, src/components/fund/FundDetailAutoRecover.tsx, src/lib/fund-themes.ts",
+      "root_cause": "HIGH_RETURN için istemci limit=300 + tema/kategori süzgecinin tam evrende değil üst dilimde uygulanması; spotlight isteğinin aynı dar limit; scores API kategori parametresinin tabloya hiç gitmemesi; withDegradedPayload’ın core_price_series_source_* ile her zaman active=true yapması; AutoRecover’ın partial durumunda yenileme döngüsü; tema eşleşmesinde yalnızca fon adı kullanılması.",
+      "fix": "Tema veya kategori aktifken skor isteğinde limit=300 kaldırıldı; scores URL’ye category= eklendi; spotlight’ta tema için limit=2500 ve kategori parametresi; keşif özetinde evren sayısı routeScopedMatchCount; degraded.active yalnızca maddi (bloklayıcı) nedenlerde true, trend/sayaç eksikleri ve kaynak etiketi sayılmıyor; AutoRecover yalnız upgrading; fundMatchesTheme’de kısa ad; fund-detail-section-status: tam/kısmi bölümlerde upgrading yok, kıyas durumu doğrudan tam/kısmi/veri yok.",
+      "tags": [
+        "homepage",
+        "discovery",
+        "fund-detail",
+        "degraded",
+        "scores-api"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-12T12:00:00.000Z"
+    },
+    {
+      "id": "bug-008",
+      "timestamp": "2026-04-13T14:00:00.000Z",
+      "error_message": "`pnpm rebuild:detail-core` çalıştırmasında Prisma pool checkout timeout; dense serving cache rebuild tamamlanamıyor.",
+      "file": "src/lib/services/fund-detail-core-serving.service.ts / scripts/rebuild-fund-detail-core-serving.ts",
+      "root_cause": "Rebuild sırasında DB bağlantı havuzunda checkout timeout oluşuyor; precompute job yarıda kalıyor ve yeni dense cache dosyası üretilemiyor.",
+      "fix": "Request path serving-first olacak şekilde canlı DB history bağımlılığı kapatıldı; scores tarafına serving-universe fallback eklendi. Rebuild timeout için ayrı operasyonel ayar/kapasite düzeltmesi gerekiyor.",
+      "tags": [
+        "serving-rebuild",
+        "prisma-pool",
+        "timeout",
+        "fund-detail-core"
+      ],
+      "related_bugs": [
+        "bug-001"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-13T14:00:00.000Z"
+    },
+    {
+      "id": "bug-009",
+      "timestamp": "2026-04-14T06:55:00.000Z",
+      "error_message": "Artifact tam kapsama sahip görünse de canlı detail akışında bazı fonlarda eski snapshot tarihi ve kıyas boş görünümü oluşuyordu.",
+      "file": "src/lib/services/fund-detail.service.ts, src/components/fund/FundDetailChart.tsx",
+      "root_cause": "Detail runtime cache yazım kararı yalnız kalite skoruna bakıyordu; daha yeni snapshot tarihli payload eski ama 'daha kaliteli' girdiye yenilemeyebiliyordu. Ayrıca kıyas prefetch yalnız tek denemeydi, ilk istek düşerse modül boş kalabiliyordu.",
+      "fix": "Cache overwrite kararına snapshotDate önceliği eklendi (daha yeni snapshot her zaman kazanır). Chart kıyas prefetch'i 2 denemeli yapıldı ve fon değişiminde deneme sayacı sıfırlanıyor.",
+      "tags": [
+        "fund-detail",
+        "runtime-cache",
+        "snapshot-staleness",
+        "comparison-prefetch"
+      ],
+      "related_bugs": [
+        "bug-008"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T06:55:00.000Z"
+    },
+    {
+      "id": "bug-010",
+      "timestamp": "2026-04-14T17:05:00.000Z",
+      "error_message": "Düşük veri fonlarında (KAN benzeri) modüller teknik/degrade hissettiriyor; görünürlük ve copy deterministik değil.",
+      "file": "src/lib/fund-detail-section-status.ts, src/components/fund/FundDetailChart.tsx, src/components/fund/FundDetailTrends.tsx, src/components/fund/FundDetailAutoRecover.tsx, src/app/fund/[code]/page.tsx",
+      "root_cause": "Chart/trend/comparison görünürlük eşikleri bileşenlere dağınık durumdaydı; düşük veri için tek bir davranış sözleşmesi olmadığı için bloklar arasında ürün dili ve görünürlük tutarsız kalıyordu.",
+      "fix": "Merkezi `deriveFundDetailBehaviorContract` eklendi (FULL/PARTIAL/LOW_DATA/NO_USEFUL_DATA + eşikler + fallback copy). Chart/trend/comparison render kararları bu kontrata bağlandı ve LOW/NO_USEFUL_DATA için auto-refresh bastırıldı.",
+      "tags": [
+        "fund-detail",
+        "low-data",
+        "product-contract",
+        "fallback-state"
+      ],
+      "related_bugs": [
+        "bug-007",
+        "bug-009"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T17:05:00.000Z"
+    },
+    {
+      "id": "bug-011",
+      "timestamp": "2026-04-14T17:18:00.000Z",
+      "error_message": "React hydration mismatch (throwOnHydrationMismatch): ana sayfada `Expected server HTML to contain a matching <a> in <div>` ve ardından hydration failed.",
+      "file": "src/components/tefas/ScoredFundsTable.tsx",
+      "root_cause": "Component body içinde `readStoredLastGoodPayload()` ile `sessionStorage` okunup client ilk renderında SSR'dan farklı başlangıç state (last_good seed) üretiliyordu; bu da ilk DOM ağacını değiştirip hydration çakışması yaratıyordu.",
+      "fix": "Storage seed başlangıç state'inden çıkarıldı; `lastGoodPayload/Scope` yalnız SSR seed ile başlatıldı ve storage geri yüklemesi mevcut `useEffect` aşamasına bırakıldı.",
+      "tags": [
+        "hydration",
+        "nextjs",
+        "scored-funds-table",
+        "ssr"
+      ],
+      "related_bugs": [
+        "bug-007"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T17:18:00.000Z"
+    },
+    {
+      "id": "bug-012",
+      "timestamp": "2026-04-14T17:31:00.000Z",
+      "error_message": "Trend chart çizgisi veri varken sağ kenarda kırık/clipped/jagged görünüyor; premium süreklilik hissi bozuluyor.",
+      "file": "src/components/fund/FundDetailTrends.tsx",
+      "root_cause": "Trend path/hover koordinatları 320px genişlikte hesaplanırken grid/plot görsel alanı 302px kullanıyordu; bu uyumsuzluk sağ kenarda path taşması ve kesik görünüm üretip line-flow'u parçalı hissettiriyordu.",
+      "fix": "Trend chart için sabit `TREND_PLOT_WIDTH=302` tanımlandı ve line/area path + hover x-map aynı plot genişliğine bağlandı. Karşılaştırma/debug için `trendCurve=linear|monotone` override eklendi.",
+      "tags": [
+        "fund-detail",
+        "trend-chart",
+        "svg-path",
+        "visual-quality"
+      ],
+      "related_bugs": [
+        "bug-010"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T17:31:00.000Z"
+    },
+    {
+      "id": "bug-013",
+      "timestamp": "2026-04-14T17:47:00.000Z",
+      "error_message": "Dual trend chart kalite sorunu: Investor ve AUM chartlarında sağ kenar kompozisyonu/annotation çakışması ve AUM tail kink premium görünümü bozuyor.",
+      "file": "src/components/fund/FundDetailTrends.tsx",
+      "root_cause": "Tek geometri varsayımı iki farklı seri karakteristiği için yetersiz kaldı: (1) axis label katmanı plot alanına taşarak endpoint/line ile kompozisyon çakışması üretiyordu, (2) AUM serisinde son nokta çevresinde monotone eğri tail kinks üretebiliyordu.",
+      "fix": "Chart içinde sağ label gutter ayrıldı, çizgi/alan bir g içine offsetlenip endpoint/hover mapping aynı koordinat sistemine bağlandı. AUM için tail sign-flip + last-delta guard ile seçici linear fallback eklendi. Forensic debug için no-label/no-endpoint/no-peak-label/wide-right-pad/wide-top-pad parametreleri eklendi.",
+      "tags": [
+        "fund-detail",
+        "trend-chart",
+        "aum",
+        "investor",
+        "render-quality"
+      ],
+      "related_bugs": [
+        "bug-012"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T17:47:00.000Z"
+    },
+    {
+      "id": "bug-014",
+      "timestamp": "2026-04-14T18:02:00.000Z",
+      "error_message": "Kıyas/karşılaştırma bloğu kaybolmuş görünüyor; bazı fonlarda veri olsa da tam blok yerine erken fallback render ediliyor.",
+      "file": "src/components/fund/FundDetailChart.tsx",
+      "root_cause": "Merkezi `canRenderComparison` gate'i UI'daki `comparisonRows` hesaplamasından önce çalıştığı için, rows mevcut olsa bile kıyas tablosu/özet dalı yerine fallback dalı tetiklenebiliyordu.",
+      "fix": "Erken fallback koşulu daraltıldı: `!canRenderComparison` yalnız `comparisonRows.length === 0` iken fallback gösteriyor. Rows varsa normal comparison dalı render olmaya devam ediyor.",
+      "tags": [
+        "fund-detail",
+        "comparison",
+        "regression",
+        "visibility"
+      ],
+      "related_bugs": [
+        "bug-010",
+        "bug-013"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T18:02:00.000Z"
+    },
+    {
+      "id": "bug-015",
+      "timestamp": "2026-04-14T19:46:00.000Z",
+      "error_message": "Fon detay kıyas modülü tekrar kırıldı; bazı fonlarda referans satırları kaybolup bölüm zayıf/boş görünüme düşüyordu.",
+      "file": "src/app/api/funds/compare-series/route.ts, src/components/fund/FundDetailChart.tsx",
+      "root_cause": "`compare-series` endpoint'inde `codes` boşken erken boş payload dönülmesi, makro seriyle zenginleşmesi gereken kıyas yolunu kesiyordu. Ek olarak aynı imza için kısa aralıkta tekrarlayan fetch denemeleri regresyon riskini artırıyordu.",
+      "fix": "API erken short-circuit kaldırıldı; `codes` boşken de makro seriler üretiliyor, yalnız maliyetli category-universe hesaplaması atlanıyor. Client tarafında ise aynı base+codes imzası için 1.2s dedupe guard eklendi.",
+      "tags": [
+        "fund-detail",
+        "comparison",
+        "compare-series",
+        "regression-guard"
+      ],
+      "related_bugs": [
+        "bug-014",
+        "bug-009"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T19:46:00.000Z"
+    },
+    {
+      "id": "bug-016",
+      "timestamp": "2026-04-14T19:56:00.000Z",
+      "error_message": "Unhandled Runtime Error: __webpack_modules__[moduleId] is not a function",
+      "file": ".next dev runtime cache / webpack chunks",
+      "root_cause": "Next.js dev runtime chunk/cache uyumsuzluğu; eski/bozuk modül cache hydration sırasında yanlış module factory üretiyordu.",
+      "fix": "Çalışan dev süreçleri güvenli şekilde sıfırlandı ve `SKIP_DETAIL_CORE_BOOTSTRAP=1 pnpm dev:reset` ile temiz Next dev yeniden başlatıldı.",
+      "tags": [
+        "nextjs",
+        "webpack",
+        "dev-cache",
+        "runtime-error"
+      ],
+      "related_bugs": [
+        "bug-002",
+        "bug-006"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T19:56:00.000Z"
+    },
+    {
+      "id": "bug-017",
+      "timestamp": "2026-04-14T17:04:37.000Z",
+      "error_message": "Homepage üst özet ve tablo semantiği canlıda 180 fon izlenimi veriyordu; yön dağılımı/FX özeti preview fallback'e kayabiliyordu.",
+      "file": "src/app/page.tsx, src/components/tefas/ScoredFundsTable.tsx",
+      "root_cause": "Homepage, market summary için `totalInvestorCount > 0` şartı nedeniyle geçerli market payload'ı atıp serving preview (180) fallback'ine düşüyordu; ayrıca tablo caption'ı `180/2390` formatıyla preview'ı toplam gibi algılatıyordu.",
+      "fix": "Market summary seçim kuralı `resolveHomepageMarketData` ile sadeleştirildi (fund/portfolio dolu gerçek summary korunur). Tablo sayaç metni `Önizleme: X · Evren: Y` semantiğine alındı.",
+      "tags": [
+        "homepage",
+        "source-of-truth",
+        "metrics",
+        "regression-guard"
+      ],
+      "related_bugs": [
+        "bug-007"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T17:04:37.000Z"
+    },
+    {
+      "id": "bug-018",
+      "timestamp": "2026-04-14T20:31:00.000Z",
+      "error_message": "Homepage üst özette yatırımcı toplamı kayboluyor/0 görünüyor; diğer market metrikleri dolu.",
+      "file": "src/lib/services/fund-daily-snapshot.service.ts",
+      "root_cause": "Market snapshot eksik olduğunda fallback hesap `investorCount` seçmeden çalışıyordu; bu yüzden fallback toplam yatırımcı 0'a düşüyordu.",
+      "fix": "Fallback snapshot sorgusuna `investorCount` eklendi ve ikinci güvenlik olarak aktif Fund aggregate toplamı ile investor fallback güçlendirildi (Prisma + Supabase yolları).",
+      "tags": [
+        "homepage",
+        "market-summary",
+        "investor-count",
+        "fallback"
+      ],
+      "related_bugs": [
+        "bug-017"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T20:31:00.000Z"
+    },
+    {
+      "id": "bug-019",
+      "timestamp": "2026-04-14T20:32:00.000Z",
+      "error_message": "Homepage tablo/search akışı SSR 180 preview satırına kilitleniyor; direct route var olan bazı fonlar aramada görünmüyor.",
+      "file": "src/components/tefas/ScoredFundsTable.tsx, src/app/page.tsx",
+      "root_cause": "İlk scope'ta cache match olduğu için skor fetch atlanıyordu; SSR preview payload'ı tam evren gibi kabul edilip client-side arama 180 satırla sınırlı kalıyordu.",
+      "fix": "Preview seed algısı (`total > funds.length`) ve initial scope one-shot refresh guard eklendi; ilk mount sonrası `/api/funds/scores?mode=...` ile tam scope yenilemesi zorunlu hale getirildi.",
+      "tags": [
+        "homepage",
+        "search",
+        "discovery",
+        "preview-lock"
+      ],
+      "related_bugs": [
+        "bug-005",
+        "bug-017"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T20:32:00.000Z"
+    },
+    {
+      "id": "bug-020",
+      "timestamp": "2026-04-14T19:12:00.000Z",
+      "error_message": "Production ortaminda DB baglantisi zaman zaman bos/hatali gorunuyor; health light ve scores endpointleri 0 donuyordu.",
+      "file": "Vercel Production Environment Variables (DATABASE_URL)",
+      "root_cause": "Production DATABASE_URL degerinin sonuna kacan `\\\\n` karakteri eklenmisti; baglanti URL'i bazi kod yollarinda malformed davranis uretiyordu.",
+      "fix": "Vercel production DATABASE_URL env degeri silinip ayni pooler URL ile `\\\\n` kacisi temizlenmis halde yeniden eklendi; runtime tekrar dogrulandi.",
+      "tags": [
+        "production",
+        "database",
+        "vercel-env",
+        "supabase",
+        "connectivity"
+      ],
+      "related_bugs": [
+        "bug-008"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-14T19:12:00.000Z"
+    },
+    {
+      "id": "bug-021",
+      "timestamp": "2026-04-15T09:35:00.000Z",
+      "error_message": "Gunluk ingestion kosusu success gorunurken fetch/publish ayrimi izlenemedigi icin production root-cause teshisi gecikiyor.",
+      "file": "src/app/api/cron/daily/route.ts, src/lib/system-health.ts",
+      "root_cause": "Cron run kayitlari yalniz tekil status tutuyordu; source refresh ve snapshot publish basamaklari ayri sinyale sahip degildi.",
+      "fix": "`daily_sync` SyncLog kaydina runKey + sourceStatus/publishStatus JSON metasi eklendi; health snapshot freshness alanlarina lastSuccessfulIngestionAt / lastPublishedSnapshotAt ve daily_sync SLA kontrolu eklendi.",
+      "tags": [
+        "reliability",
+        "daily-sync",
+        "observability",
+        "health"
+      ],
+      "related_bugs": [
+        "bug-001",
+        "bug-003",
+        "bug-004"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T09:35:00.000Z"
+    },
+    {
+      "id": "bug-022",
+      "timestamp": "2026-04-15T06:13:38.843Z",
+      "error_message": "verify-critical-routes komutunda comparison/chart/alternatives kritik pathleri timeout nedeniyle FAIL oldu.",
+      "file": "scripts/verify-critical-routes.mjs",
+      "root_cause": "Yerel calismada kritik endpointlerin bir kismi timeout altinda kontrat yaniti uretemedi; parity kontrolu bu regressions'i release oncesi yakaladi.",
+      "fix": "Verifier ciktisi release-odakli PASS/FAIL + failing_contract + failure_scope (live-path-only/total-path) formatina alindi; timeout failure'lar explicit raporlandi.",
+      "tags": [
+        "verification",
+        "critical-routes",
+        "timeout",
+        "release-gate"
+      ],
+      "related_bugs": [
+        "bug-001",
+        "bug-003",
+        "bug-015"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T06:13:38.843Z"
+    },
+    {
+      "id": "bug-023",
+      "timestamp": "2026-04-15T06:25:00.000Z",
+      "error_message": "Kritik verifier'da compare / compare-series timeout nedeniyle total-path failure (comparison_payload, primary_chart_payload, alternatives_payload_proxy).",
+      "file": "src/app/api/funds/compare/route.ts, src/app/api/funds/compare-series/route.ts",
+      "root_cause": "Karsilastirma yolunda agir/fragile adimlar timeout oldugunda 500 veya hard-fail veriyordu; durable snapshot/serving mevcutken degrade-success'a dusmuyor ve base/secondary ayrimi yapilmiyordu.",
+      "fix": "Compare route snapshot/serving-first ve bounded-timeout context fallback ile degrade compare context dondurecek sekilde sertlestirildi. Compare-series route'ta base series invariant korunup secondary/macro/category-universe adimlari timeout'ta izole edilerek contract-valid payload ve diagnostik header'lar donduruldu.",
+      "tags": [
+        "compare",
+        "compare-series",
+        "timeout",
+        "degraded-fallback",
+        "critical-routes"
+      ],
+      "related_bugs": [
+        "bug-015",
+        "bug-022"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T06:25:00.000Z"
+    },
+    {
+      "id": "bug-024",
+      "timestamp": "2026-04-15T20:40:00.000Z",
+      "error_message": "Canlıdaki UI bug sınıfı local dev modda kaçıyor; release öncesi yakalanamıyor.",
+      "file": "scripts/smoke-ui-functional.mjs, scripts/smoke-ui-prodlike.mjs, .github/workflows/release-critical-gate.yml",
+      "root_cause": "Release gate daha çok endpoint contract/smoke seviyesindeydi; production build artifact ve preview URL üzerinde zorunlu UI interaction DOM assertion yoktu.",
+      "fix": "UI smoke kapsamı search/filter/compare/alternatives ve API dolu/UI boş kontrolleriyle genişletildi; local production-like runner eklendi; Release Critical Gate workflow'una preview/prod URL UI interaction smoke adımı eklendi.",
+      "tags": [
+        "ui-regression",
+        "production-parity",
+        "release-gate",
+        "playwright-smoke"
+      ],
+      "related_bugs": [
+        "bug-007",
+        "bug-014",
+        "bug-015",
+        "bug-019"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T20:40:00.000Z"
+    },
+    {
+      "id": "bug-025",
+      "timestamp": "2026-04-15T21:45:00.000Z",
+      "error_message": "UI smoke false-negative: detail comparison rows missing ve code-search assertion yanlış fail üretiyordu.",
+      "file": "scripts/smoke-ui-functional.mjs",
+      "root_cause": "Script eski table DOM selector'ına bağlıydı, companion code aynı koda düşüyordu (TI1/TI1, ZP8/ZP8), ve homepage'de görünmeyen/ikincil input ile yarış koşulu oluşabiliyordu.",
+      "fix": "Comparison row assertion kart/badge DOM'una uyarlandı; companion code seçimi benzersiz hale getirildi; arama ana görünür inputa sabitlendi ve API>0/UI gecikmesi için retry guard eklendi.",
+      "tags": [
+        "ui-smoke",
+        "false-negative",
+        "playwright",
+        "search"
+      ],
+      "related_bugs": [
+        "bug-024"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T21:45:00.000Z"
+    },
+    {
+      "id": "bug-026",
+      "timestamp": "2026-04-15T21:58:00.000Z",
+      "error_message": "Preview URL UI smoke 401 (deployment protection) nedeniyle çalıştırılamadı.",
+      "file": "preview deployment URL / scripts/smoke-ui-functional.mjs",
+      "root_cause": "Vercel preview deployment SSO/deployment protection aktif; headless smoke requestleri yetkisiz kaldı.",
+      "fix": "Script API 401/403 durumunda optional check fallback ile toleranslı hale getirildi; preview page-level 401 için bypass secret/koruma ayarı gerektiği raporlandı.",
+      "tags": [
+        "preview",
+        "vercel",
+        "401",
+        "deployment-protection"
+      ],
+      "related_bugs": [
+        "bug-024",
+        "bug-025"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T21:58:00.000Z"
+    },
+    {
+      "id": "bug-027",
+      "timestamp": "2026-04-15T22:20:00.000Z",
+      "error_message": "Fund detail'da comparison görünürken alternatives linkleri 0 kalabiliyor (örn. /fund/TI1) ve cache payload yanlışlıkla tamamlanmış sayılabiliyordu.",
+      "file": "src/lib/services/fund-detail.service.ts, src/lib/fund-detail-success-contract.ts",
+      "root_cause": "Phase2 refresh tetik koşulu yalnız `kiyasBlock` varlığına bakıyordu; alternatives boş olsa bile payload optional-enriched kabul edilip onarım baskılanabiliyordu.",
+      "fix": "Detail success-contract yardımcıları eklendi; kategori bağlamında alternatives boşsa `needsPhase2OptionalRefresh=true` oldu ve `full_optional_enriched` sınıfı bu durumda engellendi. Ayrıca alternatives listesi render öncesi sanitize edilerek boş/duplicate/self-code girdileri ayıklandı.",
+      "tags": [
+        "fund-detail",
+        "alternatives",
+        "cache-policy",
+        "phase2-repair"
+      ],
+      "related_bugs": [
+        "bug-015",
+        "bug-024"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-15T22:20:00.000Z"
+    },
+    {
+      "id": "bug-028",
+      "timestamp": "2026-04-17T08:55:00.000Z",
+      "error_message": "Fund detail'da 1Y/3Y seçiliyken grafikler bazı fonlarda yalnız 4-13 Nisan gibi çok kısa pencere gösteriyor; trend kartları da aynı kısa aralığa düşüyor.",
+      "file": "src/lib/services/fund-detail.service.ts",
+      "root_cause": "Serving artifact snapshot lag 3 gün olduğunda serving history tamamen 'miss' sayılıp atılıyordu; phase1/phase2 kısa snapshot fallback (5-7 nokta) ile devam edip chart/trend penceresi daralıyordu.",
+      "fix": "Serving lag durumunda artifact tamamen atılmak yerine degrade reason ile aday havuzunda tutuldu; phase2 seçiminde serving_history üzerinden 3Y kapsayan seri geri kazanıldı.",
+      "tags": [
+        "fund-detail",
+        "chart-window",
+        "trend-cards",
+        "serving-stale-fallback"
+      ],
+      "related_bugs": [
+        "bug-009",
+        "bug-010"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T08:55:00.000Z"
+    },
+    {
+      "id": "bug-029",
+      "timestamp": "2026-04-17T08:52:00.000Z",
+      "error_message": "fund-detail.service.ts düzenlemesinden sonra esbuild parse hatası: Expected finally but found '}' / Unexpected catch.",
+      "file": "src/lib/services/fund-detail.service.ts",
+      "root_cause": "Serving stale dalındaki if/else bloğu sadeleştirilirken kapanış parantezi ve catch hizası bozuldu.",
+      "fix": "Try/catch blok sınırları düzeltilip fazla kapanış parantezi kaldırıldı; servis tekrar derlenebilir hale getirildi.",
+      "tags": [
+        "typescript",
+        "syntax",
+        "fund-detail",
+        "regression"
+      ],
+      "related_bugs": [
+        "bug-028"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T08:52:00.000Z"
+    },
+    {
+      "id": "bug-030",
+      "timestamp": "2026-04-17T12:22:00.000Z",
+      "error_message": "TypeScript derlemede union karşılaştırma hatası: TS2367 (`'funds-list' | 'miss'` ile `'stale'` karşılaştırması).",
+      "file": "src/app/api/funds/scores/route.ts",
+      "root_cause": "Discovery reliability sınıflaması eklenirken `source === 'stale'` kontrolü, ilgili dalda artık mümkün olmayan union türüne karşı yazıldı.",
+      "fix": "Stale belirlemesi union-safe hale getirildi (`degradedReason` üzerinden), ardından `pnpm exec tsc --noEmit` ve ilgili testler temiz geçti.",
+      "tags": [
+        "typescript",
+        "scores-api",
+        "reliability-model",
+        "regression-guard"
+      ],
+      "related_bugs": [
+        "bug-007",
+        "bug-019"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T12:22:00.000Z"
+    },
+    {
+      "id": "bug-031",
+      "timestamp": "2026-04-17T12:36:00.000Z",
+      "error_message": "Yeni detail orchestrator testinde uzun ufuk yetersiz seri `degraded` sınıfına düşüp `invalid_insufficient` bekletisini karşılamadı.",
+      "file": "src/lib/services/fund-detail-orchestrator.ts",
+      "root_cause": "Horizon validity (`too_short`) reason olarak eklenmişti fakat semantic acceptance kuralında hard invalid tetiklenmiyordu.",
+      "fix": "Orchestrator içinde 1Y/3Y `too_short` durumunda core-series accept şartı düşürülerek karar `invalid_insufficient`a zorlandı; testler geçti.",
+      "tags": [
+        "fund-detail",
+        "orchestrator",
+        "horizon-validity",
+        "semantic-acceptance"
+      ],
+      "related_bugs": [
+        "bug-028",
+        "bug-030"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T12:36:00.000Z"
+    },
+    {
+      "id": "bug-032",
+      "timestamp": "2026-04-17T13:02:00.000Z",
+      "error_message": "Prodlike build doğrulamasında `/404` için ENOENT/Can not find module (`.next/server/pages/404.js`) hatası gözlendi.",
+      "file": "build pipeline (`pnpm run build:clean` / `pnpm run smoke:ui:prodlike`)",
+      "root_cause": "Aynı anda iki ayrı build tetiklendiğinde `.next` artifact yarışı oluşup 404 prerender çıktısı çakıştı.",
+      "fix": "Build/Smoke komutları seri (tek süreç) çalıştırıldı; `smoke:ui:prodlike` tekrarında production build + UI smoke PASS.",
+      "tags": [
+        "build",
+        "nextjs",
+        "artifact-race",
+        "prodlike-smoke"
+      ],
+      "related_bugs": [
+        "bug-006",
+        "bug-016"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T13:02:00.000Z"
+    },
+    {
+      "id": "bug-033",
+      "timestamp": "2026-04-17T14:40:00.000Z",
+      "error_message": "`pnpm test -- --runInBand ...` komutu bu repoda `test: --: unexpected operator` hatası verdi.",
+      "file": "test command invocation",
+      "root_cause": "Repo test komutu bu parametre biçimini desteklemiyor; doğrudan node/tsx test runner ile çalıştırmak gerekiyor.",
+      "fix": "Komut `pnpm exec tsx --test <test-file>` olarak güncellendi ve test PASS alındı.",
+      "tags": [
+        "test-runner",
+        "command",
+        "tooling"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T14:40:00.000Z"
+    },
+    {
+      "id": "bug-034",
+      "timestamp": "2026-04-17T15:16:00.000Z",
+      "error_message": "`pnpm data:verify` çalıştırmasında `raw_*` ve `serving_*` tabloları yok hatası alındı (relation does not exist).",
+      "file": "scripts/data-platform/verify.ts",
+      "root_cause": "Yerel veritabanında `20260417150000_data_platform_raw_serving_v1` migration'ı uygulanmamış.",
+      "fix": "Verify çıktısı migration eksikliğini görünür bırakacak şekilde korundu; sonraki adımda migration çalıştırılması gerekiyor.",
+      "tags": [
+        "data-platform",
+        "migration",
+        "verify",
+        "postgres"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T15:16:00.000Z"
+    },
+    {
+      "id": "bug-035",
+      "timestamp": "2026-04-17T16:02:00.000Z",
+      "error_message": "Read-side cutover sonrası `pnpm exec tsc --noEmit` çalıştırmasında `/api/market` için `__world does not exist in type MarketSnapshotSummaryPayload` hatası alındı.",
+      "file": "src/app/api/market/route.ts",
+      "root_cause": "Market payload objesine tipte olmayan geçici alan (`__world`) enjekte edilmişti.",
+      "fix": "World bilgisini payload içine gömmek yerine `payload + world` taşıyan ayrı çözüm nesnesi kullanıldı.",
+      "tags": [
+        "typescript",
+        "api-market",
+        "read-side-cutover"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T16:02:00.000Z"
+    },
+    {
+      "id": "bug-036",
+      "timestamp": "2026-04-17T16:05:00.000Z",
+      "error_message": "`read-side-serving.test.ts` ilk çalıştırmada Prisma bootstrap nedeniyle `DATABASE_URL SQLite` hatasıyla fail oldu.",
+      "file": "src/lib/data-platform/read-side-serving.test.ts",
+      "root_cause": "Test dosyası Prisma bağımlı `read-side-serving.ts` modülünü import ettiği için DB bootstrap tetiklendi.",
+      "fix": "DB bağımsız trust helper ayrı modüle (`read-side-serving-trust.ts`) çıkarıldı ve test bu modülü import edecek şekilde güncellendi.",
+      "tags": [
+        "test",
+        "prisma",
+        "read-side-cutover"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T16:05:00.000Z"
+    },
+    {
+      "id": "bug-037",
+      "timestamp": "2026-04-17T16:24:00.000Z",
+      "error_message": "Build sırasında `/fund/[code]` üretiminde `Cannot find module './vendor-chunks/lucide-react...js'` ve ardından `Cannot find module './3737.js'` hatası alındı.",
+      "file": "build pipeline + component icon imports",
+      "root_cause": "Çalışan `next dev` süreci ile production build aynı `.next` klasöründe yarıştı; lucide importları birçok dosyada dağınık olduğu için vendor chunk üretimi daha kırılgan hale geldi.",
+      "fix": "İkon importları `src/components/icons.ts` altında merkezileştirildi (tek güvenli pattern), `lucide-react` sürümü package.json'da sabitlendi ve dev süreci durdurulduktan sonra temiz build + prodlike smoke doğrulandı.",
+      "tags": [
+        "nextjs",
+        "vendor-chunk",
+        "lucide-react",
+        "build-hygiene"
+      ],
+      "related_bugs": [
+        "bug-006",
+        "bug-032"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T16:24:00.000Z"
+    },
+    {
+      "id": "bug-038",
+      "timestamp": "2026-04-17T16:26:30.000Z",
+      "error_message": "`pnpm data:sync:daily` sırasında `Unique constraint failed on fields: (build_id)` ile `rebuild_v2_serving_world` adımı düştü.",
+      "file": "src/lib/v2/serving/rebuild.ts",
+      "root_cause": "Deterministik `buildId` aynı snapshot için tekrar üretildiğinde serving envelope tabloları `create` kullandığı için idempotent tekrar çalıştırma unique çakışmasına giriyordu.",
+      "fix": "V2 serving transaction başında aynı `buildId` satırları atomik olarak temizlenip yeniden yazıldı (`deleteMany + create/createMany`), detail insert'e `skipDuplicates` eklendi.",
+      "tags": [
+        "serving-rebuild",
+        "idempotency",
+        "build-id",
+        "prisma"
+      ],
+      "related_bugs": [
+        "bug-034"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T16:26:30.000Z"
+    },
+    {
+      "id": "bug-039",
+      "timestamp": "2026-04-17T18:14:00.000Z",
+      "error_message": "`pnpm run build:clean` sırasında `src/lib/system-health.ts` içinde `dailySyncJob.fundsUpdated does not exist` type hatası nedeniyle production build fail oldu.",
+      "file": "src/lib/system-health.ts",
+      "root_cause": "dailySyncJob tipi `fundsUpdated` alanını garanti etmiyor; doğrudan property erişimi TypeScript derlemesini kırıyordu.",
+      "fix": "Erişimler backward-compatible güvenli cast + nullish fallback ile güncellendi; build tekrar doğrulandı.",
+      "tags": [
+        "typescript",
+        "build",
+        "system-health"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-17T18:14:00.000Z"
+    },
+    {
+      "id": "bug-040",
+      "timestamp": "2026-04-18T12:00:00.000Z",
+      "error_message": "[smoke:ui-functional] no-result state did not render on explicit no-match",
+      "file": "src/components/tefas/ScoredFundsTable.tsx",
+      "root_cause": "Arama metni (q) değişince payload scope anahtarı uyuşmadığı için displayPayload geçici olarak null oluyordu; loading sırasında tbody iskeleti gösteriliyor ve istemci tarafında zaten 0 eşleşme olsa bile 'Bu kriterlere uygun fon yok' metni gizleniyordu. Ayrıca önceki başarılı liste aynı mod/kategori/tema tabanında tekrar kullanılmadığı için boş sonuç metnine geçiş gecikiyordu.",
+      "fix": "`stripScoresScopeQuerySuffix` ile aynı keşif tabanında (yalnızca q farkı) lastGoodPayload ile displayPayload doldurulması; yüklü evrende arama ile 0 satır kaldığında loading iskeleti yerine doğru boş durumun gösterilmesi (`showTableLoadingSkeleton`).",
+      "tags": [
+        "smoke",
+        "discovery",
+        "empty-state",
+        "react"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T12:00:00.000Z"
+    },
+    {
+      "id": "bug-041",
+      "timestamp": "2026-04-18T14:30:00.000Z",
+      "error_message": "`[smoke:ui-functional] /fund/TI1 missing comparison summary` — DB/P1001 sonrası kıyas bloğu boşken gövde metninde `öncelikli net fark` yoktu.",
+      "file": "src/components/fund/FundDetailChart.tsx, src/lib/fund-detail-comparison-summary-contract.ts, scripts/smoke-ui-functional.mjs",
+      "root_cause": "Karşılaştırma özeti yalnızca `shouldRenderComparisonSection` ve dolu `comparisonRows` dalında üretildi; sunucu `kiyasBlock` yok veya pencere satırı 0 iken yedek metin `öncelikli net fark` içermiyordu. Smoke `innerText` ile tam özet etiketini aradığı için yanlış negatif oluşuyordu.",
+      "fix": "Sözleşme modülü + tüm bozulmuş dallarda görünür `Öncelikli net fark` açıklaması; panel için `data-fund-detail-comparison-summary-state` ve `data-fund-detail-comparison-degraded-reason`; bozulmuş durumda yapılandırılmış `console.warn`; smoke’ta `ready` vs `degraded` dallı assert.",
+      "tags": [
+        "fund-detail",
+        "comparison",
+        "smoke",
+        "degraded-ui"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T14:30:00.000Z"
+    },
+    {
+      "id": "bug-042",
+      "timestamp": "2026-04-18T16:00:00.000Z",
+      "error_message": "Ana sayfa tekrarlı olarak 180 fon toplamı gösteriyor (önizleme = evren).",
+      "file": "src/app/page.tsx, src/components/home/HomePageClient.tsx, src/components/tefas/ScoredFundsTable.tsx",
+      "root_cause": "Piyasa özeti `readServingSystemPrimary` + serving satırlarından türetilmiş `fundCount` ile dolduruluyordu (preview limiti). Keşif evreni `resolveExploreUniverseTotal` ve istemci `total ?? funds.length` alt küme sayısını kanonik toplam sandı.",
+      "fix": "Market özetini `getMarketSummaryFromDailySnapshotSafe` ile yükle; `resolveHomepageTrueUniverseTotal` + `[home-ssr-totals]` logu; serving skor önizlemesi `total: 0`; `canonicalUniverseTotal` yalnızca sunucudan; tablo başlığında `funds.length` ile evren yerine doldurma kaldırıldı; `snapshotFundCountIsCanonicalUniverse` + üst şerit bilinmeyen durum metni; limit+count hatasında skor payload null.",
+      "tags": [
+        "homepage",
+        "data-contract",
+        "totals",
+        "serving-preview"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T16:00:00.000Z"
+    },
+    {
+      "id": "bug-043",
+      "timestamp": "2026-04-18T18:00:00.000Z",
+      "error_message": "Ana sayfa runtime hata sınırı: serving listesinde `code` undefined → `row.code.trim()` TypeError.",
+      "file": "src/lib/services/fund-detail-core-serving.service.ts, src/lib/services/fund-detail-core-serving-row-guard.ts",
+      "root_cause": "Bozuk core-serving kayıtları `toServingListRow` sonrası `code.trim()` filtresinde patlıyordu.",
+      "fix": "Null-güvenli `toServingListRow` + `servingHomeRowHasPublishableCode` (Prisma’sız modül) + alternatif havuz filtresi + regression test.",
+      "tags": [
+        "homepage",
+        "ssr",
+        "serving-core",
+        "hotfix"
+      ],
+      "related_bugs": [
+        "bug-042"
+      ],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T18:00:00.000Z"
+    },
+    {
+      "id": "bug-044",
+      "timestamp": "2026-04-18T22:30:00.000Z",
+      "error_message": "Prodlike doğrulamada tekrarlayan Prisma init / DB timeout; env ve bağlantı politikası dağınık, diagnostik Prisma import’una bağlı.",
+      "file": "src/lib/db/db-connection-profile.ts, src/lib/prisma.ts, src/lib/db-runtime-diagnostics.ts, src/lib/db-env-validation.ts",
+      "root_cause": "getEffectiveDatabaseUrl prisma.ts içinde gömülüydü; diagnostics için Prisma yükleniyordu; DATABASE_URL ham okuma ile validation farklı trim yolları kullanabiliyordu; init hata kodları sınıflandırmada zayıftı.",
+      "fix": "Merkezi profile + sanitize; Prisma client lazy Proxy; runtime diagnostics profile’dan URL; getDbEnvStatus ham URL’yi profile üzerinden okur; P1001/P1012 ve mesaj içi P#### çıkarma; scores/health için resolution log ve X-Db-* header’ları; scores/market DB degrade kısa devresine auth_failed/invalid_datasource.",
+      "tags": [
+        "prisma",
+        "database",
+        "reliability",
+        "observability"
+      ],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T22:30:00.000Z"
+    },
+    {
+      "id": "bug-045",
+      "timestamp": "2026-04-18T23:55:00.000Z",
+      "error_message": "Sayfa yüklenirken hata oluştu (segment error.tsx) — ana sayfa / keşif client render çökmesi.",
+      "file": "src/lib/fund-themes.ts, src/components/home/HomePageClient.tsx, src/app/page.tsx, src/lib/services/fund-daily-snapshot.service.ts, src/lib/services/fund-detail-core-serving.service.ts",
+      "root_cause": "`fundMatchesTheme` → `normalizeText(fund.name)` yolunda `name`/`shortName` null veya string dışı gelince `toLocaleLowerCase` TypeError; ek olarak `categoryKey` undefined iken `.trim()`, eksik `summary` ile `marketData.summary.avgDailyReturn`, sıralamada `code` undefined ve serving evreninde `fund.code` yokken `trim` riski.",
+      "fix": "`normalizeText` null-güvenli; `fundMatchesTheme` String() zorlaması; `getScoresPayloadFromDailySnapshot` category String(); ana sayfa `marketDayTone` için `summary`/`avg` finite guard; spotlight sıralamada güvenli `localeCompare`; core-serving memory yazımında geçersiz kod satırını atla.",
+      "tags": ["homepage", "runtime", "null-guard", "fund-themes"],
+      "related_bugs": ["bug-043"],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T23:55:00.000Z"
+    },
+    {
+      "id": "bug-046",
+      "timestamp": "2026-04-18T10:47:00.000Z",
+      "error_message": "Sayfa yüklenirken hata oluştu / Sayfa beklenmeyen bir durumda kaldı (ana sayfa route crash ekranı).",
+      "file": "src/app/page.tsx",
+      "root_cause": "Ana sayfa SSR akışında beklenmeyen bir exception oluştuğunda route-level hata sınırına düşülüyor ve kullanıcı doğrudan error ekranı görüyordu.",
+      "fix": "Ana sayfa server component render akışı try/catch ile fail-safe hale getirildi; exception durumunda route çökmek yerine güvenli fallback MarketHeader + HomePageClient ile sayfa yanıtı korunuyor.",
+      "tags": ["homepage", "route-error", "fail-safe", "ssr"],
+      "related_bugs": ["bug-045"],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T10:47:00.000Z"
+    },
+    {
+      "id": "bug-047",
+      "timestamp": "2026-04-18T13:51:00.000Z",
+      "error_message": "Regression loop: homepage totals/discovery ve compare/detail yüzeyleri farklı kod yollarında tekrar tekrar kırılıyor (örn. 180 preview semantiğine drift).",
+      "file": "src/components/tefas/ScoredFundsTable.tsx, src/components/home/HomePageClient.tsx, src/components/compare/ComparePageClient.tsx, src/components/fund/FundDetailChart.tsx",
+      "root_cause": "Aynı semantik anlamlar (universe total, discovery surface state, comparison ready/degraded state) farklı katmanlarda yeniden türetilip override ediliyordu; tek owner yerine çoklu yorumlama ve fallback dalı vardı.",
+      "fix": "Freeze pass ile owner fonksiyonları eklendi (`resolveHomepageRegisteredTotal`, `deriveHomepageDiscoveryTableSurfaceState`, comparison summary invariant); UI artık bu typed owner'lar dışında semantik üretmiyor; ready/degraded uyumsuzlukları runtime invariant loglarıyla yakalanıyor.",
+      "tags": ["regression-loop", "homepage", "discovery", "compare", "freeze"],
+      "related_bugs": ["bug-042", "bug-045", "bug-046"],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T13:51:00.000Z"
+    },
+    {
+      "id": "bug-048",
+      "timestamp": "2026-04-18T17:45:00.000Z",
+      "error_message": "Production’da /api/funds/compare-series aralıklı HTTP 503; aynı anda /api/funds/compare çoğu zaman 200.",
+      "file": "src/app/api/funds/compare-series/route.ts",
+      "root_cause": "readServingComparePrimary tek Promise içinde world + compare inputs okur; route seviyesinde withTimeout ile kesilince tüm envelope düşüyor, servingWorld null sayılıyor ve detailBuildId boş kalıp serving_detail_build_missing 503 dönüyordu. Örnek gecikme ~1.5s (timeout bütçesine yakın).",
+      "fix": "readUiServingWorldMetaCached ile world + fundDetail buildId timeout’dan bağımsız alınır; compare primary zaman aşımında envelope payload null ile degrade edilir ama buildId yolu korunur. Compare route’ta sınırlı serving okuma + world meta ile servingWorld geri doldurma.",
+      "tags": ["compare-series", "production", "timeout", "serving-world"],
+      "related_bugs": [],
+      "occurrences": 1,
+      "last_seen": "2026-04-18T17:45:00.000Z"
     }
   ]
 }

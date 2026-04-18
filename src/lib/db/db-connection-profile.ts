@@ -246,7 +246,7 @@ export function resolvePrismaDatasourceUrl(): string {
       process.env.NODE_ENV === "development"
         ? "12"
         : isSupabasePooler
-          ? "3"
+          ? "1"
           : "5";
     const desired = limit || desiredDefault;
     const current = url.searchParams.get("connection_limit")?.trim();
@@ -260,7 +260,9 @@ export function resolvePrismaDatasourceUrl(): string {
     }
     const poolTimeout = Number(url.searchParams.get("pool_timeout") ?? "");
     if (!Number.isFinite(poolTimeout) || poolTimeout <= 0 || poolTimeout > 20) {
-      url.searchParams.set("pool_timeout", "15");
+      // Serverless altında uzun checkout beklemesi request kuyruk etkisi üretir.
+      // Daha kısa timeout ile hızlı degrade + fallback yolu tercih edilir.
+      url.searchParams.set("pool_timeout", "8");
     }
 
     const runtimeKey = getPrismaRuntimeDatabaseUrlEnvKey();

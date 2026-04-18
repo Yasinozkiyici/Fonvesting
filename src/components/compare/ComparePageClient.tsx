@@ -50,6 +50,7 @@ type ComparePayloadMeta = {
   failureClass?: string | null;
   surfaceState?: CompareSurfaceState;
   servingWorld?: { worldId?: string | null; worldAligned?: boolean } | null;
+  freshness?: { state?: "fresh" | "stale_ok" | "degraded_outdated"; asOf?: string | null } | null;
 };
 
 type Row = CompareBoundaryFundRow;
@@ -677,6 +678,12 @@ export function ComparePageClient() {
     }
     if (compareMeta.servingWorld?.worldAligned === false) {
       return "Karşılaştırma farklı serving build'lerinden gelebilir; değerler geçici olarak hizasız olabilir.";
+    }
+    if (compareMeta.freshness?.state === "degraded_outdated") {
+      return "Karşılaştırma verisi güncellik eşiğini aştı; sonuçları son veri gelene kadar ihtiyatlı kullanın.";
+    }
+    if (compareMeta.freshness?.state === "stale_ok") {
+      return "Karşılaştırma verisi hafif gecikmeli olabilir.";
     }
     return null;
   }, [compareMeta, surfaceState]);

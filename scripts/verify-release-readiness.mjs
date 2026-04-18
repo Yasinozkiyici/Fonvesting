@@ -44,6 +44,16 @@ const previewUrl = String(process.env.RELEASE_PREVIEW_URL || "").trim();
 const productionUrl = String(process.env.RELEASE_PRODUCTION_URL || "").trim();
 const requirePreview = process.env.RELEASE_REQUIRE_PREVIEW !== "0";
 const requireProduction = process.env.RELEASE_REQUIRE_PRODUCTION !== "0";
+const targetOnly = process.env.RELEASE_TARGET_ONLY === "1";
+
+function isValidHttpUrl(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * @param {string} command
@@ -69,32 +79,34 @@ function run(command, args, env = process.env) {
   });
 }
 
-const steps = [
-  {
-    id: "typecheck",
-    command: "pnpm",
-    args: ["exec", "tsc", "--noEmit"],
-    env: withSmokeAuthEnv(process.env),
-    channel: "local",
-    required: true,
-  },
-  {
-    id: "unit",
-    command: "pnpm",
-    args: ["run", "test:unit"],
-    env: withSmokeAuthEnv(process.env),
-    channel: "local",
-    required: true,
-  },
-  {
-    id: "prodlike_ui",
-    command: "pnpm",
-    args: ["run", "smoke:ui:prodlike"],
-    env: withSmokeAuthEnv(process.env),
-    channel: "local",
-    required: true,
-  },
-];
+const steps = targetOnly
+  ? []
+  : [
+      {
+        id: "typecheck",
+        command: "pnpm",
+        args: ["exec", "tsc", "--noEmit"],
+        env: withSmokeAuthEnv(process.env),
+        channel: "local",
+        required: true,
+      },
+      {
+        id: "unit",
+        command: "pnpm",
+        args: ["run", "test:unit"],
+        env: withSmokeAuthEnv(process.env),
+        channel: "local",
+        required: true,
+      },
+      {
+        id: "prodlike_ui",
+        command: "pnpm",
+        args: ["run", "smoke:ui:prodlike"],
+        env: withSmokeAuthEnv(process.env),
+        channel: "local",
+        required: true,
+      },
+    ];
 
 if (previewUrl) {
   steps.push({
@@ -160,6 +172,12 @@ if (productionUrl) {
 
 const failures = [];
 const advisories = [];
+const sectionSummary = {
+  dbConnectionHealth: "unknown",
+  freshnessContractHealth: "unknown",
+  routeRuntimeCorrectness: "unknown",
+  latencyPerfAdvisory: "unknown",
+};
 
 for (const step of steps) {
   console.log(`\n[release-readiness] running step=${step.id}`);
@@ -191,10 +209,55 @@ for (const step of steps) {
   }
 }
 
+function markSectionState(section, next) {
+  const priority = { unknown: 0, ok: 1, advisory: 2, failed: 3 };
+  if (priority[next] > priority[sectionSummary[section]]) {
+    sectionSummary[section] = next;
+  }
+}
+
+for (const failure of failures) {
+  if (failure.step.includes("data")) {
+    markSectionState("freshnessContractHealth", "failed");
+    markSectionState("dbConnectionHealth", "failed");
+  }
+  if (failure.step.includes("routes") || failure.step.includes("ui")) {
+    markSectionState("routeRuntimeCorrectness", "failed");
+  }
+}
+for (const advisory of advisories) {
+  if (advisory.step.includes("latency")) {
+    markSectionState("latencyPerfAdvisory", "advisory");
+  }
+  if (advisory.step.includes("data")) {
+    markSectionState("freshnessContractHealth", "advisory");
+  }
+}
+if (sectionSummary.dbConnectionHealth === "unknown") {
+  markSectionState("dbConnectionHealth", failures.length > 0 ? "failed" : "ok");
+}
+if (sectionSummary.freshnessContractHealth === "unknown") {
+  markSectionState("freshnessContractHealth", failures.length > 0 ? "failed" : "ok");
+}
+if (sectionSummary.routeRuntimeCorrectness === "unknown") {
+  markSectionState("routeRuntimeCorrectness", failures.some((x) => x.step.includes("routes") || x.step.includes("ui")) ? "failed" : "ok");
+}
+if (sectionSummary.latencyPerfAdvisory === "unknown") {
+  markSectionState("latencyPerfAdvisory", "ok");
+}
+
 if (requirePreview && !previewUrl) {
   advisories.push({
     step: "preview_ui",
     reason: "preview_url_missing_informational",
+    code: -1,
+  });
+}
+if (previewUrl && !isValidHttpUrl(previewUrl)) {
+  failures.push({
+    step: "preview_url_validation",
+    decision: ReleaseDecision.NO_GO,
+    reason: "preview_url_invalid",
     code: -1,
   });
 }
@@ -207,12 +270,24 @@ if (requireProduction && !productionUrl) {
     code: -1,
   });
 }
+if (productionUrl && !isValidHttpUrl(productionUrl)) {
+  failures.push({
+    step: "production_url_validation",
+    decision: ReleaseDecision.NO_GO,
+    reason: "production_url_invalid",
+    code: -1,
+  });
+}
 
 const hasBlocked = failures.some((item) => item.decision === ReleaseDecision.RELEASE_BLOCKED);
 const hasNoGo = failures.some((item) => item.decision === ReleaseDecision.NO_GO);
 const finalDecision = hasBlocked ? ReleaseDecision.RELEASE_BLOCKED : hasNoGo ? ReleaseDecision.NO_GO : ReleaseDecision.GO;
 
 console.log("\n=== Release Readiness Report ===");
+console.log(
+  `[release-readiness] mode=${targetOnly ? "target_only" : "full"} ` +
+    `has_preview_target=${previewUrl ? 1 : 0} has_production_target=${productionUrl ? 1 : 0}`
+);
 for (const failure of failures) {
   console.log(
     `[release-readiness] step=${failure.step} decision=${failure.decision} reason=${failure.reason} exit_code=${failure.code}`
@@ -224,6 +299,12 @@ for (const advisory of advisories) {
   );
 }
 console.log(`[release-readiness] final_decision=${finalDecision}`);
+console.log(
+  `[release-readiness:sections] db_connection_health=${sectionSummary.dbConnectionHealth} ` +
+    `freshness_contract_health=${sectionSummary.freshnessContractHealth} ` +
+    `route_runtime_correctness=${sectionSummary.routeRuntimeCorrectness} ` +
+    `latency_perf_advisory=${sectionSummary.latencyPerfAdvisory}`
+);
 
 if (finalDecision === ReleaseDecision.RELEASE_BLOCKED) {
   process.exitCode = 2;

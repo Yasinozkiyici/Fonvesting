@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronUp,
   ChevronDown,
@@ -333,6 +333,7 @@ export default function ScoredFundsTable({
     freshness: "unknown",
     request: "unknown",
   });
+  const [lastFreshnessState, setLastFreshnessState] = useState<"fresh" | "stale_ok" | "degraded_outdated" | "unknown">("unknown");
   const [bootstrapSource, setBootstrapSource] = useState<BootstrapSource>(() => {
     if (seededInitialData && seededInitialData.funds.length > 0) return "ssr";
     return "bootstrap_fallback";
@@ -347,13 +348,14 @@ export default function ScoredFundsTable({
   const [categories, setCategories] = useState<Array<{ code: string; name: string }>>(seededCategories);
   const [mobileSheet, setMobileSheet] = useState<null | "filters" | "sort">(null);
   const prevRankingModeRef = useRef<RankingMode | null>(null);
-  const deferredSearch = useDeferredValue(search.trim());
+  /** Arama metninde useDeferredValue kullanma: bir kare gecikmede q:none kapsamı + boş deferred filtre, kod aramasında (ör. ZP8) satırın kaybolmasına yol açıyor. */
+  const activeQuery = search.trim();
   const pageSize = 50;
   const currentFetchScopeKey = buildScoresScopeKey(
     rankingMode,
     enableCategoryFilter ? category : "",
     activeTheme,
-    deferredSearch
+    activeQuery
   );
   const payloadScopeKeyForCurrentMode = modePayloadScopes[rankingMode] ?? null;
   const payloadForCurrentMode = modePayloads[rankingMode] ?? null;
@@ -365,7 +367,9 @@ export default function ScoredFundsTable({
   const lastGoodSameScopeBase =
     Boolean(lastGoodPayload && lastGoodPayload.funds.length > 0) &&
     lastGoodScopeKey != null &&
-    stripScoresScopeQuerySuffix(lastGoodScopeKey) === stripScoresScopeQuerySuffix(currentFetchScopeKey);
+    stripScoresScopeQuerySuffix(lastGoodScopeKey) === stripScoresScopeQuerySuffix(currentFetchScopeKey) &&
+    // Arama varken q: önekini strip edip SSR/lastGood önizleme satırlarına düşmek, sunucu q= ile bulunan kodu (ör. ZP8) tabloda göstermez.
+    !search.trim();
   const displayPayload =
     payloadForCurrentScope ??
     (lastGoodMatchesScope ? lastGoodPayload : null) ??
@@ -564,7 +568,7 @@ export default function ScoredFundsTable({
     setDegradedNotice(null);
     const timeoutMs = scoresFetchTimeoutForMode(rankingMode);
     // Tema / kategori süzgeci istemcide uygulanıyorsa dar limit üst sıradaki fonlarda kalır → yanlış boş liste.
-    const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category)) || Boolean(deferredSearch);
+    const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category)) || Boolean(activeQuery);
     const modeLimitParam = activeTheme
       ? "&limit=2500"
       : rankingMode === "HIGH_RETURN" && !needsWideScoresPayload
@@ -575,7 +579,7 @@ export default function ScoredFundsTable({
         ? `&category=${encodeURIComponent(category.trim())}`
         : "";
     const themeParam = activeTheme ? `&theme=${encodeURIComponent(activeTheme)}` : "";
-    const queryParam = deferredSearch ? `&q=${encodeURIComponent(deferredSearch)}` : "";
+    const queryParam = activeQuery ? `&q=${encodeURIComponent(activeQuery)}` : "";
     const requestUrl = `/api/funds/scores?mode=${rankingMode}${categoryParam}${themeParam}${queryParam}${modeLimitParam}`;
     const startedAt = Date.now();
     const previousRowsBeforeFetch = modePayloadsRef.current[rankingMode]?.funds.length ?? 0;
@@ -595,12 +599,12 @@ export default function ScoredFundsTable({
       );
     };
     console.info(
-      `[scores-table] transition_requested mode=${rankingMode} category=${category || "all"} q=${deferredSearch ? "1" : "0"} ` +
+      `[scores-table] transition_requested mode=${rankingMode} category=${category || "all"} q=${activeQuery ? "1" : "0"} ` +
         `intent=${activeIntent ?? "none"} theme=${activeTheme ?? "none"} timeout_ms=${timeoutMs} url=${requestUrl}`
     );
     console.info(
       `[discover-filter-input] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
-        `intent=${activeIntent ?? "none"} q=${deferredSearch ? "1" : "0"} server_url=${requestUrl}`
+        `intent=${activeIntent ?? "none"} q=${activeQuery ? "1" : "0"} server_url=${requestUrl}`
     );
 
     let scoresResolved = false;
@@ -688,6 +692,14 @@ export default function ScoredFundsTable({
           freshness: headerValue(headers, "x-discovery-freshness-health") || "unknown",
           request: headerValue(headers, "x-discovery-request-health") || "unknown",
         });
+        const freshnessStateHeader = headerValue(headers, "x-data-freshness-state");
+        setLastFreshnessState(
+          freshnessStateHeader === "fresh" ||
+            freshnessStateHeader === "stale_ok" ||
+            freshnessStateHeader === "degraded_outdated"
+            ? freshnessStateHeader
+            : "unknown"
+        );
         setLastScoresMeta({
           degraded: degradedHeader,
           source: sourceHeader,
@@ -836,7 +848,7 @@ export default function ScoredFundsTable({
         setBootstrapAttemptCount(0);
         setError(cause instanceof Error ? cause.message : "Veri yüklenemedi");
         console.error(
-          `[scores-table] transition_failed mode=${rankingMode} category=${category || "all"} q=${deferredSearch ? "1" : "0"} ` +
+          `[scores-table] transition_failed mode=${rankingMode} category=${category || "all"} q=${activeQuery ? "1" : "0"} ` +
             `timeout_like=${timeoutLike ? 1 : 0} prev_rows=${previousRows} fallback_rows=${fallbackRows}`,
           cause
         );
@@ -858,7 +870,7 @@ export default function ScoredFundsTable({
     bootstrapRetryTick,
     category,
     currentFetchScopeKey,
-    deferredSearch,
+    activeQuery,
     enableCategoryFilter,
     initialDataIsPartial,
     initialMode,
@@ -1000,7 +1012,7 @@ export default function ScoredFundsTable({
         fund.category?.code !== category
       )
         return false;
-      return fundSearchMatches(deferredSearch, [fund.code, fund.name, fund.shortName ?? null]);
+      return fundSearchMatches(activeQuery, [fund.code, fund.name, fund.shortName ?? null]);
     });
 
     return [...list].sort((a, b) => {
@@ -1051,7 +1063,7 @@ export default function ScoredFundsTable({
     });
   }, [
     category,
-    deferredSearch,
+    activeQuery,
     enableCategoryFilter,
     serverScopedByCategory,
     sortDir,
@@ -1090,12 +1102,12 @@ export default function ScoredFundsTable({
     console.info(
       `[discover-client-filter] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
         `server_rows=${displayPayload?.funds.length ?? 0} theme_scoped_rows=${themeScopedFunds.length} ` +
-        `route_scoped_rows=${routeScopedMatchCount} client_filtered_count=${filteredFunds.length} q=${deferredSearch ? "1" : "0"}`
+        `route_scoped_rows=${routeScopedMatchCount} client_filtered_count=${filteredFunds.length} q=${activeQuery ? "1" : "0"}`
     );
   }, [
     activeTheme,
     category,
-    deferredSearch,
+    activeQuery,
     displayPayload?.funds.length,
     filteredFunds.length,
     rankingMode,
@@ -1128,7 +1140,7 @@ export default function ScoredFundsTable({
     else if (lastScoresMeta.emptyResult === "valid") reason = "valid_empty";
     else if (hasFilters) reason = "filtered_empty";
     else reason = "unknown_empty";
-    const logKey = `${reason}|${rankingMode}|${category || "all"}|${deferredSearch ? "1" : "0"}`;
+    const logKey = `${reason}|${rankingMode}|${category || "all"}|${activeQuery ? "1" : "0"}`;
     if (lastEmptyReasonRef.current === logKey) return;
     lastEmptyReasonRef.current = logKey;
     console.info(
@@ -1140,7 +1152,7 @@ export default function ScoredFundsTable({
   }, [
     bootstrapFallbackActive,
     category,
-    deferredSearch,
+    activeQuery,
     error,
     hasFilters,
     lastScoresMeta.degraded,
@@ -1289,7 +1301,7 @@ export default function ScoredFundsTable({
     const filteredHint = (() => {
       if (!hasFilters) return null;
       const parts: string[] = [];
-      if (deferredSearch) parts.push("arama");
+      if (activeQuery) parts.push("arama");
       if (enableCategoryFilter && category) parts.push("kategori");
       if (activeIntentDef) parts.push("görünüm");
       if (activeThemeDef) parts.push("tema");
@@ -1306,7 +1318,7 @@ export default function ScoredFundsTable({
     activeIntentDef,
     activeThemeDef,
     category,
-    deferredSearch,
+    activeQuery,
     enableCategoryFilter,
     filteredFunds.length,
     hasFilters,
@@ -1383,6 +1395,27 @@ export default function ScoredFundsTable({
                     <span className="table-quickstart-meta ml-1">fon evreni</span>
                   </span>
                 </p>
+              ) : null}
+              {!loading && !error && lastFreshnessState !== "unknown" ? (
+                <span
+                  className="mt-0.5 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                  style={{
+                    color:
+                      lastFreshnessState === "fresh"
+                        ? "var(--success-muted)"
+                        : lastFreshnessState === "stale_ok"
+                          ? "var(--text-secondary)"
+                          : "var(--danger-muted)",
+                    borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+                    background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+                  }}
+                >
+                  {lastFreshnessState === "fresh"
+                    ? "Fresh data"
+                    : lastFreshnessState === "stale_ok"
+                      ? "Slightly stale"
+                      : "Data outdated"}
+                </span>
               ) : null}
               {!loading && !error && resultCountCaption ? (
                 <span

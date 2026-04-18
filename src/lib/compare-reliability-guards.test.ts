@@ -15,3 +15,12 @@ test("compare route exposes compare health headers", () => {
   assert.match(source, /X-Compare-Health/);
   assert.match(source, /X-Compare-Trust-Final/);
 });
+
+test("compare path uses request-level trace helper", () => {
+  const inst = fs.readFileSync(path.resolve("src/lib/compare-path-instrumentation.ts"), "utf8");
+  assert.match(inst, /X-Compare-Path-Trace-Id/);
+  const compare = fs.readFileSync(path.resolve("src/app/api/funds/compare/route.ts"), "utf8");
+  const series = fs.readFileSync(path.resolve("src/app/api/funds/compare-series/route.ts"), "utf8");
+  assert.match(compare, /createComparePathTrace/);
+  assert.match(series, /createComparePathTrace/);
+});

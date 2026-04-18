@@ -354,6 +354,12 @@ export function HomePageClient({
       setModeSpotlightPayload(null);
       return;
     }
+    const initialRows = initialScoresPreview?.funds.length ?? 0;
+    if (initialRows >= 12) {
+      // Avoid visible late pop-in when SSR already has enough rows for spotlight cards.
+      setModeSpotlightPayload(null);
+      return;
+    }
     const ac = new AbortController();
     const hasScopedCategory = effectiveCategory.trim().length > 0;
     const spotlightLimitParam = effectiveTheme ? "&limit=2500" : hasScopedCategory ? "" : "&limit=300";
@@ -391,7 +397,7 @@ export function HomePageClient({
         }
       });
     return () => ac.abort();
-  }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme]);
+  }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme, initialScoresPreview]);
 
   const estimatedUniverseLabel = useMemo(() => {
     if (!discoveryActive) return null;

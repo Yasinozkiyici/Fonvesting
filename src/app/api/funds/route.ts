@@ -438,6 +438,24 @@ export async function GET(req: NextRequest) {
           },
         });
       }
+      const servingEmptyRepair = await buildServingFundsFallback(page, pageSize);
+      if (servingEmptyRepair.items.length > 0) {
+        state.cache.set(cacheKey, { payload: servingEmptyRepair, updatedAt: Date.now() });
+        return NextResponse.json(servingEmptyRepair, {
+          headers: {
+            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+            "X-Funds-Cache": "serving-empty-repair",
+            "X-Funds-Source": "serving",
+            "X-Funds-Degraded": "empty_primary_repaired",
+            "X-Db-Failure-Class": "none",
+            "X-Serving-World-Id": servingWorld?.worldId ?? "none",
+            "X-Serving-World-Aligned": servingWorld?.worldAligned ? "1" : "0",
+            "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",
+            ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+            ...dbHeaders,
+          },
+        });
+      }
     }
     state.cache.set(cacheKey, { payload, updatedAt: Date.now() });
 

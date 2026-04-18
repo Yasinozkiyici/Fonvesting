@@ -2,14 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl, readCompareDataVersion } from "@/lib/data-freshness";
 import { startOfUtcDay } from "@/lib/trading-calendar-tr";
 import { fetchKiyasMacroBuckets } from "@/lib/services/fund-detail-kiyas.service";
-import { normalizeBaseCode, parseCompareCodes } from "@/lib/services/compare-series-resolution";
+import {
+  normalizeBaseCode,
+  parseCompareCodes,
+  readServingPayloadForCompareSeries,
+} from "@/lib/services/compare-series-resolution";
 import type { FundDetailCoreServingPayload } from "@/lib/services/fund-detail-core-serving.service";
 import { buildCategorySeriesFromServingPayloads, normalizeCompareHistoryDate, pointsFromServingPayload } from "@/lib/compare-series-category";
 import { optionalReferenceDegradation } from "@/lib/operational-hardening";
 import { enforceServingRouteTrust, readServingComparePrimary, servingHeaders } from "@/lib/data-platform/read-side-serving";
+import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
 import { isServingStrictModeEnabled, servingStrictHeaders } from "@/lib/data-platform/serving-strict-mode";
 import { prisma } from "@/lib/prisma";
 import { toServingDetailMap } from "@/lib/data-platform/compare-series-serving";
+import { deriveFreshnessContract } from "@/lib/freshness-contract";
+import { createComparePathTrace } from "@/lib/compare-path-instrumentation";
+import { getFundDetailCoreServingCached } from "@/lib/services/fund-detail-core-serving.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,6 +38,11 @@ const COMPARE_SERIES_MACRO_TIMEOUT_COOLDOWN_MS = Number(
 );
 const MIN_BASE_SERIES_POINTS = 30;
 const MIN_SECONDARY_SERIES_POINTS = 8;
+const COMPARE_SERIES_FRESHNESS_FRESH_MS = Number(process.env.COMPARE_SERIES_FRESHNESS_FRESH_MS ?? 6 * 60 * 60_000);
+const COMPARE_SERIES_FRESHNESS_STALE_MS = Number(process.env.COMPARE_SERIES_FRESHNESS_STALE_MS ?? 36 * 60 * 60_000);
+const COMPARE_SERIES_DETAIL_DB_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_DETAIL_DB_TIMEOUT_MS ?? "1600");
+const COMPARE_SERIES_DETAIL_CODE_READ_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_DETAIL_CODE_READ_TIMEOUT_MS ?? "1200");
+const COMPARE_SERIES_SERVING_COMPARE_TIMEOUT_MS = Number(process.env.COMPARE_SERIES_SERVING_COMPARE_TIMEOUT_MS ?? "1400");
 
 type Point = { t: number; v: number };
 type MacroBuckets = Awaited<ReturnType<typeof fetchKiyasMacroBuckets>>;
@@ -70,6 +83,30 @@ type CompareSeriesBaseError = {
   error: "base_not_found";
   failureClass: string[];
 };
+
+async function readServingDetailsByCode(
+  codes: string[]
+): Promise<Map<string, FundDetailCoreServingPayload>> {
+  const reads = await Promise.all(
+    codes.map(async (code) => {
+      try {
+        const read = await withTimeout(
+          readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached),
+          COMPARE_SERIES_DETAIL_CODE_READ_TIMEOUT_MS,
+          "compare_series_detail_code"
+        );
+        return [code, read.payload] as const;
+      } catch {
+        return [code, null] as const;
+      }
+    })
+  );
+  const map = new Map<string, FundDetailCoreServingPayload>();
+  for (const [code, payload] of reads) {
+    if (payload) map.set(code, payload);
+  }
+  return map;
+}
 
 type CompareSeriesOptionalState = { macroCooldownUntil: number };
 
@@ -246,78 +283,194 @@ async function getCompareSeriesPayload(input: {
 }
 
 export async function GET(req: NextRequest) {
+  const trace = createComparePathTrace("compare-series");
   try {
     const strictMode = isServingStrictModeEnabled(req);
-    const servingCompare = await readServingComparePrimary();
-    const servingWorld = servingCompare.world;
+    const w0 = performance.now();
+    const servingWorldMeta = await readUiServingWorldMetaCached();
+    trace.record(
+      "serving_world_meta",
+      Math.round(performance.now() - w0),
+      servingWorldMeta.buildIds.fundDetail ? "ok" : "empty"
+    );
+    type ComparePrimaryEnv = Awaited<ReturnType<typeof readServingComparePrimary>>;
+    let envelope: ComparePrimaryEnv | null = null;
+    {
+      const s0 = performance.now();
+      try {
+        envelope = await withTimeout(
+          readServingComparePrimary(),
+          COMPARE_SERIES_SERVING_COMPARE_TIMEOUT_MS,
+          "compare_series_serving_compare_primary"
+        );
+        const ms = Math.round(performance.now() - s0);
+        trace.record("serving_compare_primary", ms, envelope.payload ? "ok" : "empty");
+      } catch (e) {
+        const ms = Math.round(performance.now() - s0);
+        trace.record(
+          "serving_compare_primary",
+          ms,
+          isTimeoutLike(e) ? "timeout" : "error",
+          isTimeoutLike(e) ? "db_or_serving_read" : undefined
+        );
+        envelope = null;
+      }
+    }
+    const servingCompare: ComparePrimaryEnv =
+      envelope ??
+      ({
+        world: servingWorldMeta,
+        payload: null,
+        trust: {
+          trustAsFinal: false,
+          degradedKind: "serving_payload_missing",
+          degradedReason: "compare_primary_envelope_unavailable",
+        },
+      } satisfies ComparePrimaryEnv);
+    const servingWorld = servingCompare.world ?? servingWorldMeta;
     const baseCode = normalizeBaseCode(req.nextUrl.searchParams.get("base"));
-    if (!baseCode) return NextResponse.json({ error: "base_required" }, { status: 400 });
-    if (!ACTIVE_FUND_CODE_RE.test(baseCode)) return NextResponse.json({ error: "base_not_found" }, { status: 404 });
-    const compareCodes = parseCompareCodes(req.nextUrl.searchParams.get("codes"), { maxCodes: MAX_CODES, codeRe: CODE_RE }).filter((c) => c !== baseCode);
-    const compareUniverseCodes = new Set((servingCompare.payload?.funds ?? []).map((item) => item.code.trim().toUpperCase()));
-    if (servingCompare.payload && !compareUniverseCodes.has(baseCode)) {
+    if (!baseCode) {
+      return NextResponse.json(
+        { error: "base_required" },
+        {
+          status: 400,
+          headers: trace.finish({ httpStatus: 400, classification: "client_base_required" }),
+        }
+      );
+    }
+    if (!ACTIVE_FUND_CODE_RE.test(baseCode)) {
       return NextResponse.json(
         { error: "base_not_found" },
         {
           status: 404,
-          headers: servingHeaders({
-            world: servingWorld,
-            trust: { trustAsFinal: false, degradedKind: "serving_payload_invalid", degradedReason: "base_missing_in_serving_compare_inputs" },
-            routeSource: "serving_fund_detail",
-            fallbackUsed: false,
-          }),
+          headers: trace.finish({ httpStatus: 404, classification: "client_base_invalid" }),
+        }
+      );
+    }
+    const compareCodes = parseCompareCodes(req.nextUrl.searchParams.get("codes"), { maxCodes: MAX_CODES, codeRe: CODE_RE }).filter((c) => c !== baseCode);
+    const compareUniverseCodes = new Set((servingCompare?.payload?.funds ?? []).map((item) => item.code.trim().toUpperCase()));
+    if (servingCompare?.payload && !compareUniverseCodes.has(baseCode)) {
+      return NextResponse.json(
+        { error: "base_not_found" },
+        {
+          status: 404,
+          headers: {
+            ...trace.finish({ httpStatus: 404, classification: "base_missing_in_compare_universe" }),
+            ...servingHeaders({
+              world: servingWorld,
+              trust: { trustAsFinal: false, degradedKind: "serving_payload_invalid", degradedReason: "base_missing_in_serving_compare_inputs" },
+              routeSource: "serving_fund_detail",
+              fallbackUsed: false,
+            }),
+          },
         }
       );
     }
     const unknownCompareCode = compareCodes.find((code) => !compareUniverseCodes.has(code));
-    await withTimeout(readCompareDataVersion(), COMPARE_SERIES_VERSION_TIMEOUT_MS, "compare_series_version").catch(() => null);
+    {
+      const v0 = performance.now();
+      await withTimeout(readCompareDataVersion(), COMPARE_SERIES_VERSION_TIMEOUT_MS, "compare_series_version").catch(() => null);
+      trace.record("compare_data_version", Math.round(performance.now() - v0), "ok");
+    }
     const detailBuildId = servingWorld?.buildIds.fundDetail ?? null;
     if (!detailBuildId) {
       return NextResponse.json(
         { error: "serving_detail_build_missing" },
         {
           status: 503,
-          headers: servingHeaders({
-            world: servingWorld,
-            trust: { trustAsFinal: false, degradedKind: "serving_world_misaligned", degradedReason: "fund_detail_build_missing" },
-            routeSource: "serving_fund_detail",
-            fallbackUsed: true,
-          }),
+          headers: {
+            ...trace.finish({ httpStatus: 503, classification: "detail_build_missing" }),
+            ...servingHeaders({
+              world: servingWorld,
+              trust: { trustAsFinal: false, degradedKind: "serving_world_misaligned", degradedReason: "fund_detail_build_missing" },
+              routeSource: "serving_fund_detail",
+              fallbackUsed: true,
+            }),
+          },
         }
       );
     }
 
     const requestedCodes = [...new Set([baseCode, ...compareCodes].map((code) => code.trim().toUpperCase()))];
-    const detailRows = await prisma.servingFundDetail.findMany({
-      where: { buildId: detailBuildId, fundCode: { in: requestedCodes } },
-      select: { fundCode: true, payload: true },
-    });
-    const detailByCode = toServingDetailMap(detailRows);
+    const d0 = performance.now();
+    const detailRows = await withTimeout(
+      prisma.servingFundDetail.findMany({
+        where: { buildId: detailBuildId, fundCode: { in: requestedCodes } },
+        select: { fundCode: true, payload: true },
+      }),
+      COMPARE_SERIES_DETAIL_DB_TIMEOUT_MS,
+      "compare_series_detail_rows"
+    ).catch(() => []);
+    trace.record(
+      "detail_db_requested_codes",
+      Math.round(performance.now() - d0),
+      detailRows.length > 0 ? "ok" : "empty"
+    );
+    let detailByCode = toServingDetailMap(detailRows);
+    if (detailByCode.size === 0) {
+      // Live pressure guard: fallback to per-code serving reads instead of hard timeout.
+      const f0 = performance.now();
+      detailByCode = await readServingDetailsByCode(requestedCodes);
+      trace.record(
+        "detail_per_code_fallback",
+        Math.round(performance.now() - f0),
+        detailByCode.size > 0 ? "ok" : "empty"
+      );
+    }
     const basePayload = detailByCode.get(baseCode);
     const categoryPeerCodes =
-      basePayload?.fund.categoryCode && servingCompare.payload
+      basePayload?.fund.categoryCode && servingCompare?.payload
         ? servingCompare.payload.funds
             .filter((item) => item.categoryCode === basePayload.fund.categoryCode)
             .map((item) => item.code.trim().toUpperCase())
             .filter((code) => code !== baseCode && !requestedCodes.includes(code))
             .slice(0, COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS)
         : [];
-    const categoryRows =
-      categoryPeerCodes.length > 0
-        ? await prisma.servingFundDetail.findMany({
-            where: { buildId: detailBuildId, fundCode: { in: categoryPeerCodes } },
-            select: { fundCode: true, payload: true },
-          })
-        : [];
+    let categoryRows: typeof detailRows = [];
+    if (categoryPeerCodes.length > 0) {
+      const c0 = performance.now();
+      categoryRows = await withTimeout(
+        prisma.servingFundDetail.findMany({
+          where: { buildId: detailBuildId, fundCode: { in: categoryPeerCodes } },
+          select: { fundCode: true, payload: true },
+        }),
+        COMPARE_SERIES_DETAIL_DB_TIMEOUT_MS,
+        "compare_series_category_rows"
+      ).catch(() => []);
+      trace.record(
+        "detail_db_category_peers",
+        Math.round(performance.now() - c0),
+        categoryRows.length > 0 ? "ok" : "empty"
+      );
+    } else {
+      trace.record("detail_db_category_peers", 0, "skipped");
+    }
     const categoryDetails = [...toServingDetailMap(categoryRows).values()];
+    const p0 = performance.now();
     const result = await getCompareSeriesPayload({
       baseCode,
       compareCodes,
       detailByCode,
       categoryDetails,
     });
+    trace.record(
+      "series_payload_build",
+      Math.round(performance.now() - p0),
+      "error" in result ? "error" : result.degraded ? "degraded" : "ok"
+    );
     if ("error" in result) {
-      return NextResponse.json({ error: result.error }, { status: result.error === "base_not_found" ? 404 : 503 });
+      const st = result.error === "base_not_found" ? 404 : 503;
+      return NextResponse.json(
+        { error: result.error },
+        {
+          status: st,
+          headers: trace.finish({
+            httpStatus: st,
+            classification: result.error === "base_not_found" ? "base_payload_missing" : "series_build_failed",
+            detailSource: result.error,
+          }),
+        }
+      );
     }
 
     const routeTrust = enforceServingRouteTrust({
@@ -329,6 +482,12 @@ export async function GET(req: NextRequest) {
       fallbackReason: unknownCompareCode ? `unknown_compare:${unknownCompareCode}` : (result.degraded ? result.degradedSources.join(",") || "degraded_compare_series" : null),
     });
     const strictTrust = result.health.trustAsFinal && routeTrust.trustAsFinal && !unknownCompareCode;
+    const freshness = deriveFreshnessContract({
+      asOf: basePayload?.latestSnapshotDate ?? servingCompare?.payload?.snapshotAsOf ?? null,
+      freshTtlMs: COMPARE_SERIES_FRESHNESS_FRESH_MS,
+      staleTtlMs: COMPARE_SERIES_FRESHNESS_STALE_MS,
+      unknownAsDegraded: true,
+    });
     if (strictMode && (!strictTrust || result.degraded || Boolean(unknownCompareCode))) {
       const reason = unknownCompareCode ? `unknown_compare:${unknownCompareCode}` : ((routeTrust.degradedReason ?? result.degradedSources.join(",")) || "compare_series_not_final");
       return NextResponse.json(
@@ -336,6 +495,12 @@ export async function GET(req: NextRequest) {
         {
           status: 503,
           headers: {
+            ...trace.finish({
+              httpStatus: 503,
+              classification: "strict_violation",
+              failureClass: result.failureClass.join(","),
+              detailSource: reason,
+            }),
             ...servingHeaders({
               world: servingWorld,
               trust: { trustAsFinal: strictTrust, degradedKind: routeTrust.degradedKind, degradedReason: routeTrust.degradedReason },
@@ -353,6 +518,7 @@ export async function GET(req: NextRequest) {
         ...result.payload,
         meta: {
           servingWorld,
+          freshness,
           compareSeriesHealth: result.health.compareSeriesHealth,
           trustAsFinal: result.health.trustAsFinal && routeTrust.trustAsFinal && !unknownCompareCode,
         },
@@ -360,6 +526,12 @@ export async function GET(req: NextRequest) {
       {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+          ...trace.finish({
+            httpStatus: 200,
+            classification: result.health.compareSeriesHealth === "healthy" ? "ok" : "degraded_response",
+            failureClass: result.failureClass.length ? result.failureClass.join(",") : null,
+            rowSource: result.degradedSources.length ? result.degradedSources.join(",") : null,
+          }),
           ...(result.degraded ? { "X-Compare-Series-Degraded": "1" } : {}),
           ...(result.degradedSources.length ? { "X-Compare-Series-Degraded-Source": result.degradedSources.join(",") } : {}),
           ...(result.failureClass.length ? { "X-Compare-Series-Failure-Class": result.failureClass.join(",") } : {}),
@@ -367,6 +539,10 @@ export async function GET(req: NextRequest) {
           "X-Compare-Series-Base-Health": result.health.baseSeriesHealth,
           "X-Compare-Series-Health": result.health.compareSeriesHealth,
           "X-Compare-Series-Trust-Final": result.health.trustAsFinal ? "1" : "0",
+          "X-Data-Freshness-State": freshness.state,
+          "X-Data-Freshness-Reason": freshness.reason,
+          "X-Data-Freshness-As-Of": freshness.asOf ?? "unknown",
+          "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
           ...servingStrictHeaders({ enabled: strictMode, violated: false }),
           ...servingHeaders({
             world: servingWorld,
@@ -381,10 +557,30 @@ export async function GET(req: NextRequest) {
     if (isServingStrictModeEnabled(req)) {
       return NextResponse.json(
         { error: "serving_strict_violation", route: "/api/funds/compare-series", reason: "exception_requires_fallback" },
-        { status: 503, headers: servingStrictHeaders({ enabled: true, violated: true, reason: "exception_requires_fallback" }) }
+        {
+          status: 503,
+          headers: {
+            ...trace.finish({
+              httpStatus: 503,
+              classification: "strict_exception",
+              failureClass: "exception_requires_fallback",
+            }),
+            ...servingStrictHeaders({ enabled: true, violated: true, reason: "exception_requires_fallback" }),
+          },
+        }
       );
     }
     if (process.env.NODE_ENV !== "production") console.error("[funds/compare-series]", error);
-    return NextResponse.json({ error: "compare_series_failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "compare_series_failed" },
+      {
+        status: 500,
+        headers: trace.finish({
+          httpStatus: 500,
+          classification: "server_error",
+          failureClass: isTimeoutLike(error) ? "timeout" : "compare_series_failed",
+        }),
+      }
+    );
   }
 }
