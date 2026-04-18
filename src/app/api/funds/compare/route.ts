@@ -502,6 +502,16 @@ export async function GET(req: NextRequest) {
       );
       if (rows.length > 0) degradedSource = "registry";
     }
+    if (rows.length === 0) {
+      const coreT = performance.now();
+      rows = await loadRowsFromServing(codes).catch(() => []);
+      trace.record(
+        "core_serving_rows",
+        Math.round(performance.now() - coreT),
+        rows.length > 0 ? "ok" : "empty"
+      );
+      if (rows.length > 0) degradedSource = "core_serving_fallback";
+    }
 
     const activeRows = rows.filter((row) => row.isActive);
     const byCode = new Map(activeRows.map((row) => [row.code.trim().toUpperCase(), row]));
