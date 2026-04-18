@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const preferredRegion = ["fra1"];
 
-const MARKET_TIMEOUT_MS = parseEnvMs("MARKET_ROUTE_TIMEOUT_MS", 4_000, 1_200, 10_000);
+const MARKET_TIMEOUT_MS = parseEnvMs("MARKET_ROUTE_TIMEOUT_MS", 6_500, 1_200, 12_000);
 const MARKET_SNAPSHOT_FALLBACK_TIMEOUT_MS = parseEnvMs(
   "MARKET_SNAPSHOT_FALLBACK_TIMEOUT_MS",
   8_000,

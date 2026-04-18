@@ -356,45 +356,39 @@ export async function GET(req: NextRequest) {
       await withTimeout(readCompareDataVersion(), COMPARE_SERIES_VERSION_TIMEOUT_MS, "compare_series_version").catch(() => null);
       trace.record("compare_data_version", Math.round(performance.now() - v0), "ok");
     }
-    const detailBuildId = servingWorld?.buildIds.fundDetail ?? null;
-    if (!detailBuildId) {
-      return NextResponse.json(
-        { error: "serving_detail_build_missing" },
-        {
-          status: 503,
-          headers: {
-            ...trace.finish({ httpStatus: 503, classification: "detail_build_missing" }),
-            ...servingHeaders({
-              world: servingWorld,
-              trust: { trustAsFinal: false, degradedKind: "serving_world_misaligned", degradedReason: "fund_detail_build_missing" },
-              routeSource: "serving_fund_detail",
-              fallbackUsed: true,
-            }),
-          },
-        }
-      );
+    const requestedCodes = [...new Set([baseCode, ...compareCodes].map((code) => code.trim().toUpperCase()))];
+    const detailBuildId = servingWorld?.buildIds.fundDetail ?? servingWorld?.buildIds.fundList ?? null;
+    if (!servingWorld?.buildIds.fundDetail && detailBuildId) {
+      trace.record("detail_build_id_source", 0, "skipped", "fund_list_build_id_fallback");
+    } else if (!detailBuildId) {
+      trace.record("detail_build_id_source", 0, "empty", "per_code_detail_only");
     }
 
-    const requestedCodes = [...new Set([baseCode, ...compareCodes].map((code) => code.trim().toUpperCase()))];
     const d0 = performance.now();
-    const detailRows = await withTimeout(
-      prisma.servingFundDetail.findMany({
-        where: { buildId: detailBuildId, fundCode: { in: requestedCodes } },
-        select: { fundCode: true, payload: true },
-      }),
-      COMPARE_SERIES_DETAIL_DB_TIMEOUT_MS,
-      "compare_series_detail_rows"
-    ).catch(() => []);
+    const detailRows =
+      detailBuildId != null
+        ? await withTimeout(
+            prisma.servingFundDetail.findMany({
+              where: { buildId: detailBuildId, fundCode: { in: requestedCodes } },
+              select: { fundCode: true, payload: true },
+            }),
+            COMPARE_SERIES_DETAIL_DB_TIMEOUT_MS,
+            "compare_series_detail_rows"
+          ).catch(() => [])
+        : [];
     trace.record(
       "detail_db_requested_codes",
       Math.round(performance.now() - d0),
       detailRows.length > 0 ? "ok" : "empty"
     );
     let detailByCode = toServingDetailMap(detailRows);
-    if (detailByCode.size === 0) {
-      // Live pressure guard: fallback to per-code serving reads instead of hard timeout.
+    const missingAfterDb = requestedCodes.filter((code) => !detailByCode.has(code));
+    if (missingAfterDb.length > 0) {
       const f0 = performance.now();
-      detailByCode = await readServingDetailsByCode(requestedCodes);
+      const perCode = await readServingDetailsByCode(missingAfterDb);
+      for (const [code, payload] of perCode) {
+        if (payload) detailByCode.set(code, payload);
+      }
       trace.record(
         "detail_per_code_fallback",
         Math.round(performance.now() - f0),
@@ -411,7 +405,7 @@ export async function GET(req: NextRequest) {
             .slice(0, COMPARE_SERIES_CATEGORY_FALLBACK_MAX_FUNDS)
         : [];
     let categoryRows: typeof detailRows = [];
-    if (categoryPeerCodes.length > 0) {
+    if (categoryPeerCodes.length > 0 && detailBuildId != null) {
       const c0 = performance.now();
       categoryRows = await withTimeout(
         prisma.servingFundDetail.findMany({
@@ -427,9 +421,28 @@ export async function GET(req: NextRequest) {
         categoryRows.length > 0 ? "ok" : "empty"
       );
     } else {
-      trace.record("detail_db_category_peers", 0, "skipped");
+      trace.record(
+        "detail_db_category_peers",
+        0,
+        "skipped",
+        categoryPeerCodes.length === 0 ? undefined : "no_detail_build_id"
+      );
     }
-    const categoryDetails = [...toServingDetailMap(categoryRows).values()];
+    let categoryDetailByCode = toServingDetailMap(categoryRows);
+    const missingCategoryPeers = categoryPeerCodes.filter((code) => !categoryDetailByCode.has(code));
+    if (missingCategoryPeers.length > 0) {
+      const c1 = performance.now();
+      const perPeer = await readServingDetailsByCode(missingCategoryPeers);
+      for (const [code, payload] of perPeer) {
+        if (payload) categoryDetailByCode.set(code, payload);
+      }
+      trace.record(
+        "detail_category_per_code_fallback",
+        Math.round(performance.now() - c1),
+        categoryDetailByCode.size > 0 ? "ok" : "empty"
+      );
+    }
+    const categoryDetails = [...categoryDetailByCode.values()];
     const p0 = performance.now();
     const result = await getCompareSeriesPayload({
       baseCode,

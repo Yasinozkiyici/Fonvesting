@@ -12,7 +12,7 @@ import {
   servingHeaders,
   type ServingListRow,
 } from "@/lib/data-platform/read-side-serving";
-import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
+import { readUiServingWorldMetaCached, type UiServingWorldMeta } from "@/lib/domain/serving/ui-cutover-contract";
 import {
   isServingStrictModeEnabled,
   servingStrictHeaders,
@@ -65,6 +65,8 @@ type FundsPayload = {
 type FundsCacheEntry = {
   payload: FundsPayload;
   updatedAt: number;
+  /** Son başarılı serving yanıtından; cache hit'te DB world meta çağrısı yapmamak için. */
+  servingWorldForHeaders?: UiServingWorldMeta | null;
 };
 
 type FundsRuntimeState = {
@@ -326,7 +328,7 @@ export async function GET(req: NextRequest) {
     const state = getFundsRouteState();
     const cached = state.cache.get(cacheKey);
     if (!strictMode && cached && Date.now() - cached.updatedAt <= FUNDS_CACHE_TTL_MS) {
-      const servingWorld = await readUiServingWorldMetaCached().catch(() => null);
+      const servingWorld = cached.servingWorldForHeaders ?? null;
       return NextResponse.json(cached.payload, {
         headers: {
           "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
@@ -425,7 +427,7 @@ export async function GET(req: NextRequest) {
         sortDir,
       });
       if (scoresFallback.items.length > 0) {
-        state.cache.set(cacheKey, { payload: scoresFallback, updatedAt: Date.now() });
+        state.cache.set(cacheKey, { payload: scoresFallback, updatedAt: Date.now(), servingWorldForHeaders: servingWorld });
         return NextResponse.json(scoresFallback, {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
@@ -443,7 +445,11 @@ export async function GET(req: NextRequest) {
       }
       const servingEmptyRepair = await buildServingFundsFallback(page, pageSize);
       if (servingEmptyRepair.items.length > 0) {
-        state.cache.set(cacheKey, { payload: servingEmptyRepair, updatedAt: Date.now() });
+        state.cache.set(cacheKey, {
+          payload: servingEmptyRepair,
+          updatedAt: Date.now(),
+          servingWorldForHeaders: servingWorld,
+        });
         return NextResponse.json(servingEmptyRepair, {
           headers: {
             "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
@@ -460,7 +466,7 @@ export async function GET(req: NextRequest) {
         });
       }
     }
-    state.cache.set(cacheKey, { payload, updatedAt: Date.now() });
+    state.cache.set(cacheKey, { payload, updatedAt: Date.now(), servingWorldForHeaders: servingWorld });
 
     return NextResponse.json(
       {
