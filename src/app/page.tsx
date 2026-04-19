@@ -18,31 +18,24 @@ import { listFundDetailCoreServingRows } from "@/lib/services/fund-detail-core-s
 import type { ScoredResponse } from "@/types/scored-funds";
 import {
   augmentHomepageTrueUniverseWithFundTableCount,
-  buildHomepageTotalsEvidence,
-  formatHomepageTotalsEvidenceLog,
   resolveHomepageTrueUniverseTotal,
 } from "@/lib/homepage-fund-counts";
-import type { HomepageTotalsSemanticContract } from "@/lib/data-flow/contracts";
-import {
-  deriveHomepageDiscoverySurfaceState,
-  logHomepageDataFlowEvidence,
-  prepareHomepageCategoriesForClient,
-  prepareHomepageScoresPreviewAtBoundary,
-} from "@/lib/data-flow";
-import { readScoresUniverseTotal } from "@/lib/scores-response-counts";
+import { prepareHomepageCategoriesForClient, prepareHomepageScoresPreviewAtBoundary } from "@/lib/data-flow";
 import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 
 export const revalidate = LIVE_DATA_PAGE_REVALIDATE_SEC;
 export const dynamic = "force-dynamic";
 const HOME_SSR_SCORES_TIMEOUT_MS = parseEnvMs("HOME_SSR_SCORES_TIMEOUT_MS", 1_600, 1_200, 10_000);
 const HOME_SSR_SCORES_LIMIT = parseEnvMs("HOME_SSR_SCORES_LIMIT", 400, 60, 600);
-const HOME_SSR_CORE_ROWS_TIMEOUT_MS = parseEnvMs("HOME_SSR_CORE_ROWS_TIMEOUT_MS", 900, 250, 5_000);
+const HOME_SSR_CORE_ROWS_TIMEOUT_MS = parseEnvMs("HOME_SSR_CORE_ROWS_TIMEOUT_MS", 750, 200, 5_000);
 const HOME_SSR_CORE_ROWS_LIMIT = parseEnvMs("HOME_SSR_CORE_ROWS_LIMIT", 400, 30, 500);
-const HOME_SSR_CATEGORY_TIMEOUT_MS = parseEnvMs("HOME_SSR_CATEGORY_TIMEOUT_MS", 2_200, 250, 8_000);
-const HOME_SSR_MARKET_TIMEOUT_MS = parseEnvMs("HOME_SSR_MARKET_TIMEOUT_MS", 2_800, 250, 8_000);
+const HOME_SSR_CATEGORY_TIMEOUT_MS = parseEnvMs("HOME_SSR_CATEGORY_TIMEOUT_MS", 1_200, 200, 8_000);
+const HOME_SSR_MARKET_TIMEOUT_MS = parseEnvMs("HOME_SSR_MARKET_TIMEOUT_MS", 1_500, 200, 8_000);
 const HOME_SSR_FUND_COUNT_TIMEOUT_MS = parseEnvMs("HOME_SSR_FUND_COUNT_TIMEOUT_MS", 2_200, 400, 8_000);
-// Launch-readiness için ana sayfada gerçek evren/özet metriklerini SSR'da zorunlu yükle.
-const HOME_SSR_DB_SCORES_ENABLED = true;
+/** Varsayılan kapalı: SSR ilk boyayı hızlandırır; tam skor evreni istemci `/api/funds/scores` ile yüklenir. Açmak için `HOME_SSR_DB_SCORES=1`. */
+const HOME_SSR_DB_SCORES_ENABLED = process.env.HOME_SSR_DB_SCORES === "1";
+/** Varsayılan kapalı: aktif fon sayımı (Prisma) SSR’ı geciktirmesin. Açmak için `HOME_SSR_FUND_COUNT_AUGMENT=1`. */
+const HOME_SSR_FUND_COUNT_AUGMENT_ENABLED = process.env.HOME_SSR_FUND_COUNT_AUGMENT === "1";
 const HOME_SSR_MARKET_ENABLED = true;
 
 function parseEnvMs(name: string, fallback: number, min: number, max: number): number {
@@ -157,11 +150,15 @@ function categoriesFromServingRows(servingRows: HomeServingRows): Array<{ code: 
 
 function deriveMarketSummaryFromServingRows(servingRows: HomeServingRows): MarketSnapshotSummaryPayload | null {
   if (servingRows.rows.length === 0) return null;
-  const totalPortfolioSize = servingRows.rows.reduce((sum, row) => sum + (Number.isFinite(row.portfolioSize) ? row.portfolioSize : 0), 0);
-  const totalInvestorCount = servingRows.rows.reduce((sum, row) => sum + (Number.isFinite(row.investorCount) ? row.investorCount : 0), 0);
-  const returns = servingRows.rows
-    .map((row) => row.dailyReturn)
-    .filter((value) => Number.isFinite(value));
+  const totalPortfolioSize = servingRows.rows.reduce(
+    (sum, row) => sum + (Number.isFinite(row.portfolioSize) ? row.portfolioSize : 0),
+    0
+  );
+  const totalInvestorCount = servingRows.rows.reduce(
+    (sum, row) => sum + (Number.isFinite(row.investorCount) ? row.investorCount : 0),
+    0
+  );
+  const returns = servingRows.rows.map((row) => row.dailyReturn).filter((value) => Number.isFinite(value));
   const avgDailyReturn = returns.length > 0 ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
   const advancers = returns.filter((value) => value > 0).length;
   const decliners = returns.filter((value) => value < 0).length;
@@ -195,15 +192,7 @@ function resolveHomepageMarketData(
   marketDataRaw: MarketSnapshotSummaryPayload | null,
   servingRows: HomeServingRows
 ): MarketSnapshotSummaryPayload | null {
-  // Üst özet kaynağı için temel kural:
-  // - Gerçek market summary varsa (fund/portfolio dolu), direction + FX dahil onu koru.
-  // - Yalnızca market summary yoksa serving fallback'e düş.
-  // Böylece preview satır limiti (örn. 180) üst metrikleri yanlış daraltmaz.
-  if (
-    marketDataRaw &&
-    marketDataRaw.fundCount > 0 &&
-    marketDataRaw.totalPortfolioSize > 0
-  ) {
+  if (marketDataRaw && marketDataRaw.fundCount > 0 && marketDataRaw.totalPortfolioSize > 0) {
     return marketDataRaw;
   }
   return deriveMarketSummaryFromServingRows(servingRows);
@@ -220,138 +209,131 @@ export default async function Page({
   const initialIntent = parseFundIntentParam(readSearchParam(searchParams, "intent"));
   const initialTheme = parseFundThemeParam(readSearchParam(searchParams, "theme"));
   try {
-  const servingRowsTask = withSoftTimeout(
-    listFundDetailCoreServingRows(HOME_SSR_CORE_ROWS_LIMIT),
-    HOME_SSR_CORE_ROWS_TIMEOUT_MS,
-    { rows: [], source: "none" as const, missReason: "cache_empty" as const }
-  );
-  const marketSummaryTask = HOME_SSR_MARKET_ENABLED
-    ? withSoftTimeout(getMarketSummaryFromDailySnapshotSafe(), HOME_SSR_MARKET_TIMEOUT_MS, null)
-    : Promise.resolve(null as MarketSnapshotSummaryPayload | null);
-  const servingRows = await servingRowsTask;
-  const servingCategories = categoriesFromServingRows(servingRows);
-  const [marketSummaryRaw, categories] = await Promise.all([
-    marketSummaryTask,
-    servingCategories.length > 0
-      ? Promise.resolve(servingCategories)
-      : withSoftTimeout(getCategorySummariesFromDailySnapshotSafe(), HOME_SSR_CATEGORY_TIMEOUT_MS, []),
-  ]);
-  const { categories: categoriesForClient, rejectedRows: homepageCategoryRejectedRows } =
-    prepareHomepageCategoriesForClient(categories);
-  const marketData = resolveHomepageMarketData(marketSummaryRaw, servingRows);
-  const intentResolved = resolveFundIntentState(
-    initialIntent,
-    categoriesForClient,
-    { mode: requestedMode, category: requestedCategory }
-  );
-  const initialMode = intentResolved.mode;
-  const initialCategory = intentResolved.category;
-  const scorePreloadPhase = (() => {
-    const g = globalThis as typeof globalThis & { __homeSsrScoresPreloadSeen?: boolean };
-    const cold = !g.__homeSsrScoresPreloadSeen;
-    g.__homeSsrScoresPreloadSeen = true;
-    return cold ? "cold_process" : "warm_process";
-  })();
-  const initialScoresMeta = HOME_SSR_DB_SCORES_ENABLED
-    ? await withSoftTimeoutMeta(
-        getScoresPayloadFromDailySnapshot(initialMode, "", {
-          limit: HOME_SSR_SCORES_LIMIT,
-          includeTotal: true,
-        }),
-        HOME_SSR_SCORES_TIMEOUT_MS,
-        null
-      )
-    : { value: null as ScoredResponse | null, timedOut: false, durationMs: 0 };
-  const initialScores = initialScoresMeta.value;
-  let initialRowsSource: "scores" | "serving_core" | "none" = "scores";
-  let initialScoresPreview: ScoredResponse | null = initialScores;
-  if (!initialScoresPreview || initialScoresPreview.funds.length === 0) {
-    const servingPreview = scoresPreviewFromServingRows(initialMode, servingRows);
-    if (servingPreview) {
-      initialScoresPreview = servingPreview;
-      initialRowsSource = "serving_core";
-    } else {
-      initialRowsSource = "none";
+    const homeSsrStartedAt = Date.now();
+
+    // Dalga 1: serving + market aynı anda (bounded timeout).
+    const [servingRowsMeta, marketSummaryMeta] = await Promise.all([
+      withSoftTimeoutMeta(
+        listFundDetailCoreServingRows(HOME_SSR_CORE_ROWS_LIMIT),
+        HOME_SSR_CORE_ROWS_TIMEOUT_MS,
+        { rows: [], source: "none" as const, missReason: "cache_empty" as const }
+      ),
+      HOME_SSR_MARKET_ENABLED
+        ? withSoftTimeoutMeta(getMarketSummaryFromDailySnapshotSafe(), HOME_SSR_MARKET_TIMEOUT_MS, null)
+        : Promise.resolve({ value: null as MarketSnapshotSummaryPayload | null, timedOut: false, durationMs: 0 }),
+    ]);
+    const servingRows = servingRowsMeta.value;
+    const marketSummaryRaw = marketSummaryMeta.value;
+
+    // Kategoriler: önce serving satırlarından türet; yalnızca boşsa DB özeti (timeout’lu).
+    const servingCategories = categoriesFromServingRows(servingRows);
+    const categoryMeta =
+      servingCategories.length > 0
+        ? { value: servingCategories, timedOut: false, durationMs: 0 }
+        : await withSoftTimeoutMeta(
+            getCategorySummariesFromDailySnapshotSafe(),
+            HOME_SSR_CATEGORY_TIMEOUT_MS,
+            []
+          );
+    const categories = categoryMeta.value;
+    const categorySource = servingCategories.length > 0 ? "serving" : "db";
+
+    const { categories: categoriesForClient, rejectedRows: homepageCategoryRejectedRows } =
+      prepareHomepageCategoriesForClient(categories);
+    const marketData = resolveHomepageMarketData(marketSummaryRaw, servingRows);
+    const intentResolved = resolveFundIntentState(initialIntent, categoriesForClient, {
+      mode: requestedMode,
+      category: requestedCategory,
+    });
+    const initialMode = intentResolved.mode;
+    const initialCategory = intentResolved.category;
+
+    // SSR DB skorları: yalnızca HOME_SSR_DB_SCORES=1 iken (opt-in).
+    const initialScoresMeta = HOME_SSR_DB_SCORES_ENABLED
+      ? await withSoftTimeoutMeta(
+          getScoresPayloadFromDailySnapshot(initialMode, "", {
+            limit: HOME_SSR_SCORES_LIMIT,
+            includeTotal: true,
+          }),
+          HOME_SSR_SCORES_TIMEOUT_MS,
+          null
+        )
+      : { value: null as ScoredResponse | null, timedOut: false, durationMs: 0 };
+    const initialScores = initialScoresMeta.value;
+
+    let initialRowsSource: "scores" | "serving_core" | "none" = "scores";
+    let initialScoresPreview: ScoredResponse | null = initialScores;
+    if (!initialScoresPreview || initialScoresPreview.funds.length === 0) {
+      const servingPreview = scoresPreviewFromServingRows(initialMode, servingRows);
+      if (servingPreview) {
+        initialScoresPreview = servingPreview;
+        initialRowsSource = "serving_core";
+      } else {
+        initialRowsSource = "none";
+      }
     }
-  }
-  const homepageFundsCountBeforeBoundary = initialScoresPreview?.funds.length ?? null;
-  const initialScoresPreviewForClient =
-    prepareHomepageScoresPreviewAtBoundary(initialScoresPreview) ?? initialScoresPreview;
-  const discoverySurface = deriveHomepageDiscoverySurfaceState({
-    categoryCount: categoriesForClient.length,
-    scoresPreview: initialScoresPreviewForClient,
-    categoryRejectedRows: homepageCategoryRejectedRows,
-    preNormalizationFundCount: homepageFundsCountBeforeBoundary,
-  });
-  console.info(
-    `[home-ssr-scores] mode=${initialMode} timeout_ms=${HOME_SSR_SCORES_TIMEOUT_MS} duration_ms=${initialScoresMeta.durationMs} ` +
-      `timed_out=${initialScoresMeta.timedOut ? 1 : 0} rows=${initialScores?.funds.length ?? 0} universe=${initialScores ? readScoresUniverseTotal(initialScores) : 0} phase=${scorePreloadPhase}`
-  );
-  console.info(
-    `[home-ssr-rows] mode=${initialMode} homepage_rows_source=${initialRowsSource} homepage_rows_count=${initialScoresPreviewForClient?.funds.length ?? 0}`
-  );
-  const marketSnapshotCanonical = marketData?.snapshotFundCountIsCanonicalUniverse !== false;
-  const marketSnapshotFundCount =
-    marketSnapshotCanonical && marketData?.fundCount != null && marketData.fundCount > 0 ? marketData.fundCount : null;
-  const universeResolution = await augmentHomepageTrueUniverseWithFundTableCount(
-    resolveHomepageTrueUniverseTotal({
+
+    const homepageFundsCountBeforeBoundary = initialScoresPreview?.funds.length ?? null;
+    const initialScoresPreviewForClient =
+      prepareHomepageScoresPreviewAtBoundary(initialScoresPreview) ?? initialScoresPreview;
+
+    const marketSnapshotCanonical = marketData?.snapshotFundCountIsCanonicalUniverse !== false;
+    const marketSnapshotFundCount =
+      marketSnapshotCanonical && marketData?.fundCount != null && marketData.fundCount > 0 ? marketData.fundCount : null;
+
+    const universeResolutionBase = resolveHomepageTrueUniverseTotal({
       initialScores,
       initialRowsSource,
       scoresTimedOut: initialScoresMeta.timedOut,
       scoresPreviewLimit: HOME_SSR_SCORES_LIMIT,
       marketSnapshotFundCount,
       marketSnapshotCanonical,
-    }),
-    HOME_SSR_FUND_COUNT_TIMEOUT_MS
-  );
-  const exploreUniverseTotal = universeResolution.kind === "known" ? universeResolution.value : null;
-  const totalsEvidence = buildHomepageTotalsEvidence({
-    resolution: universeResolution,
-    loadedPreviewRowCount: initialScoresPreviewForClient?.funds.length ?? 0,
-    scoresRowSource: initialRowsSource,
-    scoresTimedOut: initialScoresMeta.timedOut,
-    rawScoresTotal: initialScores ? readScoresUniverseTotal(initialScores) : null,
-    marketSnapshotFundCount: marketData?.fundCount ?? null,
-    marketSnapshotCanonical,
-  });
-  const totalsSemantic: HomepageTotalsSemanticContract = {
-    ...totalsEvidence,
-    previewLimit: HOME_SSR_SCORES_LIMIT,
-  };
-  console.info(formatHomepageTotalsEvidenceLog(totalsEvidence));
-  logHomepageDataFlowEvidence({
-    surface: "homepage_ssr",
-    discovery_surface: discoverySurface.kind,
-    category_rejected_rows: homepageCategoryRejectedRows,
-    scores_row_source: initialRowsSource,
-    preview_limit: totalsSemantic.previewLimit,
-    loaded_preview_rows: totalsSemantic.loadedPreviewRowCount,
-    true_universe_kind: totalsSemantic.trueUniverse.kind,
-    true_universe_value: totalsSemantic.trueUniverse.kind === "known" ? totalsSemantic.trueUniverse.value : null,
-    true_universe_source:
-      totalsSemantic.trueUniverse.kind === "known" ? totalsSemantic.trueUniverse.source : null,
-  });
-  const initialScoresPreviewRows = initialScoresPreviewForClient?.funds.length ?? 0;
-  const knownUniverseFloor =
-    universeResolution.kind === "known" ? universeResolution.value : initialScoresPreviewRows;
-  // Homepage defaultta SSR preview satırlarını "tam skor payload" sanıp kilitlenmeyelim:
-  // tablo/search ilk yükten sonra tam scope'u client tarafında bir kez yenilemeli.
-  const initialScoresPartial =
-    initialScoresMeta.timedOut ||
-    !initialScores ||
-    initialRowsSource !== "scores" ||
-    universeResolution.kind === "unknown" ||
-    initialScoresPreviewRows < knownUniverseFloor;
+    });
 
-  const marketDayTone = (() => {
-    if (!marketData) return null;
-    const avg = marketData.summary?.avgDailyReturn;
-    if (!Number.isFinite(avg)) return null;
-    return deriveMarketTone(marketData.advancers, marketData.decliners, avg);
-  })();
+    const fundCountAugmentStartedAt = Date.now();
+    const universeResolution = HOME_SSR_FUND_COUNT_AUGMENT_ENABLED
+      ? await withSoftTimeout(
+          augmentHomepageTrueUniverseWithFundTableCount(universeResolutionBase, HOME_SSR_FUND_COUNT_TIMEOUT_MS),
+          Math.min(HOME_SSR_FUND_COUNT_TIMEOUT_MS + 150, 900),
+          universeResolutionBase
+        )
+      : universeResolutionBase;
+    const fundCountAugmentMs = HOME_SSR_FUND_COUNT_AUGMENT_ENABLED ? Date.now() - fundCountAugmentStartedAt : 0;
 
-  return (
-    <SitePageShell>
+    const exploreUniverseTotal = universeResolution.kind === "known" ? universeResolution.value : null;
+
+    const initialScoresPreviewRows = initialScoresPreviewForClient?.funds.length ?? 0;
+    const knownUniverseFloor =
+      universeResolution.kind === "known" ? universeResolution.value : initialScoresPreviewRows;
+    const initialScoresPartial =
+      initialScoresMeta.timedOut ||
+      !initialScores ||
+      initialRowsSource !== "scores" ||
+      universeResolution.kind === "unknown" ||
+      initialScoresPreviewRows < knownUniverseFloor;
+
+    const marketDayTone = (() => {
+      if (!marketData) return null;
+      const avg = marketData.summary?.avgDailyReturn;
+      if (!Number.isFinite(avg)) return null;
+      return deriveMarketTone(marketData.advancers, marketData.decliners, avg);
+    })();
+
+    const homeSsrTotalMs = Date.now() - homeSsrStartedAt;
+    console.info(
+      `[home-ssr-critical-path] total_ms=${homeSsrTotalMs} ` +
+        `category_src=${categorySource} category_ms=${categoryMeta.durationMs} category_to=${categoryMeta.timedOut ? 1 : 0} ` +
+        `serving_ms=${servingRowsMeta.durationMs} serving_to=${servingRowsMeta.timedOut ? 1 : 0} serving_src=${servingRows.source} ` +
+        `market_ms=${marketSummaryMeta.durationMs} market_to=${marketSummaryMeta.timedOut ? 1 : 0} ` +
+        `scores_ssr=${HOME_SSR_DB_SCORES_ENABLED ? "on" : "off"} scores_ms=${initialScoresMeta.durationMs} scores_to=${initialScoresMeta.timedOut ? 1 : 0} ` +
+        `fund_count_augment=${HOME_SSR_FUND_COUNT_AUGMENT_ENABLED ? "on" : "off"} fund_count_ms=${fundCountAugmentMs} ` +
+        `rows_src=${initialRowsSource} preview_rows=${initialScoresPreviewForClient?.funds.length ?? 0} ` +
+        `cat_rej=${homepageCategoryRejectedRows} ` +
+        `degraded=${servingRows.rows.length === 0 && !marketSummaryRaw ? "empty_serving_and_market" : "ok"}`
+    );
+
+    return (
+      <SitePageShell>
         <Header />
 
         <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-5 sm:pb-7 lg:px-8">
@@ -372,32 +354,32 @@ export default async function Page({
         </main>
 
         <Footer />
-    </SitePageShell>
-  );
+      </SitePageShell>
+    );
   } catch (error) {
     console.error("[homepage-route-fallback] render failed, serving safe fallback", error);
     return (
       <SitePageShell>
-          <Header />
+        <Header />
 
-          <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-5 sm:pb-7 lg:px-8">
-            <MarketHeader initialData={null} exploreUniverseTotal={null} />
+        <main className="mx-auto w-full min-w-0 max-w-[1320px] flex-1 overflow-x-clip overscroll-x-none px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] sm:px-6 sm:py-5 sm:pb-7 lg:px-8">
+          <MarketHeader initialData={null} exploreUniverseTotal={null} />
 
-            <HomePageClient
-              initialScoresPreview={null}
-              initialScoresPartial={true}
-              canonicalUniverseTotal={null}
-              categories={[]}
-              initialMode={requestedMode}
-              initialCategory={requestedCategory}
-              initialQuery={initialQuery}
-              initialIntent={initialIntent}
-              initialTheme={initialTheme}
-              marketDayTone={null}
-            />
-          </main>
+          <HomePageClient
+            initialScoresPreview={null}
+            initialScoresPartial={true}
+            canonicalUniverseTotal={null}
+            categories={[]}
+            initialMode={requestedMode}
+            initialCategory={requestedCategory}
+            initialQuery={initialQuery}
+            initialIntent={initialIntent}
+            initialTheme={initialTheme}
+            marketDayTone={null}
+          />
+        </main>
 
-          <Footer />
+        <Footer />
       </SitePageShell>
     );
   }
