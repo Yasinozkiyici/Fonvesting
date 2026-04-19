@@ -244,8 +244,11 @@ export default function FundsTable({
   const quickCategories = useMemo(() => categories.slice(0, 4), [categories]);
   const quickTypes = useMemo(() => fundTypes.slice(0, 4), [fundTypes]);
 
+  const tableSurfaceKind = loading ? "loading" : error && paginatedFunds.length === 0 ? "error" : "ready";
+
   return (
     <div
+      data-surface-state={tableSurfaceKind}
       className="overflow-hidden rounded-2xl border shadow-sm"
       style={{ background: "var(--card-bg)", borderColor: "var(--border-default)" }}
     >
