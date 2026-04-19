@@ -4,12 +4,14 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock3, LayoutGrid, Network, Scale, Shield, TrendingUp, type LucideIcon } from "@/components/icons";
 import ScoredFundsTable from "@/components/tefas/ScoredFundsTable";
-import { fetchNormalizedJsonWithMeta, normalizeScoredResponse } from "@/lib/client-data";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
 import type { RankingMode } from "@/lib/scoring";
 import type { FundIntentId } from "@/lib/fund-intents";
-import { fundMatchesTheme, type FundThemeId } from "@/lib/fund-themes";
+import { fundRowMatchesCanonicalTheme } from "@/lib/services/fund-theme-classification";
+import type { FundThemeId } from "@/lib/fund-themes";
 import type { MarketDayTone } from "@/lib/market-tone";
+import { deriveDiscoverySurfaceState, deriveSpotlightContract } from "@/lib/contracts";
+import { resolveHomepageTableSeedPayload } from "@/lib/data-flow/homepage-discovery-surface";
 import {
   defaultSecondaryId,
   findSecondaryDef,
@@ -348,63 +350,22 @@ export function HomePageClient({
   }, [activePresetMeta?.title, activePrimary, discoveryActive, resolvedFilters.secondaryLabel]);
 
   const [modeSpotlightPayload, setModeSpotlightPayload] = useState<ScoredResponse | null>(null);
-  const [spotlightPhase, setSpotlightPhase] = useState<"idle" | "loading" | "ready">("idle");
+
+  const handleDiscoveryTablePayload = useCallback((payload: ScoredResponse) => {
+    setModeSpotlightPayload(payload);
+  }, []);
 
   useEffect(() => {
     if (!discoveryActive) {
       setModeSpotlightPayload(null);
-      setSpotlightPhase("idle");
-      return;
     }
-    const initialRows = initialScoresPreview?.funds.length ?? 0;
-    if (initialRows >= 12) {
-      // Avoid visible late pop-in when SSR already has enough rows for spotlight cards.
-      setModeSpotlightPayload(null);
-      setSpotlightPhase("ready");
-      return;
-    }
-    const ac = new AbortController();
-    setSpotlightPhase("loading");
-    const hasScopedCategory = effectiveCategory.trim().length > 0;
-    const spotlightLimitParam = effectiveTheme ? "&limit=2500" : hasScopedCategory ? "" : "&limit=300";
-    const spotlightCategory =
-      hasScopedCategory
-        ? `&category=${encodeURIComponent(effectiveCategory.trim())}`
-        : "";
-    const spotlightTheme = effectiveTheme ? `&theme=${encodeURIComponent(effectiveTheme)}` : "";
-    const spotlightUrl = `/api/funds/scores?mode=${effectiveMode}${spotlightCategory}${spotlightTheme}${spotlightLimitParam}`;
-    console.info(
-      `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
-        `request_url=${spotlightUrl} phase=requested`
-    );
-    fetchNormalizedJsonWithMeta(
-      spotlightUrl,
-      "Fon API",
-      normalizeScoredResponse,
-      { signal: ac.signal },
-      effectiveTheme || effectiveCategory.trim().length > 0 ? 12_000 : 8_000
-    )
-      .then(({ data: payload }) => {
-        console.info(
-          `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
-            `server_rows=${payload.funds.length} universe_total=${payload.total} phase=response`
-        );
-        setModeSpotlightPayload(payload);
-      })
-      .catch(() => {
-        if (!ac.signal.aborted) {
-          console.info(
-            `[discover-spotlight] mode=${effectiveMode} category=${effectiveCategory || "all"} theme=${effectiveTheme ?? "none"} ` +
-              `phase=failed`
-          );
-          setModeSpotlightPayload(null);
-        }
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setSpotlightPhase("ready");
-      });
-    return () => ac.abort();
-  }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme, initialScoresPreview]);
+  }, [discoveryActive]);
+
+  /** Tablo ile aynı skor yanıtı gelene kadar öne çıkan üçlü için bekleme (ayrı geniş limit isteği yok). */
+  const spotlightPhase: "loading" | "ready" = useMemo(() => {
+    if (!discoveryActive) return "ready";
+    return modeSpotlightPayload ? "ready" : "loading";
+  }, [discoveryActive, modeSpotlightPayload]);
 
   const estimatedUniverseLabel = useMemo(() => {
     if (!discoveryActive) return null;
@@ -413,12 +374,17 @@ export function HomePageClient({
     return universeScopeLabel(null);
   }, [discoveryActive, effectiveCategory, effectiveTheme]);
 
-  const fundsForSpotlights = discoveryActive ? (modeSpotlightPayload ?? initialScoresPreview) : initialScoresPreview;
+  const fundsForSpotlights = discoveryActive ? modeSpotlightPayload : initialScoresPreview;
 
   const featuredSpotlights = useMemo(() => {
     const funds: ScoredFund[] = fundsForSpotlights?.funds ?? [];
     let list = funds;
-    if (effectiveTheme) list = list.filter((f) => fundMatchesTheme(f, effectiveTheme));
+    const serverTheme = fundsForSpotlights?.discoveryContract?.scope.theme ?? null;
+    if (effectiveTheme && serverTheme !== effectiveTheme) {
+      list = list.filter((f) => fundRowMatchesCanonicalTheme(f, effectiveTheme));
+    } else if (effectiveTheme && serverTheme == null) {
+      list = list.filter((f) => fundRowMatchesCanonicalTheme(f, effectiveTheme));
+    }
     if (effectiveCategory) list = list.filter((f) => f.category?.code === effectiveCategory);
     const ranked = [...list].sort((a, b) => {
       const na = a.finalScore;
@@ -444,6 +410,29 @@ export function HomePageClient({
     }));
   }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme, fundsForSpotlights, spotlightPickHint]);
 
+  const discoverySurfaceForSpotlight = useMemo(
+    () =>
+      deriveDiscoverySurfaceState({
+        loading: discoveryActive && spotlightPhase === "loading",
+        error: false,
+        hasRenderableRows: (fundsForSpotlights?.funds.length ?? 0) > 0,
+        surfaceState: fundsForSpotlights?.scoresSurfaceState ?? null,
+        degradedHeader: fundsForSpotlights?.scoresSurfaceState === "degraded_empty",
+      }),
+    [discoveryActive, spotlightPhase, fundsForSpotlights],
+  );
+
+  const spotlightContract = useMemo(
+    () =>
+      deriveSpotlightContract({
+        discoveryActive,
+        discoverySurface: discoverySurfaceForSpotlight,
+        discoveryContract: fundsForSpotlights?.discoveryContract ?? null,
+        spotlightFunds: featuredSpotlights.map((x) => x.fund),
+      }),
+    [discoveryActive, discoverySurfaceForSpotlight, fundsForSpotlights?.discoveryContract, featuredSpotlights],
+  );
+
   const featuredSectionTitle = useMemo(() => {
     return "Seçiminize göre öne çıkan fonlar";
   }, []);
@@ -468,6 +457,8 @@ export function HomePageClient({
         data-discovery-secondary={secondaryId || "none"}
         data-discovery-theme={effectiveTheme ?? "none"}
         data-discovery-category={effectiveCategory || "all"}
+        data-spotlight-reason={spotlightContract.reason}
+        data-spotlight-renderable={spotlightContract.renderable ? "1" : "0"}
       >
         <div className="discovery-module-accent-rule pointer-events-none absolute bottom-3 left-0 top-3 w-px rounded-full opacity-90" aria-hidden />
         <div className="discovery-module-inner relative px-3 py-2 pl-3.5 sm:px-4 sm:py-3 sm:pl-4">
@@ -694,13 +685,19 @@ export function HomePageClient({
               <FeaturedThreeFundsSkeleton />
             </div>
           ) : null}
-          {discoveryActive && spotlightPhase === "ready" && featuredSpotlights.length === 0 ? (
+          {discoveryActive && spotlightPhase === "ready" && !spotlightContract.renderable ? (
             <p
               className="mt-2.5 max-w-[40rem] text-[10px] font-medium leading-snug sm:mt-3 sm:text-[10.5px]"
               style={{ color: "var(--text-tertiary)" }}
+              data-spotlight-empty-reason={spotlightContract.reason}
             >
-              Bu seçim için öne çıkan üçlü oluşturulamadı (sunucu verisi veya filtre eşleşmesi). Tam liste tabloda
-              mevcuttur.
+              {spotlightContract.reason === "scope_degraded"
+                ? "Öne çıkan seçki şu an güvenilir veriyle oluşturulamıyor. Tam liste tabloda mevcuttur."
+                : spotlightContract.reason === "source_unavailable"
+                  ? "Bu kapsam için kaynak yanıtı alınamadı. Tam liste bağlantısı korunuyor; kısa süre sonra yeniden deneyin."
+                  : spotlightContract.reason === "ranking_unavailable"
+                    ? "Bu kapsamda eşleşen fonlar var; ancak öne çıkan sıralama üretilemedi. Tam liste tabloda mevcuttur."
+                    : "Bu seçim için kapsamda eşleşen fon yok. Tam liste tabloda mevcuttur."}
             </p>
           ) : null}
 
@@ -722,8 +719,8 @@ export function HomePageClient({
           <ScoredFundsTable
             enableCategoryFilter
             defaultMode="BEST"
-            initialData={discoveryActive ? null : initialScoresPreview}
-            initialDataIsPartial={discoveryActive ? false : initialScoresPartial}
+            initialData={resolveHomepageTableSeedPayload({ initialScoresPreview })}
+            initialDataIsPartial={initialScoresPartial}
             initialCategories={categories}
             initialMode={effectiveMode}
             initialCategory={effectiveCategory}
@@ -735,6 +732,7 @@ export function HomePageClient({
             quickStartUniverseHint={discoveryActive ? estimatedUniverseLabel : null}
             quickStartOnClear={discoveryActive ? handleDiscoveryClear : undefined}
             referenceUniverseTotal={canonicalUniverseTotal}
+            onDiscoveryPayloadReady={discoveryActive ? handleDiscoveryTablePayload : undefined}
           />
         </div>
       </div>

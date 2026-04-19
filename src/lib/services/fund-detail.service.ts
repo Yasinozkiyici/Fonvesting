@@ -19,10 +19,7 @@ import {
   FUND_ALTERNATIVES_MAX,
   type FundAlternativeCandidate,
 } from "@/lib/fund-detail-alternatives";
-import {
-  buildFundKiyasBlock,
-  type FundKiyasViewPayload,
-} from "@/lib/services/fund-detail-kiyas.service";
+import { type FundKiyasViewPayload } from "@/lib/services/fund-detail-kiyas.service";
 import {
   getFundDetailCoreServingCached,
   getFundDetailCoreServingSnapshotDateHint,
@@ -54,6 +51,9 @@ import {
   shouldWriteDetailCache,
   withDetailDegradedPayload,
 } from "@/lib/services/fund-detail-cache-policy";
+import { deriveFreshnessContract, toCanonicalFreshnessContract } from "@/lib/freshness-contract";
+import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
+import type { CanonicalFreshnessContract } from "@/lib/freshness-contract";
 
 const DAY_MS = 86400000;
 const DETAIL_HISTORY_LOOKBACK_DAYS = parseEnvMs("FUND_DETAIL_HISTORY_LOOKBACK_DAYS", 1095, 120, 1095);
@@ -294,6 +294,9 @@ const DETAIL_PHASE2_HISTORY_PRIME_WAIT_MS = parseEnvMs(
   0,
   1_200
 );
+const DETAIL_BACKGROUND_REFRESH_ENABLED =
+  process.env.FUND_DETAIL_BACKGROUND_REFRESH === "1" ||
+  (process.env.NODE_ENV !== "development" && process.env.FUND_DETAIL_BACKGROUND_REFRESH !== "0");
 const DETAIL_DEBUG_HISTORY_BOUNDS_DB = process.env.FUND_DETAIL_DEBUG_HISTORY_BOUNDS_DB === "1";
 const DETAIL_DEBUG_CODES = new Set(
   (process.env.FUND_DETAIL_DEBUG_CODES ??
@@ -1100,6 +1103,7 @@ export type FundDetailPageData = {
     reliabilityClass: FundDataReliabilityClass;
     reasons: string[];
   };
+  canonicalFreshness?: CanonicalFreshnessContract | null;
 };
 
 type DetailStepDurations = Record<string, number>;
@@ -2198,28 +2202,8 @@ async function getFundDetailPageDataLegacy(rawCode: string): Promise<FundDetailP
     latestSnap?.date ?? null
   );
 
-  const derivedForKiyas = await prisma.fundDerivedMetrics.findUnique({
-    where: { fundId: fund.id },
-    select: {
-      return30d: true,
-      return90d: true,
-      return180d: true,
-      return1y: true,
-      return2y: true,
-    },
-  });
-  const anchorForKiyas = latestSnap?.date ?? points[points.length - 1]?.date ?? new Date();
-  const kiyasBlock = await buildFundKiyasBlock({
-    fundId: fund.id,
-    categoryId: fund.categoryId,
-    categoryCode: fund.category?.code ?? null,
-    fundName: fund.name,
-    fundTypeCode: fund.fundType?.code ?? null,
-    anchorDate: anchorForKiyas,
-    // 3Y türevi henüz tabloda ayrı saklanmıyor; history fallback devreye girer.
-    derived: derivedForKiyas ? { ...derivedForKiyas, return3y: null } : null,
-    pricePoints: points,
-  });
+  // Faz 5: kıyas bloğu artık core detail içinde üretilmez; `/api/funds/comparison` üzerinden ayrı yüklenir.
+  const kiyasBlock = null;
   const trendSeries = DETAIL_RESCUE_MODE
     ? { portfolioSize: [], investorCount: [] }
     : buildTrendSeries(ascHistory);
@@ -5192,78 +5176,11 @@ async function getFundDetailPageDataUncached(
         )
       )
     );
-  let kiyasBlock: FundKiyasViewPayload | null = null;
-  let kiyasAttempted = false;
-  let comparisonPathFailureReason = "none";
-  let comparisonPathSkippedReason = "none";
-  let comparisonPathTimeoutMs = 0;
-  const runOptionalKiyasBlock = async (): Promise<void> => {
-    kiyasAttempted = true;
-    const kiyasTimeoutMs =
-      phase === "phase2"
-        ? DETAIL_COMPARISON_CORE_TIMEOUT_MS
-        : Math.max(
-            DETAIL_PHASE2_OPTIONAL_MIN_STEP_BUDGET_MS,
-            Math.min(DETAIL_OPTIONAL_KIYAS_TIMEOUT_MS, optionalRemainingMs())
-          );
-    comparisonPathTimeoutMs = kiyasTimeoutMs;
-    const kiyasTelemetry = { queryCount: 0, cacheHitCount: 0, dedupedCount: 0 };
-    kiyasBlock = await measureStep(steps, "optional_kiyas_block_query", () =>
-      withTimeout(
-        buildFundKiyasBlock(
-          {
-            fundId: latestSnapshot.fundId,
-            categoryId: phase2Context.categoryId,
-            categoryCode: phase2Context.categoryCode,
-            fundName: latestSnapshot.name,
-            fundTypeCode: latestSnapshot.fundTypeCode,
-            anchorDate: phase2Context.snapshotDate,
-            derived: derivedMetrics
-              ? {
-                  return30d: derivedMetrics.return30d,
-                  return90d: derivedMetrics.return90d,
-                  return180d: derivedMetrics.return180d,
-                  return1y: derivedMetrics.return1y,
-                  return2y: derivedMetrics.return2y,
-                  return3y: null,
-                }
-              : null,
-            pricePoints: points,
-          },
-          { telemetry: kiyasTelemetry }
-        ),
-        kiyasTimeoutMs,
-        "optional_kiyas_block_query"
-      )
-    );
-    if (!kiyasBlock) {
-      comparisonPathSkippedReason = "no_refs_generated";
-    }
-    phase2KiyasDbCalls = kiyasTelemetry.queryCount;
-    phase2PrismaCalls += kiyasTelemetry.queryCount;
-    phase2DuplicatedQueryPrevented += kiyasTelemetry.cacheHitCount + kiyasTelemetry.dedupedCount;
-  };
-
-  if (optionalSectionsEnabled) {
-    try {
-      await runOptionalKiyasBlock();
-    } catch (error) {
-      console.warn("[fund-detail] kiyas_block failed", error);
-      failedSteps.push("optional_kiyas_block_query");
-      degradedReasons.add("optional_kiyas_block_failed");
-      const message = error instanceof Error ? error.message : String(error);
-      comparisonPathFailureReason = message || "unknown_error";
-      if (message.includes("optional_kiyas_block_query_timeout_")) {
-        phase2KiyasTimedOut = true;
-        comparisonPathSkippedReason = "timeout";
-      } else {
-        comparisonPathSkippedReason = "query_failed";
-      }
-    }
-  } else {
-    steps.optional_kiyas_block_query = 0;
-    comparisonPathSkippedReason = "optional_sections_disabled";
-  }
+  // Faz 5: kıyas üretimi core detail kritik/opsiyonel pathtan ayrıldı.
+  // UI comparison artık `/api/funds/comparison` alt-sistemi üzerinden deterministik olarak yüklenir.
+  const kiyasBlock: FundKiyasViewPayload | null = null;
+  steps.optional_kiyas_block_query = 0;
+  degradedReasons.add("comparison_subsystem_decoupled");
 
   if (optionalSectionsEnabled && phase2Context.categoryCode && hasOptionalBudget(true)) {
     try {
@@ -5580,7 +5497,7 @@ async function getFundDetailPageDataUncached(
     degradedReasons.add("trend_series_quality_partial");
   }
   if (sectionStates.comparison === "no_data" && !kiyasBlock) {
-    degradedReasons.add(phase2KiyasTimedOut ? "optional_kiyas_block_missing_timeout_or_budget" : "optional_kiyas_block_missing");
+    degradedReasons.add("comparison_subsystem_decoupled");
   }
 
   const partial =
@@ -5661,15 +5578,12 @@ async function getFundDetailPageDataUncached(
         `freshness_days=${portfolioTrendQuality.freshnessDays} state=${portfolioTrendQuality.state}`
     );
     console.info(
-      `[fund-detail-comparison-source-path] code=${normalizedCode} attempted=${kiyasAttempted ? 1 : 0} ` +
-        `timeout_budget_ms=${comparisonPathTimeoutMs} source=${kiyasBlock ? "kiyas_block" : "none"} ` +
-        `failed_reason=${comparisonPathFailureReason} skipped_reason=${comparisonPathSkippedReason} ` +
-        `valid_refs=${comparisonValidRefs}/${comparisonTotalRefs}`
+      `[fund-detail-comparison-source-path] code=${normalizedCode} source=comparison_subsystem_decoupled valid_refs=${comparisonValidRefs}/${comparisonTotalRefs}`
     );
     console.info(
       `[fund-detail-comparison] code=${normalizedCode} valid_refs=${comparisonValidRefs} total_refs=${comparisonTotalRefs} ` +
         `rows_1y=${comparisonRows1y} section_state=${sectionStates.comparison} source=${kiyasBlock ? "kiyas_block" : "none"} ` +
-        `dropped_reason=${phase2KiyasTimedOut ? "timeout_or_budget" : kiyasBlock ? "none" : "missing"}`
+        `dropped_reason=${kiyasBlock ? "none" : "decoupled"}`
     );
   }
   console.info(
@@ -5739,9 +5653,7 @@ async function getFundDetailPageDataUncached(
           ? "price_history_checkout_wait"
         : longestPrismaStep.name === "price_history_query" && longestPrismaStep.ms > 0
           ? "price_history_query"
-          : phase2KiyasTimedOut
-            ? "optional_kiyas_timeout"
-            : longestPrismaStep.ms > 0
+        : longestPrismaStep.ms > 0
               ? longestPrismaStep.name
               : "none";
   console.info(
@@ -5772,7 +5684,7 @@ async function getFundDetailPageDataUncached(
       `history_serving_staleness=${historyServingStalenessMs} history_serving_snapshot_lag_days=${historyServingSnapshotLagDays ?? -1} ` +
       `history_fallback_used=${historyFallbackUsed ? 1 : 0} ` +
       `history_downsample_mode=${historyDownsampleMode} history_live_db_query_ms=${steps.history_live_db_query_ms ?? 0} ` +
-      `kiyas_query_ms=${steps.optional_kiyas_block_query ?? 0} kiyas_timed_out=${phase2KiyasTimedOut ? 1 : 0} ` +
+      `kiyas_query_ms=${steps.optional_kiyas_block_query ?? 0} ` +
       `longest_connection_hold_step=${longestConnectionHold.name} longest_connection_hold_ms=${longestConnectionHold.ms} ` +
       `longest_prisma_step=${longestPrismaStep.name} longest_prisma_step_ms=${longestPrismaStep.ms} ` +
       `phase2_tail_reason=${phase2TailReason} ` +
@@ -5809,6 +5721,7 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
   if (!normalizedCode) return null;
   const startedAt = Date.now();
   const state = getDetailRuntimeState();
+  const freshnessTruth = await readFreshnessTruthCached();
 
   const cacheReadStartedAt = Date.now();
   const fresh = pickFreshDetailCache(normalizedCode);
@@ -5821,10 +5734,25 @@ export async function getFundDetailPageData(rawCode: string): Promise<FundDetail
       ...orchestrated.payload,
       detailHealth: orchestrated.sectionHealth,
       overallDetailHealth: orchestrated.overall,
+      canonicalFreshness: toCanonicalFreshnessContract(
+        deriveFreshnessContract({
+          asOf: orchestrated.payload.snapshotDate,
+          freshTtlMs: 6 * 60 * 60_000,
+          staleTtlMs: 36 * 60 * 60_000,
+          unknownAsDegraded: true,
+        }),
+        "fund_detail",
+        {
+          latestSuccessfulSyncAt: freshnessTruth.latestSuccessfulSyncAt,
+          degradedReason:
+            freshnessTruth.degradedReason !== "none" ? freshnessTruth.degradedReason : null,
+        }
+      ),
     } as FundDetailPageData;
   };
 
   const startBackgroundRefresh = (trigger: string, refreshPhase: "phase1" | "phase2"): void => {
+    if (!DETAIL_BACKGROUND_REFRESH_ENABLED) return;
     const now = Date.now();
     const blockedUntil = state.failureUntil.get(normalizedCode) ?? 0;
     if (blockedUntil > now) return;

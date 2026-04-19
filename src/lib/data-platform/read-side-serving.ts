@@ -1,3 +1,4 @@
+import { parseFundThemeParam, type FundThemeId } from "@/lib/fund-themes";
 import { prisma } from "@/lib/prisma";
 import {
   readUiServingWorldMetaCached,
@@ -18,6 +19,8 @@ export type ServingListRow = {
   yearlyReturn: number;
   portfolioSize: number;
   investorCount: number;
+  /** Kanonik keşif temaları (serving rebuild). */
+  themeTags?: FundThemeId[];
   /** Lowercased tr-TR haystack for list search (code, name, shortName); not exposed on API rows. */
   searchHaystack: string;
 };
@@ -90,6 +93,16 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function parseThemeTagsField(raw: unknown): FundThemeId[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: FundThemeId[] = [];
+  for (const item of raw) {
+    const p = parseFundThemeParam(typeof item === "string" ? item : String(item));
+    if (p) out.push(p);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function normalizeListPayload(value: unknown): ServingListPayload | null {
   const input = asRecord(value);
   if (!input) return null;
@@ -121,6 +134,7 @@ function normalizeListPayload(value: unknown): ServingListPayload | null {
       yearlyReturn: asNumber(row.yearlyReturn) ?? 0,
       portfolioSize: asNumber(row.portfolioSize) ?? 0,
       investorCount: asNumber(row.investorCount) ?? 0,
+      themeTags: parseThemeTagsField(row.themeTags),
       searchHaystack: `${codeLc}\n${nameLc}\n${shortLc}`,
     });
   }

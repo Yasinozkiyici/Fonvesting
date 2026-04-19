@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computeServingBuildId } from "@/lib/domain/serving/build-id";
+import { inferThemeTagsFromFundFields } from "@/lib/services/fund-theme-classification";
+import { syncFundThemeTagsInTransaction } from "@/lib/services/fund-theme-tags.repository";
 import { getFundDetailCoreServingUniversePayloads } from "@/lib/services/fund-detail-core-serving.service";
 
 type CanonicalRow = {
@@ -67,6 +69,13 @@ export async function rebuildV2ServingWorld(snapshotDate: Date): Promise<V2Servi
     gitCommitShort: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 8) ?? null,
   });
 
+  const themeTagRows = canonicalRows.flatMap((row) =>
+    inferThemeTagsFromFundFields(row.name, row.shortName).map((themeId) => ({
+      fundCode: row.code.trim().toUpperCase(),
+      themeId,
+    }))
+  );
+
   const listPayload = {
     buildId,
     snapshotAsOf,
@@ -83,6 +92,7 @@ export async function rebuildV2ServingWorld(snapshotDate: Date): Promise<V2Servi
       yearlyReturn: row.yearlyReturn,
       portfolioSize: row.portfolioSize,
       investorCount: row.investorCount,
+      themeTags: inferThemeTagsFromFundFields(row.name, row.shortName),
     })),
   };
 
@@ -154,6 +164,7 @@ export async function rebuildV2ServingWorld(snapshotDate: Date): Promise<V2Servi
 
   await prisma.$transaction(
     async (tx) => {
+      await syncFundThemeTagsInTransaction(tx, themeTagRows);
       // Idempotent rebuild: same deterministic buildId can be produced again for the same snapshot.
       // Replace the previous build envelope/details atomically instead of failing on unique buildId.
       await tx.servingFundDetail.deleteMany({ where: { buildId } });

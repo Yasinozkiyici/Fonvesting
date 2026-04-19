@@ -6,7 +6,6 @@ import { getScoresPayloadFromDailySnapshot } from "@/lib/services/fund-daily-sna
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import {
   filterScoresPayloadByQuery,
-  filterScoresPayloadByTheme,
 } from "@/lib/services/fund-scores-compute.service";
 import {
   applyScoresPayloadRowLimit,
@@ -15,7 +14,7 @@ import {
 } from "@/lib/services/fund-scores-semantics";
 import { scoresApiCacheKey } from "@/lib/services/fund-scores-cache.service";
 import { prisma } from "@/lib/prisma";
-import { getAllFundsCached, getFundsPage } from "@/lib/services/fund-list.service";
+import { getFundsPage } from "@/lib/services/fund-list.service";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { buildDbAccessResolutionLog, logDbAccessResolution } from "@/lib/db/db-access-resolution-log";
 import { resolveDbConnectionProfile } from "@/lib/db/db-connection-profile";
@@ -45,9 +44,22 @@ import {
   validateScoresApiPayloadContract,
 } from "@/app/api/funds/scores/contract";
 import { guardSemanticInvariant } from "@/lib/data-flow/invariant-guard";
-import { deriveFreshnessContract } from "@/lib/freshness-contract";
+import {
+  getScopedScoresPayloadFromDailySnapshot,
+  materializeServingDiscoveryScopeFirst,
+  resolveEffectiveScoresLimit,
+} from "@/lib/services/scoped-discovery-query.service";
+import { DEFAULT_SCOPED_DISCOVERY_LIMIT } from "@/lib/contracts/discovery-limits";
+import { buildDiscoveryPayloadContract } from "@/lib/contracts/discovery-payload-contract";
+import type { DiscoveryScopeInput } from "@/lib/contracts/discovery-scope";
+import {
+  deriveFreshnessContract,
+  toCanonicalFreshnessContract,
+  type FreshnessContract,
+} from "@/lib/freshness-contract";
 import { ScoresRouteTrace } from "@/app/api/funds/scores/scores-route-trace";
 import { readUiServingWorldMetaCached } from "@/lib/domain/serving/ui-cutover-contract";
+import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -269,6 +281,16 @@ function parseLimit(searchParams: URLSearchParams): number | null {
   return Math.min(Math.trunc(parsed), MAX_LIMIT);
 }
 
+function discoveryScopeInput(
+  mode: RankingMode,
+  categoryCode: string,
+  theme: FundThemeId | null,
+  queryTrim: string,
+  limit: number | null
+): DiscoveryScopeInput {
+  return { mode, categoryCode, theme, queryTrim, limit };
+}
+
 function isTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.message.includes("scores_timeout_");
@@ -453,64 +475,6 @@ async function readFundsListFallback(
   });
 }
 
-async function readThemeFundsListFallback(
-  mode: RankingMode,
-  categoryCode: string,
-  theme: FundThemeId,
-  queryTrim = ""
-): Promise<ScoresApiPayload | null> {
-  const rows = await withTimeout(
-    getAllFundsCached(),
-    SCORES_FUNDS_LIST_FALLBACK_TIMEOUT_MS
-  ).catch(() => []);
-  if (rows.length === 0) return null;
-  const categoryFunds = rows
-    .filter((item) => (categoryCode ? item.category?.code === categoryCode : true))
-    .map((item) => ({
-      fundId: item.id,
-      code: item.code,
-      name: item.name,
-      shortName: item.shortName,
-      logoUrl: item.logoUrl,
-      lastPrice: item.lastPrice,
-      dailyReturn: item.dailyReturn,
-      portfolioSize: item.portfolioSize,
-      investorCount: item.investorCount,
-      category: item.category ? { code: item.category.code, name: item.category.name } : null,
-      fundType: item.fundType ? { code: item.fundType.code, name: item.fundType.name } : null,
-      finalScore: null,
-    }));
-  const basePayload = createScoresPayload({
-    mode,
-    funds: categoryFunds,
-    universeTotal: categoryFunds.length,
-    matchedTotal: categoryFunds.length,
-  });
-  const queryPayload = queryTrim ? filterScoresPayloadByQuery(basePayload, queryTrim) : basePayload;
-  const themed = filterScoresPayloadByTheme(queryPayload, theme);
-  if (!hasUsableScoresPayload(themed)) return null;
-  const funds = [...themed.funds].sort((a, b) => {
-    if (mode === "HIGH_RETURN") {
-      const daily = b.dailyReturn - a.dailyReturn;
-      if (daily !== 0) return daily;
-    }
-    if (mode === "LOW_RISK") {
-      const risk = Math.abs(a.dailyReturn) - Math.abs(b.dailyReturn);
-      if (risk !== 0) return risk;
-    }
-    const portfolio = b.portfolioSize - a.portfolioSize;
-    if (portfolio !== 0) return portfolio;
-    return a.code.localeCompare(b.code, "tr");
-  });
-  return createScoresPayload({
-    mode,
-    funds,
-    universeTotal: themed.universeTotal,
-    matchedTotal: funds.length,
-    appliedQuery: themed.appliedQuery,
-  });
-}
-
 async function readPersistedAllScoresFilteredFallback(
   mode: RankingMode,
   categoryCode: string,
@@ -692,15 +656,37 @@ export async function GET(request: NextRequest) {
   const theme = parseFundThemeParam(searchParams.get("theme") ?? "");
   const queryTrim = (searchParams.get("q") ?? searchParams.get("query") ?? "").trim().slice(0, MAX_QUERY_LENGTH);
   const limit = parseLimit(searchParams);
+  const effectiveLimit = resolveEffectiveScoresLimit({ requested: limit, theme, queryTrim });
   const isCriticalBestAllPath = mode === "BEST" && !categoryCode && !queryTrim && !theme;
   const key = responseScoresKey(mode, categoryCode, limit, queryTrim, theme);
   const scopeRequestKey = requestScopeKey(mode, categoryCode, queryTrim, theme);
   const state = getScoresRouteState();
+  const freshnessTruth = await readFreshnessTruthCached();
   trace.mark("params");
   if (!strictMode) {
     const warmScopeCache = pickFreshCache(state, key);
     if (warmScopeCache && warmScopeCache.funds.length > 0) {
       const surfaceState = resolveScoresApiSurfaceState({ payload: warmScopeCache, degradedReason: null });
+      const warmDiscoveryHealth = deriveDiscoveryHealth({
+        payload: warmScopeCache,
+        scope: {
+          mode,
+          categoryCode,
+          theme,
+          queryTrim,
+        },
+        source: "memory",
+        degradedReason: null,
+        failureClass: null,
+        stale: false,
+        requestConsistent: true,
+      });
+      const warmFresh: FreshnessContract = {
+        state: "fresh",
+        asOf: null,
+        ageMs: null,
+        reason: "asof_unknown",
+      };
       trace.mark("warm_scope_hit");
       return NextResponse.json(
         {
@@ -708,17 +694,24 @@ export async function GET(request: NextRequest) {
           meta: {
             servingWorld: null,
             surfaceState,
-            freshness: {
-              state: "fresh",
-              asOf: null,
-              ageMs: null,
-              reason: "asof_unknown",
-            },
+            freshness: warmFresh,
+            canonicalFreshness: toCanonicalFreshnessContract(warmFresh, "scores_api_memory_warm", {
+              latestSuccessfulSyncAt: freshnessTruth.latestSuccessfulSyncAt,
+              degradedReason: freshnessTruth.degradedReason !== "none" ? freshnessTruth.degradedReason : null,
+            }),
             reliability: {
               overall: "healthy",
               scope: "healthy",
               trustAsFinal: true,
             },
+            discovery: buildDiscoveryPayloadContract({
+              payload: warmScopeCache,
+              scope: discoveryScopeInput(mode, categoryCode, theme, queryTrim, limit),
+              scopeHealth: warmDiscoveryHealth.scopeHealth,
+              discoverySource: "memory",
+              trustAsFinal: true,
+              degradedReason: null,
+            }),
           },
         },
         {
@@ -847,48 +840,26 @@ export async function GET(request: NextRequest) {
     const scopeUniverseTotal = categoryCode
       ? fundListRows.filter((row) => row.categoryCode === categoryCode).length
       : servingFundList.payload.total;
-    const rankedRows = [...servingDiscovery.payload.funds]
-      .filter((row) => (categoryCode ? row.categoryCode === categoryCode : true))
-      .sort((left, right) => left.rank - right.rank);
-    const servingFunds: ScoresApiPayload["funds"] = [];
-    for (const row of rankedRows) {
-      const fund = fundsByCode.get(row.code.trim().toUpperCase());
-      if (!fund) continue;
-      servingFunds.push({
-        fundId: fund.code,
-        code: fund.code,
-        name: fund.name,
-        shortName: fund.shortName,
-        // Serving fund-list payload'ı `logoUrl` taşımıyor; isim tabanlı kural seti
-        // (PORTFOLIO_COMPANY_RULES) ve manifest üzerinden çözüp boş slotları engelliyoruz.
-        logoUrl: getFundLogoUrlForUi(fund.code, fund.code, null, fund.name),
-        lastPrice: fund.lastPrice,
-        dailyReturn: fund.dailyReturn,
-        portfolioSize: fund.portfolioSize,
-        investorCount: fund.investorCount,
-        category: fund.categoryCode ? { code: fund.categoryCode, name: fund.categoryCode } : null,
-        fundType: fund.fundTypeCode != null ? { code: fund.fundTypeCode, name: String(fund.fundTypeCode) } : null,
-        finalScore: row.score,
-      });
-    }
-    if (rankedRows.length > 0 && servingFunds.length < rankedRows.length) {
+    const rankedRows = [...servingDiscovery.payload.funds].sort((left, right) => left.rank - right.rank);
+    const limitedPayload = materializeServingDiscoveryScopeFirst({
+      mode,
+      rankedRows,
+      fundsByCode,
+      categoryCode,
+      theme,
+      queryTrim,
+      universeTotal: scopeUniverseTotal,
+      resultLimit: effectiveLimit,
+    });
+    if (rankedRows.length > 0 && limitedPayload.funds.length === 0 && !theme && !queryTrim) {
       console.warn("[scores-api][serving-join-drift]", {
         ranked: rankedRows.length,
-        joined: servingFunds.length,
+        joined: limitedPayload.funds.length,
         category: categoryCode || "all",
         listEnvelope: servingFundList.envelopeRead,
         discoveryEnvelope: servingDiscovery.envelopeRead,
       });
     }
-    const materialized = createScoresPayload({
-      mode,
-      funds: servingFunds,
-      universeTotal: scopeUniverseTotal,
-      matchedTotal: servingFunds.length,
-    });
-    const queryPayload = queryTrim ? filterScoresPayloadByQuery(materialized, queryTrim) : materialized;
-    const themedPayload = filterScoresPayloadByTheme(queryPayload, theme);
-    const limitedPayload = applyScoresPayloadRowLimit(themedPayload, limit && limit > 0 ? limit : null);
     const discoveryHealth = deriveDiscoveryHealth({
       payload: limitedPayload,
       scope: {
@@ -925,6 +896,10 @@ export async function GET(request: NextRequest) {
       });
     }
     const surfaceState = resolveScoresApiSurfaceState({ payload: limitedPayload, degradedReason: null });
+    const canonicalFreshnessPrimary = toCanonicalFreshnessContract(freshness, "scores_api_serving_primary", {
+      latestSuccessfulSyncAt: freshnessTruth.latestSuccessfulSyncAt,
+      degradedReason: freshnessTruth.degradedReason !== "none" ? freshnessTruth.degradedReason : null,
+    });
     return NextResponse.json(
       {
         ...limitedPayload,
@@ -932,11 +907,20 @@ export async function GET(request: NextRequest) {
           servingWorld,
           surfaceState,
           freshness,
+          canonicalFreshness: canonicalFreshnessPrimary,
           reliability: {
             overall: discoveryHealth.overallDiscoveryHealth,
             scope: discoveryHealth.scopeHealth,
               trustAsFinal: strictServingTrust,
           },
+          discovery: buildDiscoveryPayloadContract({
+            payload: limitedPayload,
+            scope: discoveryScopeInput(mode, categoryCode, theme, queryTrim, limit),
+            scopeHealth: discoveryHealth.scopeHealth,
+            discoverySource: "serving_discovery_index",
+            trustAsFinal: strictServingTrust,
+            degradedReason: null,
+          }),
         },
       },
       {
@@ -982,6 +966,8 @@ export async function GET(request: NextRequest) {
           "X-Data-Freshness-Reason": freshness.reason,
           "X-Data-Freshness-As-Of": freshness.asOf ?? "unknown",
           "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
+          "X-Data-Latest-Successful-Sync-At": freshnessTruth.latestSuccessfulSyncAt ?? "unknown",
+          "X-Data-Freshness-Degraded-Reason": freshnessTruth.degradedReason,
           "X-Discovery-Request-Key": scopeRequestKey,
           ...servingStrictHeaders({ enabled: strictMode, violated: false }),
           ...scoresRouteDurationHeadersMs(startedAt),
@@ -1059,9 +1045,10 @@ export async function GET(request: NextRequest) {
 
   console.info(
     `[discover-server-query] mode=${mode} category=${categoryCode || "all"} theme=${theme ?? "none"} ` +
-      `limit=${limit ?? "none"} q=${queryTrim ? "1" : "0"}`
+      `limit=${limit ?? "none"} effective_limit=${effectiveLimit ?? "none"} q=${queryTrim ? "1" : "0"}`
   );
 
+  let scopedDailySnapshotUsed = false;
   let handledByCriticalPath = false;
   if (isCriticalBestAllPath) {
     const fresh = pickFreshCache(state, key);
@@ -1123,22 +1110,32 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  if (!handledByCriticalPath && categoryCode) {
-    const earlyCategoryList: ScoresApiPayload | null = await readFundsListFallback(mode, categoryCode, queryTrim);
-    if (earlyCategoryList != null && earlyCategoryList.funds.length > 0) {
-      applyResolvedPayload(earlyCategoryList, "funds-list", "funds-list");
-      handledByCriticalPath = true;
-    } else if (earlyCategoryList != null && earlyCategoryList.universeTotal === 0) {
-      applyResolvedPayload(earlyCategoryList, "funds-list", "funds-list");
-      handledByCriticalPath = true;
-    }
-  }
-
   if (!handledByCriticalPath) {
     try {
-      const resolved = await resolveBasePayload(mode, categoryCode, limit);
-      applyResolvedPayload(resolved.payload, "snapshot", resolved.cacheState);
-      if (categoryCode && basePayload.funds.length === 0) {
+      if (theme || queryTrim) {
+        const scopedFirst = await withTimeout(
+          getScopedScoresPayloadFromDailySnapshot({
+            mode,
+            categoryKey: categoryCode,
+            theme,
+            queryTrim,
+            resultLimit: effectiveLimit ?? DEFAULT_SCOPED_DISCOVERY_LIMIT,
+          }),
+          SCORES_SERVER_TIMEOUT_MS
+        ).catch(() => null);
+        if (scopedFirst !== null) {
+          applyResolvedPayload(scopedFirst, "snapshot", "miss");
+          scopedDailySnapshotUsed = true;
+        } else {
+          applyResolvedPayload(buildEmptyPayload(mode), "empty", "empty");
+          degradedReason = "scoped_snapshot_unavailable";
+          scopedDailySnapshotUsed = true;
+        }
+      } else {
+        const resolved = await resolveBasePayload(mode, categoryCode, limit);
+        applyResolvedPayload(resolved.payload, "snapshot", resolved.cacheState);
+      }
+      if (categoryCode && basePayload.funds.length === 0 && !scopedDailySnapshotUsed) {
         const scoresCacheFallback = await readPersistedAllScoresFilteredFallback(mode, categoryCode, queryTrim);
         const fundsListFallback = hasUsableScoresPayload(scoresCacheFallback)
           ? null
@@ -1251,20 +1248,17 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const queryPayload = queryTrim ? filterScoresPayloadByQuery(basePayload, queryTrim) : basePayload;
-  let payload = filterScoresPayloadByTheme(queryPayload, theme);
-  if (theme && payload.funds.length === 0) {
-    const themeFallback = await readThemeFundsListFallback(mode, categoryCode, theme, queryTrim);
-    if (hasUsableScoresPayload(themeFallback)) {
-      payload = themeFallback;
-      source = "funds-list";
-      cacheState = "funds-list";
-      degradedReason = degradedReason
-        ? `${degradedReason}_theme_funds_list_fallback`
-        : "theme_funds_list_fallback";
-    }
+  let payload: ScoresApiPayload;
+  let postQueryRowCount = basePayload.funds.length;
+  if (scopedDailySnapshotUsed) {
+    payload = basePayload;
+    postQueryRowCount = payload.funds.length;
+  } else {
+    const queryPayload = queryTrim ? filterScoresPayloadByQuery(basePayload, queryTrim) : basePayload;
+    postQueryRowCount = queryPayload.funds.length;
+    payload = queryPayload;
   }
-  if (limit != null && limit > 0) {
+  if (!scopedDailySnapshotUsed && limit != null && limit > 0) {
     payload = applyScoresPayloadRowLimit(payload, limit);
   }
   const durationMs = Date.now() - startedAt;
@@ -1352,7 +1346,7 @@ export async function GET(request: NextRequest) {
   );
   console.info(
     `[discover-server-result] mode=${mode} category=${categoryCode || "all"} theme=${theme ?? "none"} ` +
-      `source=${source} cache=${cacheState} base_count=${basePayload.funds.length} query_count=${queryPayload.funds.length} ` +
+      `source=${source} cache=${cacheState} base_count=${basePayload.funds.length} query_count=${postQueryRowCount} ` +
       `server_result_count=${payload.funds.length} universe=${payload.universeTotal} matched=${payload.matchedTotal} ms=${durationMs} empty_reason=${
         payload.funds.length === 0 ? degradedReason ?? "valid_empty" : "none"
       }`
@@ -1369,11 +1363,23 @@ export async function GET(request: NextRequest) {
         servingWorld,
         surfaceState,
         freshness,
+        canonicalFreshness: toCanonicalFreshnessContract(freshness, `scores_api:${source}`, {
+          latestSuccessfulSyncAt: freshnessTruth.latestSuccessfulSyncAt,
+          degradedReason: freshnessTruth.degradedReason !== "none" ? freshnessTruth.degradedReason : null,
+        }),
         reliability: {
           overall: discoveryHealth.overallDiscoveryHealth,
           scope: discoveryHealth.scopeHealth,
           trustAsFinal: discoveryHealth.trustAsFinal,
         },
+        discovery: buildDiscoveryPayloadContract({
+          payload,
+          scope: discoveryScopeInput(mode, categoryCode, theme, queryTrim, limit),
+          scopeHealth: discoveryHealth.scopeHealth,
+          discoverySource: source,
+          trustAsFinal: discoveryHealth.trustAsFinal,
+          degradedReason,
+        }),
       },
     },
     {
@@ -1407,6 +1413,10 @@ export async function GET(request: NextRequest) {
       "X-Data-Freshness-Reason": freshness.reason,
       "X-Data-Freshness-As-Of": freshness.asOf ?? "unknown",
       "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
+      "X-Data-Latest-Successful-Sync-At": freshnessTruth.latestSuccessfulSyncAt ?? "unknown",
+      "X-Data-Freshness-Degraded-Reason": freshnessTruth.degradedReason,
+      "X-Data-Serving-Lag-Days": freshnessTruth.servingLagDays == null ? "unknown" : String(freshnessTruth.servingLagDays),
+      "X-Data-Raw-Lag-Days": freshnessTruth.rawLagDays == null ? "unknown" : String(freshnessTruth.rawLagDays),
       "X-Serving-World-Id": servingWorld?.worldId ?? "none",
       "X-Serving-World-Aligned": servingWorld?.worldAligned ? "1" : "0",
       "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",

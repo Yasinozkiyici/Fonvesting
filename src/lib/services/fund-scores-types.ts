@@ -1,4 +1,5 @@
 import type { RankingMode } from "@/lib/scoring";
+import type { FundThemeId } from "@/lib/fund-themes";
 
 /** /api/funds/scores satırı: tablo ve sıralama için gereken hafif payload */
 export type ScoredFundRow = {
@@ -15,6 +16,8 @@ export type ScoredFundRow = {
   investorCount: number;
   category: { code: string; name: string } | null;
   fundType: { code: number; name: string } | null;
+  /** Kanonik keşif temaları (serving/DB); yoksa legacy isim eşlemesi devreye girer. */
+  themeTags?: FundThemeId[];
 };
 
 export type ScoresApiPayload = {

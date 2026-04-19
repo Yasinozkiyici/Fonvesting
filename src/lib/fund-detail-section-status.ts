@@ -1,4 +1,9 @@
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
+import {
+  countComparisonReferenceRows,
+  deriveComparisonRenderContract,
+  type ComparisonRenderContract,
+} from "@/lib/contracts/comparison-render-contract";
 
 export type FundDetailSectionState = "full" | "partial" | "no_data";
 
@@ -27,6 +32,8 @@ export type FundDetailBehaviorContract = {
   hasLimitedCoverage: boolean;
   comparisonValidRefs: number;
   comparisonTotalRefs: number;
+  /** Tek doğruluk: kıyas render kararı — canRenderComparison ve ref sayıları buradan türetilir. */
+  comparisonContract: ComparisonRenderContract;
   pricePoints: number;
   priceCoverageDays: number;
   trendInvestorPoints: number;
@@ -68,18 +75,7 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 function countComparisonValidRows(data: FundDetailPageData): { valid: number; total: number } {
-  const rowsByRef = data.kiyasBlock?.rowsByRef;
-  if (!rowsByRef) return { valid: 0, total: 0 };
-  let valid = 0;
-  let total = 0;
-  for (const rows of Object.values(rowsByRef)) {
-    if (!rows?.length) continue;
-    total += 1;
-    if (rows.some((item) => isFiniteNumber(item.fundPct) && isFiniteNumber(item.refPct))) {
-      valid += 1;
-    }
-  }
-  return { valid, total };
+  return countComparisonReferenceRows(data);
 }
 
 function performanceState(data: FundDetailPageData): FundDetailSectionState {
@@ -155,14 +151,14 @@ function computePriceWindow(data: FundDetailPageData): { points: number; coverag
 
 export function deriveFundDetailBehaviorContract(data: FundDetailPageData): FundDetailBehaviorContract {
   const sectionStates = deriveFundDetailSectionStates(data);
-  const comparison = countComparisonValidRows(data);
+  const comparisonContract = deriveComparisonRenderContract(data);
   const price = computePriceWindow(data);
   const trendInvestorPoints = data.trendSeries.investorCount.length;
   const trendPortfolioPoints = data.trendSeries.portfolioSize.length;
   const canRenderMainChart = price.points >= MIN_MAIN_CHART_POINTS;
   const canRenderTrendCharts =
     trendInvestorPoints >= MIN_TREND_POINTS || trendPortfolioPoints >= MIN_TREND_POINTS;
-  const canRenderComparison = comparison.valid >= MIN_COMPARISON_VALID_REFS;
+  const canRenderComparison = comparisonContract.renderable;
   const canRenderAlternatives = data.similarFunds.length > 0;
 
   const noUseful =
@@ -210,8 +206,9 @@ export function deriveFundDetailBehaviorContract(data: FundDetailPageData): Fund
     canRenderComparison,
     canRenderAlternatives,
     hasLimitedCoverage: tier === "PARTIAL" || tier === "LOW_DATA",
-    comparisonValidRefs: comparison.valid,
-    comparisonTotalRefs: comparison.total,
+    comparisonValidRefs: comparisonContract.validRefs,
+    comparisonTotalRefs: comparisonContract.attemptedRefs,
+    comparisonContract,
     pricePoints: price.points,
     priceCoverageDays: price.coverageDays,
     trendInvestorPoints,

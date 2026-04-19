@@ -26,7 +26,9 @@ import {
 } from "@/lib/client-data";
 import { readScoresUniverseTotal } from "@/lib/scores-response-counts";
 import { shouldStopBootstrapRetries } from "@/lib/scored-funds-bootstrap";
-import { fundMatchesTheme, getFundTheme, type FundThemeId } from "@/lib/fund-themes";
+import { DEFAULT_SCOPED_DISCOVERY_LIMIT } from "@/lib/contracts/discovery-limits";
+import { fundRowMatchesCanonicalTheme } from "@/lib/services/fund-theme-classification";
+import { getFundTheme, type FundThemeId } from "@/lib/fund-themes";
 import { fundTypeSortKey } from "@/lib/fund-type-display";
 import {
   getFundIntent,
@@ -35,7 +37,10 @@ import {
 } from "@/lib/fund-intents";
 import { fundSearchMatches, normalizeFundSearchText } from "@/lib/fund-search";
 import {
-  deriveHomepageDiscoveryTableSurfaceState,
+  deriveDiscoverySurfaceState,
+  type DiscoverySurfaceState,
+} from "@/lib/contracts/discovery-surface-state";
+import {
   resolveHomepageRegisteredTotal,
 } from "@/lib/data-flow/homepage-discovery-surface";
 
@@ -254,6 +259,8 @@ interface ScoredFundsTableProps {
    * null ise satır sayısı / payload.total ile asla doldurulmaz.
    */
   referenceUniverseTotal?: number | null;
+  /** Keşif: tablo ile aynı `/api/funds/scores` yanıtını öne çıkan üçlü vb. ile paylaşır. */
+  onDiscoveryPayloadReady?: (payload: ScoredResponse) => void;
 }
 
 export default function ScoredFundsTable({
@@ -272,6 +279,7 @@ export default function ScoredFundsTable({
   quickStartUniverseHint = null,
   quickStartOnClear,
   referenceUniverseTotal = null,
+  onDiscoveryPayloadReady,
 }: ScoredFundsTableProps) {
   const seededInitialData = normalizeScoredResponse(initialData);
   const seededInitialDataLooksPartial = Boolean(
@@ -334,6 +342,7 @@ export default function ScoredFundsTable({
     request: "unknown",
   });
   const [lastFreshnessState, setLastFreshnessState] = useState<"fresh" | "stale_ok" | "degraded_outdated" | "unknown">("unknown");
+  const [lastFreshnessReason, setLastFreshnessReason] = useState<string>("none");
   const [bootstrapSource, setBootstrapSource] = useState<BootstrapSource>(() => {
     if (seededInitialData && seededInitialData.funds.length > 0) return "ssr";
     return "bootstrap_fallback";
@@ -567,11 +576,11 @@ export default function ScoredFundsTable({
     setBootstrapAttemptCount(0);
     setDegradedNotice(null);
     const timeoutMs = scoresFetchTimeoutForMode(rankingMode);
-    // Tema / kategori süzgeci istemcide uygulanıyorsa dar limit üst sıradaki fonlarda kalır → yanlış boş liste.
-    const needsWideScoresPayload = Boolean(activeTheme) || (enableCategoryFilter && Boolean(category)) || Boolean(activeQuery);
-    const modeLimitParam = activeTheme
-      ? "&limit=2500"
-      : rankingMode === "HIGH_RETURN" && !needsWideScoresPayload
+    // Tema veya metin süzgeci: sunucu scope-first dar pencere (geniş çekim + istemci süzme yok).
+    const scopeNeedsDefaultLimit = Boolean(activeTheme) || Boolean(activeQuery);
+    const modeLimitParam = scopeNeedsDefaultLimit
+      ? `&limit=${DEFAULT_SCOPED_DISCOVERY_LIMIT}`
+      : rankingMode === "HIGH_RETURN"
         ? "&limit=300"
         : "";
     const categoryParam =
@@ -693,6 +702,7 @@ export default function ScoredFundsTable({
           request: headerValue(headers, "x-discovery-request-health") || "unknown",
         });
         const freshnessStateHeader = headerValue(headers, "x-data-freshness-state");
+        const freshnessReasonHeader = headerValue(headers, "x-data-freshness-degraded-reason");
         setLastFreshnessState(
           freshnessStateHeader === "fresh" ||
             freshnessStateHeader === "stale_ok" ||
@@ -700,6 +710,7 @@ export default function ScoredFundsTable({
             ? freshnessStateHeader
             : "unknown"
         );
+        setLastFreshnessReason(freshnessReasonHeader || "none");
         setLastScoresMeta({
           degraded: degradedHeader,
           source: sourceHeader,
@@ -796,6 +807,7 @@ export default function ScoredFundsTable({
             setBootstrapSource("last_good");
             markFirstRowsVisible("scores", json.funds.length);
           }
+          onDiscoveryPayloadReady?.(json);
         }
         setError(null);
 
@@ -903,6 +915,7 @@ export default function ScoredFundsTable({
     seededInitialData,
     seededInitialDataLooksPartial,
     storageHydrated,
+    onDiscoveryPayloadReady,
   ]);
 
   useEffect(() => {
@@ -976,7 +989,7 @@ export default function ScoredFundsTable({
     const funds = displayPayload?.funds ?? [];
     // Sunucu /api/funds/scores?theme=... ile daralttıysa istemcide ikinci kez daraltma false-empty üretebilir.
     if (!activeTheme || serverScopedByTheme) return funds;
-    return funds.filter((fund) => fundMatchesTheme(fund, activeTheme));
+    return funds.filter((fund) => fundRowMatchesCanonicalTheme(fund, activeTheme));
   }, [activeTheme, displayPayload, serverScopedByTheme]);
 
   /** Keşif modunda URL/şerit ile uyumlu satır sayısı (arama metni hariç). */
@@ -1096,30 +1109,40 @@ export default function ScoredFundsTable({
   const totalPages = Math.max(1, Math.ceil(filteredFunds.length / pageSize));
   const paginatedFunds = filteredFunds.slice((page - 1) * pageSize, page * pageSize);
   const hasFilters = Boolean(search || (enableCategoryFilter && category) || activeIntent || activeTheme);
-  const tableSurfaceState = useMemo(
+  const discoverySurfaceState: DiscoverySurfaceState = useMemo(
     () =>
-      deriveHomepageDiscoveryTableSurfaceState({
-        loading,
-        bootstrapFallbackActive,
-        error,
-        paginatedCount: paginatedFunds.length,
-        hasFilters,
-        scoresMeta: {
-          degraded: lastScoresMeta.degraded,
-          emptyResult: lastScoresMeta.emptyResult,
-        },
+      deriveDiscoverySurfaceState({
+        loading: loading || bootstrapFallbackActive,
+        error: Boolean(error),
+        hasRenderableRows: paginatedFunds.length > 0,
+        surfaceState: displayPayload?.scoresSurfaceState ?? null,
+        degradedHeader:
+          lastScoresMeta.emptyResult === "degraded" ||
+          Boolean(lastScoresMeta.degraded),
       }),
     [
       bootstrapFallbackActive,
       error,
-      hasFilters,
+      displayPayload?.scoresSurfaceState,
       lastScoresMeta.degraded,
       lastScoresMeta.emptyResult,
       loading,
       paginatedFunds.length,
     ]
   );
-  const showTableLoadingSkeleton = tableSurfaceState.kind === "loading";
+  const showTableLoadingSkeleton = discoverySurfaceState === "loading_initial";
+  const showRefreshingNotice = discoverySurfaceState === "loading_refresh";
+  const showDegradedScoped = discoverySurfaceState === "degraded_scoped";
+  const degradedScopedMessage =
+    lastFreshnessReason === "source_unavailable"
+      ? "Kaynak erişimi doğrulanamadı. Bu kapsam için liste geçici olarak üretilemedi."
+      : lastFreshnessReason === "serving_lagging_raw"
+        ? "Serving verisi ham içe aktarmanın gerisinde. Bu kapsam geçici olarak üretilemedi."
+        : lastFreshnessReason === "scoped_snapshot_unavailable"
+          ? "Scoped snapshot şu an alınamadı. Liste kısa süre sonra yeniden denenecek."
+          : lastFreshnessReason === "sync_meta_malformed"
+            ? "Günlük senkron meta kaydı doğrulanamadı. Tazelik doğrusu geçici olarak düşürüldü."
+            : "Bu kapsam için skor kaynağı şu an kararsız. Liste geçici olarak üretilemedi; lütfen kısa süre sonra tekrar deneyin.";
   useEffect(() => {
     console.info(
       `[discover-client-filter] mode=${rankingMode} category=${category || "all"} theme=${activeTheme ?? "none"} ` +
@@ -1365,13 +1388,9 @@ export default function ScoredFundsTable({
       data-discovery-completeness-health={lastDiscoveryHealth.completeness}
       data-discovery-freshness-health={lastDiscoveryHealth.freshness}
       data-discovery-request-health={lastDiscoveryHealth.request}
-      data-discovery-table-surface-state={tableSurfaceState.kind}
-      data-surface-state={tableSurfaceState.kind}
-      data-surface-reason={
-        tableSurfaceState.kind === "degraded_empty" || tableSurfaceState.kind === "error"
-          ? tableSurfaceState.reason
-          : "none"
-      }
+      data-discovery-table-surface-state={discoverySurfaceState}
+      data-surface-state={discoverySurfaceState}
+      data-surface-reason={showDegradedScoped ? "degraded_scoped" : error ? "error" : "none"}
     >
       <header
         className="fund-table-chrome border-b px-3 py-2 sm:px-4 sm:py-2.5 md:py-2.5"
@@ -1439,6 +1458,23 @@ export default function ScoredFundsTable({
                       : "Data outdated"}
                 </span>
               ) : null}
+              {!loading && !error && lastFreshnessState !== "fresh" && lastFreshnessReason !== "none" ? (
+                <span
+                  className="mt-0.5 block w-full text-[10.5px] font-medium leading-snug sm:mt-0 sm:inline sm:w-auto sm:text-[11px]"
+                  style={{ color: "var(--text-tertiary)" }}
+                  aria-live="polite"
+                >
+                  {lastFreshnessReason === "source_unavailable"
+                    ? "Kaynak erişimi doğrulanamadı."
+                    : lastFreshnessReason === "serving_lagging_raw"
+                      ? "Serving ham verinin gerisinde."
+                      : lastFreshnessReason === "scoped_snapshot_unavailable"
+                        ? "Scoped snapshot geçici olarak alınamıyor."
+                        : lastFreshnessReason === "sync_meta_malformed"
+                          ? "Sync meta doğrulaması geçici olarak bozuk."
+                          : "Veri güncelliği düşmüş olabilir."}
+                </span>
+              ) : null}
               {!loading && !error && resultCountCaption ? (
                 <span
                   className="mt-0.5 block w-full text-[10.5px] font-medium leading-snug tabular-nums sm:mt-0 sm:inline sm:w-auto sm:text-[11px]"
@@ -1455,6 +1491,15 @@ export default function ScoredFundsTable({
                   aria-live="polite"
                 >
                   {degradedNotice}
+                </span>
+              ) : null}
+              {showRefreshingNotice ? (
+                <span
+                  className="mt-0.5 block w-full text-[10.5px] font-medium leading-snug sm:text-[11px]"
+                  style={{ color: "var(--text-tertiary)" }}
+                  aria-live="polite"
+                >
+                  Liste güncelleniyor, mevcut sonuçlar korunuyor.
                 </span>
               ) : null}
             </div>
@@ -1714,12 +1759,16 @@ export default function ScoredFundsTable({
               </div>
             </div>
           ))
-        ) : tableSurfaceState.kind === "error" && paginatedFunds.length === 0 ? (
+        ) : discoverySurfaceState === "error" && paginatedFunds.length === 0 ? (
           <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="error">
             {error}
           </p>
+        ) : showDegradedScoped && paginatedFunds.length === 0 ? (
+          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="degraded_scoped">
+            {degradedScopedMessage}
+          </p>
         ) : paginatedFunds.length === 0 ? (
-          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="valid">
+          <p className="py-10 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="empty_scoped">
             {emptyListMessage}
           </p>
         ) : (
@@ -1787,15 +1836,21 @@ export default function ScoredFundsTable({
                   </td>
                 </tr>
               ))
-            ) : tableSurfaceState.kind === "error" && paginatedFunds.length === 0 ? (
+            ) : discoverySurfaceState === "error" && paginatedFunds.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="error">
                   {error}
                 </td>
               </tr>
+            ) : showDegradedScoped && paginatedFunds.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="degraded_scoped">
+                  {degradedScopedMessage}
+                </td>
+              </tr>
             ) : paginatedFunds.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="valid">
+                <td colSpan={8} className="px-6 py-14 text-center text-sm" style={{ color: "var(--text-muted)" }} data-discovery-empty-state="empty_scoped">
                   {emptyListMessage}
                 </td>
               </tr>

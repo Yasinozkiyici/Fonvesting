@@ -1,4 +1,8 @@
+import type { DiscoveryPayloadContract } from "@/lib/contracts/discovery-payload-contract";
+import type { CanonicalFreshnessContract } from "@/lib/freshness-contract";
 import type { RankingMode } from "@/lib/scoring";
+import type { ScoresApiSurfaceState } from "@/app/api/funds/scores/contract";
+import type { FundThemeId } from "@/lib/fund-themes";
 
 export interface ScoredFund {
   fundId: string;
@@ -13,6 +17,7 @@ export interface ScoredFund {
   category: { code: string; name: string } | null;
   fundType: { code: number; name: string } | null;
   finalScore: number | null;
+  themeTags?: FundThemeId[];
 }
 
 export interface ScoredResponse {
@@ -31,4 +36,10 @@ export interface ScoredResponse {
   funds: ScoredFund[];
   /** Sunucu metin filtresi uygulandıysa (q/query) */
   appliedQuery?: string;
+  /** meta.discovery — varsa toplamlar yalnızca buradan yorumlanmalıdır. */
+  discoveryContract?: DiscoveryPayloadContract | null;
+  /** meta.surfaceState */
+  scoresSurfaceState?: ScoresApiSurfaceState | null;
+  /** meta.canonicalFreshness veya istemci türetimi */
+  canonicalFreshness?: CanonicalFreshnessContract | null;
 }

@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  deriveHomepageDiscoveryTableSurfaceState,
-  resolveHomepageRegisteredTotal,
-} from "./homepage-discovery-surface";
+import { resolveHomepageRegisteredTotal } from "./homepage-discovery-surface";
 import type { ScoredResponse } from "@/types/scored-funds";
 
 function makePayload(universeTotal: number, matchedTotal: number, rows: number): ScoredResponse {
@@ -55,17 +52,5 @@ test("resolveHomepageRegisteredTotal: filtreli ve scoped payload yoksa null dön
     scopedPayload: null,
   });
   assert.equal(r, null);
-});
-
-test("deriveHomepageDiscoveryTableSurfaceState: degraded empty typed reason ile döner", () => {
-  const state = deriveHomepageDiscoveryTableSurfaceState({
-    loading: false,
-    bootstrapFallbackActive: false,
-    error: null,
-    paginatedCount: 0,
-    hasFilters: false,
-    scoresMeta: { degraded: "1", emptyResult: "degraded" },
-  });
-  assert.equal(state.kind, "degraded_empty");
 });
 

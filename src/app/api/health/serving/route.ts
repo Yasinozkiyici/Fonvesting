@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readLatestServingHeads } from "@/lib/data-platform/serving-head";
 import { evaluateServingUniverseIntegrity } from "@/lib/data-platform/serving-integrity";
 import { prisma } from "@/lib/prisma";
+import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,7 +22,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const [heads, counts] = await Promise.all([
+  const [heads, counts, freshnessTruth] = await Promise.all([
     readLatestServingHeads(),
     Promise.all([
       prisma.servingFundList.count().catch(() => -1),
@@ -42,6 +43,7 @@ export async function GET(request: Request) {
       rawParseFailed,
       canonicalSnapshots,
     })),
+    readFreshnessTruthCached(),
   ]);
 
   const latestBuildId = heads.fundList?.buildId ?? null;
@@ -95,7 +97,9 @@ export async function GET(request: Request) {
     quality: {
       buildAligned: Boolean(alignedBuildId),
       detailAligned,
+      servingLaggingRaw: (freshnessTruth.servingLagDays ?? 0) > 0,
     },
+    freshnessTruth,
     latest: {
       fundList: heads.fundList,
       fundDetail: heads.fundDetail,

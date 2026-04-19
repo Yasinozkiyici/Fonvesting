@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getBuildFingerprint } from "@/lib/build-fingerprint";
 import { resolveDbConnectionProfile } from "@/lib/db/db-connection-profile";
 import { getSystemHealthSnapshot } from "@/lib/system-health";
+import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
   const includeExternalProbes = fullDetails && requestUrl.searchParams.get("probes") === "1";
   const healthMode = fullDetails ? "full" : "light";
   let snapshot: Awaited<ReturnType<typeof getSystemHealthSnapshot>>;
+  const freshnessTruth = await readFreshnessTruthCached();
   if (!fullDetails) {
     const state = getHealthRouteState();
     const cached = state.lightCache;
@@ -118,6 +120,11 @@ export async function GET(request: Request) {
     "X-Daily-Sync-Publish-Status": snapshot.jobs.dailySyncStatus?.publishStatus ?? "unknown",
     "X-Daily-Sync-Missed-Sla": snapshot.jobs.dailySyncStatus?.missedSlaToday ? "1" : "0",
     "X-Daily-Sync-Run-Key": snapshot.jobs.dailySyncStatus?.runKey ?? "none",
+    "X-Freshness-Status": freshnessTruth.freshnessStatus,
+    "X-Freshness-Degraded-Reason": freshnessTruth.degradedReason,
+    "X-Freshness-Latest-Successful-Sync-At": freshnessTruth.latestSuccessfulSyncAt ?? "unknown",
+    "X-Freshness-Serving-Lag-Days": freshnessTruth.servingLagDays == null ? "unknown" : String(freshnessTruth.servingLagDays),
+    "X-Freshness-Raw-Lag-Days": freshnessTruth.rawLagDays == null ? "unknown" : String(freshnessTruth.rawLagDays),
     "X-Build-Commit": buildFingerprint.commitShort ?? "unknown",
     "X-Build-Env": buildFingerprint.env ?? "unknown",
   };
@@ -169,6 +176,7 @@ export async function GET(request: Request) {
           latestMacroObservationDate: snapshot.freshness.latestMacroObservationDate,
           lastSuccessfulIngestionAt: snapshot.freshness.lastSuccessfulIngestionAt,
           lastPublishedSnapshotAt: snapshot.freshness.lastPublishedSnapshotAt,
+          canonicalTruth: freshnessTruth,
         },
         integrity: {
           macroSyncStatus: snapshot.integrity.macroSyncStatus,
@@ -198,6 +206,7 @@ export async function GET(request: Request) {
   return NextResponse.json(
     {
       ...snapshot,
+      freshnessTruth,
       service: "fonvesting",
       timestamp: snapshot.checkedAt,
       build: {

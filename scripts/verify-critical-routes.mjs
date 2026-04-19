@@ -44,9 +44,9 @@ async function runContractCheck(group, route) {
         throw new Error(`http_${response.status}`);
       }
 
-      const nonEmptyOk = route.expectedNonEmpty(payload);
-      const degradedOk = route.degradedContract(payload);
-      const emptyOk = route.emptyAllowed(payload);
+      const nonEmptyOk = route.expectedNonEmpty(payload, response);
+      const degradedOk = route.degradedContract(payload, response);
+      const emptyOk = route.emptyAllowed(payload, response);
       const passByScenario = scenario === "degraded" ? degradedOk : nonEmptyOk || emptyOk;
       const failureScope = degradedOk ? "live-path-only" : "total-path";
       if (!passByScenario) {

@@ -6,8 +6,9 @@ import {
   type FundDataReliabilityClass,
   type HealthState,
 } from "@/lib/fund-data-reliability";
+import type { DiscoveryScopeInput } from "@/lib/contracts/discovery-scope";
 import type { ScoresApiPayload } from "@/lib/services/fund-scores-types";
-import { fundMatchesTheme, type FundThemeId } from "@/lib/fund-themes";
+import { fundRowMatchesCanonicalTheme } from "@/lib/services/fund-theme-classification";
 
 export type DiscoveryHealth = {
   scopeHealth: HealthState;
@@ -20,12 +21,11 @@ export type DiscoveryHealth = {
   reasons: string[];
 };
 
-export type DiscoveryScope = {
-  mode: string;
-  categoryCode: string;
-  theme: FundThemeId | null;
-  queryTrim: string;
-};
+/** Keşif sağlığı hesapları için kapsam (limit hariç). */
+export type DiscoveryScope = Pick<
+  DiscoveryScopeInput,
+  "mode" | "categoryCode" | "theme" | "queryTrim"
+>;
 
 function normalizeQuery(value: string): string {
   return value.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
@@ -40,7 +40,7 @@ function isScopeAligned(payload: ScoresApiPayload, scope: DiscoveryScope): boole
   const normalizedQuery = normalizeQuery(scope.queryTrim);
   return payload.funds.every((fund) => {
     if (scope.categoryCode && fund.category?.code !== scope.categoryCode) return false;
-    if (scope.theme && !fundMatchesTheme(fund, scope.theme)) return false;
+    if (scope.theme && !fundRowMatchesCanonicalTheme(fund, scope.theme)) return false;
     if (normalizedQuery) {
       const text = `${fund.code} ${fund.name} ${fund.shortName ?? ""}`.toLocaleLowerCase("tr-TR");
       if (!text.includes(normalizedQuery)) return false;

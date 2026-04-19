@@ -21,6 +21,7 @@ import type { CompareSeriesClientPayload } from "@/lib/compare-series-client-pay
 import { normalizeCompareSeriesResponseBody } from "@/lib/compare-series-client-payload";
 import type { FundDetailPageData } from "@/lib/services/fund-detail.service";
 import type { KiyasPeriodId, KiyasRefKey } from "@/lib/services/fund-detail-kiyas.service";
+import type { FundDetailComparisonPayload } from "@/lib/contracts/fund-detail-comparison-subsystem";
 import {
   BENCHMARK_COMPARISON_TIE_EPS_PP,
   buildBenchmarkComparisonView,
@@ -29,7 +30,6 @@ import {
   type BenchmarkComparisonRow,
 } from "@/lib/fund-detail-comparison";
 import {
-  COMPARISON_SUMMARY_DEGRADED_NO_SECTION_LEAD,
   COMPARISON_SUMMARY_INSUFFICIENT_ROWS_LEAD,
   resolveFundDetailComparisonSummaryPanelState,
   validateFundDetailComparisonSummaryState,
@@ -314,6 +314,9 @@ export function FundDetailChart({ data }: Props) {
   const [hoverState, setHoverState] = useState<{ x: number; point: Point } | null>(null);
   const [compareData, setCompareData] = useState<CompareSeriesClientPayload | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState(false);
+  const [comparisonPayload, setComparisonPayload] = useState<FundDetailComparisonPayload | null>(null);
+  const [comparisonPayloadPhase, setComparisonPayloadPhase] = useState<"idle" | "loading" | "ready">("idle");
   const [comparisonExpanded, setComparisonExpanded] = useState(false);
   const [showCompareControls, setShowCompareControls] = useState(false);
   const [fundOnCompare, setFundOnCompare] = useState(false);
@@ -325,6 +328,7 @@ export function FundDetailChart({ data }: Props) {
   const compareAutoPrefetchAttemptRef = useRef(0);
   const [isNarrowViewport, setIsNarrowViewport] = useState(false);
   const behavior = useMemo(() => deriveFundDetailBehaviorContract(data), [data]);
+  const comparisonBlock = comparisonPayload?.block ?? null;
   const compareDebugRenderCountRef = useRef(0);
 
   useEffect(() => {
@@ -346,6 +350,33 @@ export function FundDetailChart({ data }: Props) {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
+
+  useEffect(() => {
+    const code = data.fund.code.trim().toUpperCase();
+    if (!code) return;
+    const controller = new AbortController();
+    setComparisonPayloadPhase("loading");
+    fetch(`/api/funds/comparison?code=${encodeURIComponent(code)}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return (await res.json()) as unknown;
+      })
+      .then((json) => {
+        if (controller.signal.aborted) return;
+        if (!json || typeof json !== "object" || Array.isArray(json)) {
+          setComparisonPayload(null);
+          return;
+        }
+        setComparisonPayload(json as FundDetailComparisonPayload);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setComparisonPayload(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setComparisonPayloadPhase("ready");
+      });
+    return () => controller.abort();
+  }, [data.fund.code]);
 
   const loadCompareData = useCallback(async () => {
     if (compareRequestRef.current) {
@@ -456,7 +487,7 @@ export function FundDetailChart({ data }: Props) {
     setFundOnCompare(true);
   };
 
-  const chartMacro = data.kiyasBlock?.chartMacroByRef;
+  const chartMacro = comparisonBlock?.chartMacroByRef;
   const rawSeriesMap = useMemo<Record<string, Point[]>>(() => {
     const map: Record<string, Point[]> = {
       fund: fundSeries,
@@ -685,7 +716,7 @@ export function FundDetailChart({ data }: Props) {
   const comparisonViewFromWindow = useMemo(
     () =>
       buildBenchmarkComparisonView({
-        block: data.kiyasBlock,
+        block: comparisonBlock,
         periodId: comparisonPeriodId,
         selectedRef: selectedBenchmarkRef,
         labels: compareData?.labels,
@@ -712,7 +743,7 @@ export function FundDetailChart({ data }: Props) {
       comparisonEndT,
       comparisonPeriodId,
       comparisonStartT,
-      data.kiyasBlock,
+      comparisonBlock,
       fundWindow,
       rawSeriesMap,
       selectedBenchmarkRef,
@@ -722,16 +753,16 @@ export function FundDetailChart({ data }: Props) {
   /** Seri hizası düşük olduğunda pencere tabanlı satır üretimi boş kalabiliyor; kiyasBlock özet satırları yedek olarak kullanılır. */
   const comparisonViewFromBlock = useMemo(
     () =>
-      data.kiyasBlock
+      comparisonBlock
         ? buildBenchmarkComparisonView({
-            block: data.kiyasBlock,
+            block: comparisonBlock,
             periodId: comparisonPeriodId,
             selectedRef: selectedBenchmarkRef,
             labels: compareData?.labels,
             preferredOrder: BENCHMARK_REF_ORDER,
           })
         : null,
-    [compareData?.labels, comparisonPeriodId, data.kiyasBlock, selectedBenchmarkRef]
+    [compareData?.labels, comparisonPeriodId, comparisonBlock, selectedBenchmarkRef]
   );
 
   const comparisonView = useMemo(() => {
@@ -768,10 +799,23 @@ export function FundDetailChart({ data }: Props) {
   const comparisonHasRenderablePayload =
     comparisonHasMeaningfulData ||
     (comparisonRows.length > 0 && mainChartHasRenderablePayload);
-  const shouldRenderComparisonSection = shouldRenderSectionFromContract(
-    behavior.canRenderComparison,
-    comparisonHasRenderablePayload
-  );
+  const shouldRenderComparisonSection = true;
+  const comparisonSubsystemState =
+    comparisonPayloadPhase === "loading"
+      ? ("loading" as const)
+      : (comparisonPayload?.state ?? ("source_unavailable" as const));
+  const detailFreshnessNotice = useMemo(() => {
+    const freshness = data.canonicalFreshness;
+    if (!freshness) return null;
+    if (freshness.degradedReason === "source_unavailable") {
+      return "Kaynak erişimi doğrulanamadı; veriler güncel olmayabilir.";
+    }
+    if (freshness.freshnessStatus === "fresh") return null;
+    if (freshness.degradedReason === "serving_lagging_raw") {
+      return "Serving verisi ham içe aktarmanın gerisinde; güncelleme tamamlanana kadar bu değerler gecikmeli kalabilir.";
+    }
+    return "Veri güncelliği düşmüş görünüyor; günlük senkron tamamlanana kadar değerler gecikmeli olabilir.";
+  }, [data.canonicalFreshness]);
   const comparisonSummaryPanelState = useMemo(
     () =>
       resolveFundDetailComparisonSummaryPanelState({
@@ -801,10 +845,11 @@ export function FundDetailChart({ data }: Props) {
       JSON.stringify({
         code: data.fund.code,
         panelState: comparisonSummaryPanelState,
-        canRenderComparison: behavior.canRenderComparison,
+        canRenderComparison: behavior.comparisonContract.renderable,
+        comparisonReason: behavior.comparisonContract.reason,
         comparisonValidRefs: behavior.comparisonValidRefs,
         comparisonTotalRefs: behavior.comparisonTotalRefs,
-        kiyasBlockPresent: Boolean(data.kiyasBlock),
+        kiyasBlockPresent: Boolean(comparisonBlock),
         comparisonRows: comparisonRows.length,
         meaningfulComparableRows: comparisonHasMeaningfulData ? 1 : 0,
         degradedActive: Boolean(data.degraded?.active),
@@ -821,7 +866,7 @@ export function FundDetailChart({ data }: Props) {
     data.degraded?.active,
     data.degraded?.reliabilityClass,
     data.fund.code,
-    data.kiyasBlock,
+    comparisonBlock,
     data.overallDetailHealth?.reliabilityClass,
   ]);
   useEffect(() => {
@@ -1033,6 +1078,11 @@ export function FundDetailChart({ data }: Props) {
               {behavior.hasLimitedCoverage && detailHistorySourceFromData(data) !== "history" ? (
                 <p className="mt-2 text-[10px] leading-snug sm:text-[11px]" style={{ color: "var(--text-tertiary)" }}>
                   {behavior.limitedCoverageCopy ?? "Grafik mevcut veri penceresiyle gösteriliyor."}
+                </p>
+              ) : null}
+              {detailFreshnessNotice ? (
+                <p className="mt-2 text-[10px] leading-snug sm:text-[11px]" style={{ color: "var(--warning-text, #92400e)" }}>
+                  {detailFreshnessNotice}
                 </p>
               ) : null}
             </div>
@@ -1360,7 +1410,7 @@ export function FundDetailChart({ data }: Props) {
         data-fund-detail-comparison-server-total-refs={String(behavior.comparisonTotalRefs)}
         data-fund-detail-comparison-rows={String(comparisonRows.length)}
         data-fund-detail-comparison-meaningful-rows={comparisonHasMeaningfulData ? "1" : "0"}
-        data-fund-detail-comparison-kiyas-block={data.kiyasBlock ? "1" : "0"}
+        data-fund-detail-comparison-kiyas-block={comparisonBlock ? "1" : "0"}
       >
         <div className="border-b pb-2.5 sm:pb-3" style={{ borderColor: "color-mix(in srgb, var(--border-subtle) 88%, transparent)" }}>
           <div className="min-w-0">
@@ -1385,7 +1435,7 @@ export function FundDetailChart({ data }: Props) {
           </div>
         </div>
         {/* Renderable payload must win over coarse contract flags to avoid silent UI disappearance. */}
-        {!shouldRenderComparisonSection ? (
+        {comparisonSubsystemState === "loading" ? (
           <div
             className="mt-2.5 rounded-[0.72rem] border px-3 py-2.5 text-[11px] leading-relaxed sm:mt-3 sm:px-3.5 sm:py-3 sm:text-[11.5px]"
             style={{
@@ -1393,16 +1443,45 @@ export function FundDetailChart({ data }: Props) {
               background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
               color: "var(--text-secondary)",
             }}
-            data-fund-detail-comparison-degraded-reason={comparisonSummaryDegradedReasonAttr}
+            data-fund-detail-comparison-state="loading"
+          >
+            Karşılaştırma hazırlanıyor…
+          </div>
+        ) : comparisonSubsystemState === "no_comparable_refs" ? (
+          <div
+            className="mt-2.5 rounded-[0.72rem] border px-3 py-2.5 text-[11px] leading-relaxed sm:mt-3 sm:px-3.5 sm:py-3 sm:text-[11.5px]"
+            style={{
+              borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+              background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+              color: "var(--text-secondary)",
+            }}
+            data-fund-detail-comparison-state="no_comparable_refs"
+          >
+            Bu fon için şu an kıyaslanabilir referans bulunamadı.
+          </div>
+        ) : comparisonSubsystemState === "degraded_timeout" ||
+          comparisonSubsystemState === "source_unavailable" ||
+          comparisonSubsystemState === "error" ? (
+          <div
+            className="mt-2.5 rounded-[0.72rem] border px-3 py-2.5 text-[11px] leading-relaxed sm:mt-3 sm:px-3.5 sm:py-3 sm:text-[11.5px]"
+            style={{
+              borderColor: "color-mix(in srgb, var(--border-subtle) 82%, transparent)",
+              background: "color-mix(in srgb, var(--card-bg) 96%, var(--bg-muted))",
+              color: "var(--text-secondary)",
+            }}
+            data-fund-detail-comparison-state={comparisonSubsystemState}
           >
             <p className="font-semibold" style={{ color: "var(--text-primary)" }}>
-              {COMPARISON_SUMMARY_DEGRADED_NO_SECTION_LEAD}
+              {comparisonSubsystemState === "degraded_timeout"
+                ? "Karşılaştırma zaman aşımına uğradı."
+                : comparisonSubsystemState === "source_unavailable"
+                  ? "Karşılaştırma kaynağı şu an kullanılamıyor."
+                  : "Karşılaştırma şu an üretilemedi."}
             </p>
             <p className="mt-1.5 text-[10px] sm:text-[10.5px]" style={{ color: "var(--text-secondary)" }}>
-              {behavior.comparisonFallbackCopy}
-            </p>
-            <p className="mt-1 text-[10px] sm:text-[10.5px]" style={{ color: "var(--text-muted)" }}>
-              Uygun referans oluştuğunda bu alan otomatik güncellenir.
+              {comparisonSubsystemState === "degraded_timeout"
+                ? "Sunucu yoğun olabilir. Biraz sonra yeniden deneyin."
+                : "Bu alan, kaynak hazır olduğunda otomatik zenginleşir."}
             </p>
           </div>
         ) : comparisonRows.length === 0 ? (

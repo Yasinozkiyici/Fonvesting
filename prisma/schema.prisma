@@ -405,6 +405,22 @@ model FundHealthDaily {
   @@map("fund_health_daily")
 }
 
+/**
+ * Kanonik keşif teması: rebuild/backfill ile doldurulur; runtime’da isim token’ı tahmini yerine bu tablo.
+ * themeId: FUND_THEMES.id ile uyumlu string (örn. green_energy).
+ */
+model FundThemeTag {
+  fundCode  String   @map("fund_code")
+  themeId   String   @map("theme_id")
+  source    String   @default("inferred_v1")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@id([fundCode, themeId])
+  @@index([themeId])
+  @@index([fundCode])
+  @@map("fund_theme_tag")
+}
+
 model ServingFundList {
   id           String   @id @default(cuid())
   buildId      String   @unique @map("build_id")

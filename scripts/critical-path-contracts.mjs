@@ -7,7 +7,12 @@ export const CRITICAL_API_CONTRACTS = [
         id: "scores_best_unfiltered",
         path: "/api/funds/scores?mode=BEST&limit=300",
         expectedNonEmpty(payload) {
-          return Array.isArray(payload?.funds) && payload.funds.length > 0;
+          return (
+            Array.isArray(payload?.funds) &&
+            payload.funds.length > 0 &&
+            payload?.meta?.canonicalFreshness &&
+            typeof payload.meta.canonicalFreshness.freshnessStatus === "string"
+          );
         },
         degradedContract(payload) {
           return Array.isArray(payload?.funds) && typeof payload?.total === "number";
@@ -18,9 +23,14 @@ export const CRITICAL_API_CONTRACTS = [
       },
       {
         id: "scores_filtered",
-        path: "/api/funds/scores?mode=BEST&category=HISSE&limit=150",
+        path: "/api/funds/scores?mode=BEST&category=HISSE&theme=technology&q=fon&limit=150",
         expectedNonEmpty(payload) {
-          return Array.isArray(payload?.funds) && payload.funds.length > 0;
+          return (
+            Array.isArray(payload?.funds) &&
+            typeof payload?.matchedTotal === "number" &&
+            payload?.meta?.discovery &&
+            payload.meta.discovery.scope?.active === true
+          );
         },
         degradedContract(payload) {
           return Array.isArray(payload?.funds) && typeof payload?.total === "number";
@@ -33,7 +43,7 @@ export const CRITICAL_API_CONTRACTS = [
   },
   {
     id: "comparison",
-    label: "Comparison Payload",
+    label: "Comparison Payloads",
     checks: [
       {
         id: "comparison_payload",
@@ -46,6 +56,25 @@ export const CRITICAL_API_CONTRACTS = [
         },
         emptyAllowed(payload) {
           return Array.isArray(payload?.funds) && payload.funds.length === 0 && payload?.compare === null;
+        },
+      },
+      {
+        id: "fund_detail_comparison_subsystem",
+        path: "/api/funds/comparison?code=VGA",
+        expectedNonEmpty(payload) {
+          return (
+            typeof payload === "object" &&
+            payload &&
+            typeof payload.state === "string" &&
+            payload.contract &&
+            typeof payload.contract.reason === "string"
+          );
+        },
+        degradedContract(payload) {
+          return typeof payload?.state === "string" && typeof payload?.degradedReason !== "undefined";
+        },
+        emptyAllowed() {
+          return false;
         },
       },
     ],
@@ -98,10 +127,14 @@ export const CRITICAL_API_CONTRACTS = [
         id: "freshness_state",
         path: "/api/health?mode=light",
         expectedNonEmpty(payload) {
-          return Boolean(payload?.freshness && typeof payload.freshness === "object" && typeof payload?.ok === "boolean");
+          return Boolean(
+            payload?.freshnessTruth &&
+              typeof payload.freshnessTruth.freshnessStatus === "string" &&
+              "latestSuccessfulSyncAt" in payload.freshnessTruth
+          );
         },
         degradedContract(payload) {
-          return Boolean(payload?.freshness && typeof payload?.status === "string");
+          return Boolean(payload?.freshnessTruth && typeof payload?.status === "string");
         },
         emptyAllowed() {
           return false;
@@ -187,6 +220,7 @@ export const DEGRADED_SCENARIO_PROBES = [
 
 export const SUPPORTING_PROBE_PATHS = [
   "/api/health?mode=full",
+  "/api/funds/comparison?code=VGA",
   "/api/funds?page=1&pageSize=5",
   "/api/funds?page=1&pageSize=5&light=1",
   "/api/funds/compare-series?base=VGA&codes=ZZZZ",

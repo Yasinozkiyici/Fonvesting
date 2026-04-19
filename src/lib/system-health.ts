@@ -3,6 +3,7 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail, type DbConnectionMode } from "@/lib/db-env-validation";
+import { parseDailySyncRunMeta, type DailySyncRunMeta } from "@/lib/daily-sync-run-meta";
 import { DAILY_JOB_SLA_MINUTES, getIstanbulWallClock, toIstanbulDateKey } from "@/lib/daily-sync-policy";
 import {
   areRuntimeTargetsIdentical,
@@ -152,30 +153,6 @@ export interface SystemHealthJobSnapshot {
   errorMessage: string | null;
 }
 
-export type DailySyncRunMeta = {
-  phase?: string;
-  runKey?: string;
-  trigger?: string;
-  outcome?: "running" | "success" | "partial" | "failed" | "timeout_suspected";
-  sourceStatus?: string;
-  publishStatus?: string;
-  sourceQuality?: "success_with_data" | "successful_noop" | "empty_source_anomaly" | "partial_source_failure";
-  sourceQualityReason?: string;
-  processedSnapshotDate?: string | null;
-  fetchedFundRows?: number;
-  writtenFundRows?: number;
-  canonicalRowsWritten?: number;
-  publishBuildId?: string | null;
-  publishListRows?: number;
-  publishDetailRows?: number;
-  publishCompareRows?: number;
-  publishDiscoveryRows?: number;
-  publishCoverageRatio?: number;
-  firstFailedStep?: string | null;
-  failureKind?: "none" | "exception" | "timeout_suspected";
-  staleRunRecovered?: boolean;
-};
-
 type LatestPipelineJobRunRow = {
   syncType: string;
   status: string;
@@ -219,16 +196,6 @@ function selectLatestDailySyncJob(jobs: LatestPipelineJobRunRow[]) {
   if (dailyJobs.length === 0) return null;
   const terminal = dailyJobs.find((job) => job.completedAt != null && job.status !== "RUNNING");
   return terminal ?? dailyJobs[0] ?? null;
-}
-
-export function parseDailySyncRunMeta(message: string | null | undefined): DailySyncRunMeta | null {
-  if (!message) return null;
-  try {
-    const parsed = JSON.parse(message) as DailySyncRunMeta;
-    return typeof parsed === "object" && parsed ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function isRelationMissingError(error: unknown): boolean {

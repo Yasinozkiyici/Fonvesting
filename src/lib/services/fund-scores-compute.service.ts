@@ -17,7 +17,8 @@ import { fundTypeForApi } from "@/lib/fund-type-display";
 import { getScoresPayloadFromDerivedMetrics } from "@/lib/services/fund-derived-metrics.service";
 import type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
 import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
-import { fundMatchesTheme, type FundThemeId } from "@/lib/fund-themes";
+import type { FundThemeId } from "@/lib/fund-themes";
+import { fundRowMatchesCanonicalTheme } from "@/lib/services/fund-theme-classification";
 import { fundSearchMatches } from "@/lib/fund-search";
 
 export type { ScoredFundRow, ScoresApiPayload } from "@/lib/services/fund-scores-types";
@@ -261,7 +262,7 @@ export function filterScoresPayloadByTheme(payload: ScoresApiPayload, theme: Fun
     });
   }
   const universeTotal = payload.universeTotal ?? payload.total;
-  const funds = payload.funds.filter((fund) => fundMatchesTheme(fund, theme));
+  const funds = payload.funds.filter((fund) => fundRowMatchesCanonicalTheme(fund, theme));
   return createScoresPayload({
     mode: payload.mode,
     funds,

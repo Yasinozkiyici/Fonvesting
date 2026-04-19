@@ -18,6 +18,7 @@ function row(partial: Partial<ScoredFundRow> & Pick<ScoredFundRow, "name">): Sco
     category: partial.category ?? null,
     fundType: partial.fundType ?? null,
     finalScore: partial.finalScore ?? 1,
+    themeTags: partial.themeTags,
   };
 }
 

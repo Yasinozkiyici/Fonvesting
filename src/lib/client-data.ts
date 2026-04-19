@@ -1,12 +1,29 @@
+import type { ScoresApiSurfaceState } from "@/app/api/funds/scores/contract";
+import { isDiscoveryPayloadContract, type DiscoveryPayloadContract } from "@/lib/contracts/discovery-payload-contract";
 import type { RankingMode } from "@/lib/scoring";
 import type {
   FundListCategoryOption,
   FundListRow,
   FundListTypeOption,
 } from "@/lib/services/fund-list.service";
+import { FUND_THEMES, type FundThemeId } from "@/lib/fund-themes";
 import type { ScoredFund, ScoredResponse } from "@/types/scored-funds";
+import type { CanonicalFreshnessContract } from "@/lib/freshness-contract";
 
 type JsonRecord = Record<string, unknown>;
+
+const FUND_THEME_ID_SET = new Set<string>(FUND_THEMES.map((t) => t.id));
+
+function normalizeThemeTags(value: unknown): FundThemeId[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: FundThemeId[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && FUND_THEME_ID_SET.has(item)) {
+      out.push(item as FundThemeId);
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 export interface MarketApiPayload {
   summary: { avgDailyReturn: number; totalFundCount: number };
@@ -182,6 +199,7 @@ function normalizeScoredFund(value: unknown): ScoredFund | null {
     })(),
     fundType: normalizeFundType(value.fundType),
     finalScore,
+    themeTags: normalizeThemeTags(value.themeTags),
   };
 }
 
@@ -526,12 +544,58 @@ export function normalizeFundListResponse(
   };
 }
 
+function readScoresResponseMeta(value: JsonRecord): {
+  discovery: DiscoveryPayloadContract | null;
+  surfaceState: ScoresApiSurfaceState | null;
+  canonicalFreshness: CanonicalFreshnessContract | null;
+} {
+  const meta = value.meta;
+  if (!isRecord(meta)) {
+    return { discovery: null, surfaceState: null, canonicalFreshness: null };
+  }
+  const discovery = isDiscoveryPayloadContract(meta.discovery) ? meta.discovery : null;
+  const ss = meta.surfaceState;
+  const surfaceState: ScoresApiSurfaceState | null =
+    ss === "ready" || ss === "valid_empty" || ss === "degraded_empty" ? ss : null;
+
+  const canonicalDirect = meta.canonicalFreshness;
+  if (isRecord(canonicalDirect) && typeof (canonicalDirect as CanonicalFreshnessContract).freshnessStatus === "string") {
+    return {
+      discovery,
+      surfaceState,
+      canonicalFreshness: canonicalDirect as CanonicalFreshnessContract,
+    };
+  }
+
+  return { discovery, surfaceState, canonicalFreshness: null };
+}
+
 export function normalizeScoredResponse(value: unknown): ScoredResponse | null {
   if (!isRecord(value) || !Array.isArray(value.funds)) return null;
   const funds = value.funds
     .map((item) => normalizeScoredFund(item))
     .filter((item): item is ScoredFund => item !== null);
   const returnedCount = funds.length;
+  const meta = readScoresResponseMeta(value);
+
+  if (meta.discovery) {
+    const d = meta.discovery;
+    return {
+      mode: normalizeRankingMode(value.mode),
+      universeTotal: d.universeTotal,
+      matchedTotal: d.matchedTotal,
+      returnedCount: d.returnedCount,
+      total: d.universeTotal,
+      funds,
+      discoveryContract: d,
+      scoresSurfaceState: meta.surfaceState,
+      canonicalFreshness: meta.canonicalFreshness,
+      ...(typeof value.appliedQuery === "string" && value.appliedQuery.trim()
+        ? { appliedQuery: value.appliedQuery }
+        : {}),
+    };
+  }
+
   const legacyTotal = readNumber(value.total, returnedCount);
   const universeTotal = readFiniteNumber(value.universeTotal) ?? legacyTotal;
   const matchedTotalRaw = readFiniteNumber(value.matchedTotal);
@@ -544,6 +608,8 @@ export function normalizeScoredResponse(value: unknown): ScoredResponse | null {
     returnedCount,
     total: universeTotal,
     funds,
+    scoresSurfaceState: meta.surfaceState,
+    canonicalFreshness: meta.canonicalFreshness,
     ...(typeof value.appliedQuery === "string" && value.appliedQuery.trim()
       ? { appliedQuery: value.appliedQuery }
       : {}),

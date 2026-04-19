@@ -323,7 +323,20 @@ async function assertHomepageDiscovery(page) {
     .getAttribute("data-surface-state")
     .catch(() => null);
   if (!initialSurfaceState) fail("homepage table missing typed surface state");
-  if (!["ready", "loading", "valid_empty", "degraded_empty", "empty_filtered", "error"].includes(initialSurfaceState)) {
+  if (
+    ![
+      "ready",
+      "loading",
+      "loading_initial",
+      "loading_refresh",
+      "valid_empty",
+      "degraded_empty",
+      "empty_filtered",
+      "empty_scoped",
+      "degraded_scoped",
+      "error",
+    ].includes(initialSurfaceState)
+  ) {
     fail(`homepage typed surface state invalid: ${String(initialSurfaceState)}`);
   }
 
@@ -342,7 +355,13 @@ async function assertHomepageDiscovery(page) {
     () => {
       const root = document.querySelector("[data-discovery-result-list]");
       const state = root?.getAttribute("data-surface-state");
-      return state === "empty_filtered" || state === "valid_empty" || state === "degraded_empty";
+      return (
+        state === "empty_filtered" ||
+        state === "valid_empty" ||
+        state === "degraded_empty" ||
+        state === "empty_scoped" ||
+        state === "degraded_scoped"
+      );
     },
     null,
     { timeout: timeoutMs }
@@ -363,7 +382,7 @@ async function assertHomepageDiscovery(page) {
     .getAttribute("data-surface-state")
     .catch(() => null);
   if (!explicitNoMatchState) fail("no-match flow missing typed discovery state");
-  if (!["empty_filtered", "valid_empty", "degraded_empty"].includes(explicitNoMatchState)) {
+  if (!["empty_filtered", "valid_empty", "degraded_empty", "empty_scoped", "degraded_scoped"].includes(explicitNoMatchState)) {
     fail(`no-match flow unexpected typed state: ${String(explicitNoMatchState)}`);
   }
 

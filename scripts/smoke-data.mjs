@@ -21,6 +21,16 @@ function hasFreshnessContract(response) {
   return state === "fresh" || state === "stale_ok" || state === "degraded_outdated";
 }
 
+function hasCanonicalFreshness(payload) {
+  const canonical = payload?.meta?.canonicalFreshness;
+  if (!canonical || typeof canonical !== "object") return false;
+  return (
+    typeof canonical.freshnessStatus === "string" &&
+    "latestSuccessfulSyncAt" in canonical &&
+    "degradedReason" in canonical
+  );
+}
+
 const checks = [
   {
     path: "/api/health?mode=light",
@@ -51,7 +61,25 @@ const checks = [
       if (emptyResult && emptyResult !== "none") return false;
       if (scoresSource === "none") return false;
       if (!hasFreshnessContract(response)) return false;
+      if (!hasCanonicalFreshness(payload)) return false;
       return typeof payload === "object" && payload !== null && hasHealthyScoresSet(payload);
+    },
+  },
+  {
+    path: "/api/funds/comparison?code=VGA",
+    maxMs: 5000,
+    validate(payload, response) {
+      if (!hasFreshnessContract(response)) return false;
+      if (typeof payload !== "object" || payload === null) return false;
+      const state = payload.state;
+      const validState =
+        state === "loading" ||
+        state === "ready" ||
+        state === "no_comparable_refs" ||
+        state === "degraded_timeout" ||
+        state === "source_unavailable" ||
+        state === "error";
+      return validState && payload.contract && typeof payload.contract.reason === "string";
     },
   },
   {

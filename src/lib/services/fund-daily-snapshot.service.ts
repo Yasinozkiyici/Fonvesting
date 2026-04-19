@@ -23,6 +23,7 @@ import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeDisplayLabel, fundTypeForApi } from "@/lib/fund-type-display";
 import { getCachedUsdTryEurTry, mergeSnapshotFx } from "@/lib/services/exchange-rates.service";
 import type { ScoresApiPayload, ScoredFundRow } from "@/lib/services/fund-scores-types";
+import { attachThemeTagsToScoredRows } from "@/lib/services/fund-theme-tags.repository";
 import { createScoresPayload } from "@/lib/services/fund-scores-semantics";
 import { fetchSupabaseRestJson, hasSupabaseRestConfig } from "@/lib/supabase-rest";
 import { classifyDailyReturnPctPoints2dp, countDailyReturnDirections } from "@/lib/daily-return-ui";
@@ -733,7 +734,7 @@ export async function getScoresPayloadFromDailySnapshot(
     throw error;
   }
   const scoreKey = scoreField(mode);
-  const funds: ScoredFundRow[] = rows.map((row) => ({
+  let funds: ScoredFundRow[] = rows.map((row) => ({
     fundId: row.fundId,
     code: row.code,
     name: row.name,
@@ -750,6 +751,7 @@ export async function getScoresPayloadFromDailySnapshot(
         : null,
     finalScore: row[scoreKey],
   }));
+  funds = await attachThemeTagsToScoredRows(funds);
 
   const queryDurationMs = Date.now() - queryStartedAt;
   if (limit != null && (totalCount == null || !Number.isFinite(totalCount))) {

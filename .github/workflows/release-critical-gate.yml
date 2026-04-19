@@ -32,6 +32,9 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Contract regression suite
+        run: pnpm run test:contracts
+
       - name: Verify critical routes (normal)
         env:
           SMOKE_BASE_URL: ${{ inputs.base_url }}
@@ -56,6 +59,13 @@ jobs:
           HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
           SMOKE_BYPASS_TOKEN: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: pnpm run data:release:gate
+
+      - name: Data smoke validation
+        env:
+          SMOKE_BASE_URL: ${{ inputs.base_url }}
+          HEALTH_SECRET: ${{ secrets.HEALTH_SECRET }}
+          SMOKE_BYPASS_TOKEN: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm run smoke:data
 
       - name: Release readiness chain (prodlike + target URL)
         env:

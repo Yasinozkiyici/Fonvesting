@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSystemHealthSnapshot } from "@/lib/system-health";
+import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const [snapshot, rawCounts, servingHeads, servingAlignment] = await Promise.all([
+  const [snapshot, rawCounts, servingHeads, servingAlignment, freshnessTruth] = await Promise.all([
     getSystemHealthSnapshot({ lightweight: false, includeExternalProbes: false }),
     Promise.all([
       prisma.rawMarketPayload.count().catch(() => -1),
@@ -46,6 +47,7 @@ export async function GET(request: Request) {
       compareBuildId: compare?.buildId ?? null,
       aligned: Boolean(list?.buildId && detail?.buildId && compare?.buildId && list.buildId === detail.buildId && detail.buildId === compare.buildId),
     })),
+    readFreshnessTruthCached(),
   ]);
 
   return NextResponse.json({
@@ -68,6 +70,9 @@ export async function GET(request: Request) {
     freshnessAssessment: {
       status: snapshot.status,
       staleDays: snapshot.freshness.daysSinceLatestFundSnapshot,
+      canonicalTruth: freshnessTruth,
+      sourceUnavailable: freshnessTruth.degradedReason === "source_unavailable",
+      staleButServing: freshnessTruth.staleButServing,
     },
   });
 }
