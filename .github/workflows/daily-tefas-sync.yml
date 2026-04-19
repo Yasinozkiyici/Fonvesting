@@ -66,27 +66,43 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
-      - name: Run full TEFAS import
+      - name: Normalize DATABASE_URL for runner connectivity
+        id: normalize_db
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # resolvePrismaDatasourceUrl: pooler + uzun import; limit/timeout URL'deki sabitleri ezer.
-          DATABASE_CONNECTION_LIMIT: "15"
-          DATABASE_POOL_TIMEOUT: "30"
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::DATABASE_URL Actions secret tanımlı değil. Repo ayarlarından ekleyin."
             exit 1
           fi
+          normalized_url="$(node -e 'const raw=(process.env.DATABASE_URL||\"\").trim().replace(/\\\\n/g,\"\");if(!raw){process.exit(2)};let out=raw;try{const u=new URL(raw);const host=(u.hostname||\"\").toLowerCase();if(host.includes(\"pooler.supabase.com\")){if(!u.port||u.port===\"5432\")u.port=\"6543\";u.searchParams.set(\"pgbouncer\",\"true\");if(!(u.searchParams.get(\"sslmode\")||\"\").trim())u.searchParams.set(\"sslmode\",\"require\");out=u.toString();}console.log(out);}catch{console.log(raw);}')" || {
+            echo "::error::DATABASE_URL normalize edilemedi."
+            exit 1
+          }
+          echo "::add-mask::$normalized_url"
+          echo "database_url=$normalized_url" >> "$GITHUB_OUTPUT"
+          node -e 'const u=new URL(process.argv[1]);const h=u.hostname||\"\";const p=u.port||\"5432\";console.log(`[daily-sync-db] normalized host=${h} port=${p} pgbouncer=${u.searchParams.get(\"pgbouncer\")??\"none\"} sslmode=${u.searchParams.get(\"sslmode\")??\"none\"}`)' "$normalized_url"
+
+      - name: Run full TEFAS import
+        env:
+          DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
+          # resolvePrismaDatasourceUrl: pooler + uzun import; limit/timeout URL'deki sabitleri ezer.
+          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_POOL_TIMEOUT: "30"
+        run: |
           pnpm run import:tefas-full
 
       - name: Phase A chain evidence (DB history → snapshot → v2 heads)
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           DATABASE_CONNECTION_LIMIT: "15"
           DATABASE_POOL_TIMEOUT: "30"
         run: |
-          if [ -z "$DATABASE_URL" ]; then
-            echo "::error::DATABASE_URL eksik"
-            exit 1
-          fi
           pnpm exec tsx scripts/phase-a-chain-evidence.ts --gate
+
+      - name: Verify freshness target date reached
+        env:
+          DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
+          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_POOL_TIMEOUT: "30"
+        run: pnpm exec tsx scripts/check-freshness-target.ts --strict
