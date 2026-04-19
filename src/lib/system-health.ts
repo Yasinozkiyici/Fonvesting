@@ -35,7 +35,7 @@ const HEALTH_DB_PING_FAILURE_TTL_MS = Number(process.env.HEALTH_DB_PING_FAILURE_
 const HEALTH_DB_PING_MAX_WAIT_MS = Number(process.env.HEALTH_DB_PING_MAX_WAIT_MS ?? "900");
 const HEALTH_DB_PING_TX_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_TX_TIMEOUT_MS ?? "1800");
 const HEALTH_DB_PING_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_SOFT_TIMEOUT_MS ?? "3000");
-const HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS ?? "650");
+const HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS = Number(process.env.HEALTH_DB_PING_LIGHT_SOFT_TIMEOUT_MS ?? "1100");
 
 export interface SystemHealthIssue {
   code: string;
@@ -640,6 +640,17 @@ export async function getSystemHealthSnapshot(options?: {
       }
     }
 
+    if (!latestFundSnapshotDate) {
+      const prismaSnap = await safeQuery("latest_fund_snapshot_prisma_fallback", null, () =>
+        prisma.fundDailySnapshot.findFirst({ orderBy: { date: "desc" }, select: { date: true } })
+      );
+      if (prismaSnap.error) {
+        errors.push(prismaSnap.error);
+      } else if (prismaSnap.value?.date) {
+        latestFundSnapshotDate = prismaSnap.value.date;
+      }
+    }
+
     // Prisma ping başarısızsa, external probe'ları da ekle (root cause izolasyonu için).
     if (!includeExternalProbes && hasSupabaseRestConfig() && !lightweight) {
       const startedAt = Date.now();
@@ -780,6 +791,17 @@ export async function getSystemHealthSnapshot(options?: {
 
   // DB bağlantısı düşük connection_limit ile çalışırken health endpoint'inin tek çağrıda
   // çok sayıda paralel sorgu ile pool'u kilitlemesini önlemek için sorguları sırayla çalıştırıyoruz.
+  let lightLatestFundSnapshotDate: Date | null = null;
+  if (lightweight) {
+    const lightSnap = await safeQuery("light_latest_fund_snapshot", null, () =>
+      prisma.fundDailySnapshot.findFirst({ orderBy: { date: "desc" }, select: { date: true } })
+    );
+    if (lightSnap.error) {
+      errors.push(lightSnap.error);
+    }
+    lightLatestFundSnapshotDate = lightSnap.value?.date ?? null;
+  }
+
   if (lightweight) {
     return {
       checkedAt,
@@ -828,14 +850,14 @@ export async function getSystemHealthSnapshot(options?: {
         macroObservations: 0,
       },
       freshness: {
-        latestFundSnapshotDate: null,
+        latestFundSnapshotDate: lightLatestFundSnapshotDate?.toISOString() ?? null,
         latestMarketSnapshotDate: null,
         latestMacroObservationDate: null,
         latestFundUpdateAt: null,
         latestSnapshotCoverageDate: null,
         lastSuccessfulIngestionAt: null,
         lastPublishedSnapshotAt: null,
-        daysSinceLatestFundSnapshot: null,
+        daysSinceLatestFundSnapshot: daysSince(lightLatestFundSnapshotDate),
         daysSinceLatestMarketSnapshot: null,
         daysSinceLatestMacroObservation: null,
       },

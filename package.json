@@ -52,6 +52,7 @@
     "sync:macro": "tsx scripts/sync-macro-series.ts",
     "sync:macro-append": "tsx scripts/sync-macro-series.ts --append",
     "import:tefas-full": "tsx scripts/full-tefas-import.ts",
+    "phase-a:evidence": "tsx scripts/phase-a-chain-evidence.ts",
     "tefas:metadata": "tsx scripts/tefas-metadata-only.ts",
     "tefas:daily-returns": "tsx scripts/calc-daily-return.ts",
     "download:fund-logos": "tsx scripts/download-fund-logos.ts",

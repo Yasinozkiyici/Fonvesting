@@ -53,10 +53,12 @@ jobs:
           scripts/.venv/bin/pip install -r scripts/requirements.txt
 
       - name: Install Google Chrome (Selenium)
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
           sudo apt-get install -y wget gnupg
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/google-chrome.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
@@ -70,3 +72,13 @@ jobs:
             exit 1
           fi
           pnpm run import:tefas-full
+
+      - name: Phase A chain evidence (DB history → snapshot → v2 heads)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL eksik"
+            exit 1
+          fi
+          pnpm exec tsx scripts/phase-a-chain-evidence.ts --gate
