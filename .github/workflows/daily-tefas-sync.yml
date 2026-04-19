@@ -1,9 +1,8 @@
 # Günlük otomatik TEFAS: Selenium + Python burada çalışır, Vercel’de değil.
 # Secrets / env (Prisma runtime):
 # - DATABASE_URL (required): pooler URI; POSTGRES_PRISMA_URL workflow’da yoksa bu kullanılır.
-# - DATABASE_CONNECTION_LIMIT (below): batch + paralel Prisma çağrıları için; kod yalnızca URL’de
-#   connection_limit parametresi yoksa bunu query’ye yazar. Secret URL’de connection_limit=1
-#   sabitliyse ya secret’tan kaldırın ya da orada yükseltin (env tek başına yetmez).
+# - DATABASE_CONNECTION_LIMIT + DATABASE_POOL_TIMEOUT (below): batch import; env set ise
+#   resolvePrismaDatasourceUrl URL’deki connection_limit / pool_timeout değerlerinin üzerine yazar.
 #
 # "Can't reach database server" (GitHub Actions) genelde şunlardan biri:
 # 1) Supabase → Project Settings → Database → Network / "Restrict …" KAPALI olmalı
@@ -70,8 +69,9 @@ jobs:
       - name: Run full TEFAS import
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # resolvePrismaDatasourceUrl: pooler için varsayılan connection_limit=1; import yükü için artır.
-          DATABASE_CONNECTION_LIMIT: "8"
+          # resolvePrismaDatasourceUrl: pooler + uzun import; limit/timeout URL'deki sabitleri ezer.
+          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_POOL_TIMEOUT: "30"
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::DATABASE_URL Actions secret tanımlı değil. Repo ayarlarından ekleyin."
@@ -82,7 +82,8 @@ jobs:
       - name: Phase A chain evidence (DB history → snapshot → v2 heads)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DATABASE_CONNECTION_LIMIT: "8"
+          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_POOL_TIMEOUT: "30"
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::DATABASE_URL eksik"

@@ -241,16 +241,19 @@ export function resolvePrismaDatasourceUrl(): string {
       url.searchParams.set("sslmode", "require");
     }
 
-    const limit = (process.env.DATABASE_CONNECTION_LIMIT ?? "").trim();
+    const limitOverride = (process.env.DATABASE_CONNECTION_LIMIT ?? "").trim();
     const desiredDefault =
       process.env.NODE_ENV === "development"
         ? "12"
         : isSupabasePooler
           ? "1"
           : "5";
-    const desired = limit || desiredDefault;
+    const desired = limitOverride || desiredDefault;
     const current = url.searchParams.get("connection_limit")?.trim();
-    if (!current) {
+    // DATABASE_CONNECTION_LIMIT açıkça set edildiyse URL'deki (ör. secret'taki connection_limit=1) üzerine yaz.
+    if (limitOverride) {
+      url.searchParams.set("connection_limit", limitOverride);
+    } else if (!current) {
       url.searchParams.set("connection_limit", desired);
     }
 
@@ -258,11 +261,18 @@ export function resolvePrismaDatasourceUrl(): string {
     if (!Number.isFinite(connectTimeout) || connectTimeout <= 0 || connectTimeout > 15) {
       url.searchParams.set("connect_timeout", "10");
     }
-    const poolTimeout = Number(url.searchParams.get("pool_timeout") ?? "");
-    if (!Number.isFinite(poolTimeout) || poolTimeout <= 0 || poolTimeout > 20) {
-      // Serverless altında uzun checkout beklemesi request kuyruk etkisi üretir.
-      // Daha kısa timeout ile hızlı degrade + fallback yolu tercih edilir.
-      url.searchParams.set("pool_timeout", "8");
+    const poolTimeoutOverride = (process.env.DATABASE_POOL_TIMEOUT ?? "").trim();
+    const poolTimeoutNum = poolTimeoutOverride ? Number(poolTimeoutOverride) : NaN;
+    if (poolTimeoutOverride && Number.isFinite(poolTimeoutNum) && poolTimeoutNum > 0) {
+      const capped = Math.min(120, Math.max(1, Math.floor(poolTimeoutNum)));
+      url.searchParams.set("pool_timeout", String(capped));
+    } else {
+      const poolTimeout = Number(url.searchParams.get("pool_timeout") ?? "");
+      if (!Number.isFinite(poolTimeout) || poolTimeout <= 0 || poolTimeout > 20) {
+        // Serverless altında uzun checkout beklemesi request kuyruk etkisi üretir.
+        // Daha kısa timeout ile hızlı degrade + fallback yolu tercih edilir.
+        url.searchParams.set("pool_timeout", "8");
+      }
     }
 
     const runtimeKey = getPrismaRuntimeDatabaseUrlEnvKey();

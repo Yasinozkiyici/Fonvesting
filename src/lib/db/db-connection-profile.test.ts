@@ -91,3 +91,24 @@ test("PRODLIKE_VERIFICATION: direct DATABASE_URL resolves; strict env throws", (
     }
   );
 });
+
+test("DATABASE_CONNECTION_LIMIT overrides URL connection_limit", () => {
+  const pooled =
+    "postgresql://u:p@aws-0-eu.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require&connection_limit=1";
+  withEnv({ NODE_ENV: "production", DATABASE_URL: pooled, POSTGRES_PRISMA_URL: "", DATABASE_CONNECTION_LIMIT: "9" }, () => {
+    const u = resolvePrismaDatasourceUrl();
+    assert.ok(u.includes("connection_limit=9"));
+  });
+});
+
+test("DATABASE_POOL_TIMEOUT overrides default pool_timeout", () => {
+  const pooled =
+    "postgresql://u:p@aws-0-eu.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=require";
+  withEnv(
+    { NODE_ENV: "production", DATABASE_URL: pooled, POSTGRES_PRISMA_URL: "", DATABASE_POOL_TIMEOUT: "30" },
+    () => {
+      const u = resolvePrismaDatasourceUrl();
+      assert.ok(u.includes("pool_timeout=30"));
+    }
+  );
+});
