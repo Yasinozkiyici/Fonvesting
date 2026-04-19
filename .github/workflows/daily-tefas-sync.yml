@@ -105,7 +105,7 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           # resolvePrismaDatasourceUrl: pooler + uzun import; limit/timeout URL'deki sabitleri ezer.
-          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "30"
         run: |
           pnpm run import:tefas-full
@@ -113,7 +113,7 @@ jobs:
       - name: Phase A chain evidence (DB history → snapshot → v2 heads)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "30"
         run: |
           pnpm exec tsx scripts/phase-a-chain-evidence.ts --gate
@@ -121,6 +121,6 @@ jobs:
       - name: Verify freshness target date reached
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "15"
+          DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "30"
         run: pnpm exec tsx scripts/check-freshness-target.ts --strict

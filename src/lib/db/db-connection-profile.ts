@@ -250,9 +250,15 @@ export function resolvePrismaDatasourceUrl(): string {
           : "5";
     const desired = limitOverride || desiredDefault;
     const current = url.searchParams.get("connection_limit")?.trim();
-    // DATABASE_CONNECTION_LIMIT açıkça set edildiyse URL'deki (ör. secret'taki connection_limit=1) üzerine yaz.
+    const currentNum = Number(current ?? "");
+    // DATABASE_CONNECTION_LIMIT açıkça set edildiyse URL'deki değeri ezer.
     if (limitOverride) {
       url.searchParams.set("connection_limit", limitOverride);
+    } else if (isSupabasePooler) {
+      // Transaction pooler'da yüksek connection_limit checkout timeout dalgası üretiyor.
+      if (!Number.isFinite(currentNum) || currentNum <= 0 || currentNum > 1) {
+        url.searchParams.set("connection_limit", "1");
+      }
     } else if (!current) {
       url.searchParams.set("connection_limit", desired);
     }
