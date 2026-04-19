@@ -18,18 +18,17 @@ async function main() {
   const gate = process.argv.includes("--gate");
   const expectedSession = latestExpectedBusinessSessionDate();
 
-  const [latestHist, latestSnap, heads, health] = await Promise.all([
-    prisma.fundPriceHistory.findFirst({
-      orderBy: { date: "desc" },
-      select: { date: true },
-    }),
-    prisma.fundDailySnapshot.findFirst({
-      orderBy: { date: "desc" },
-      select: { date: true },
-    }),
-    readLatestServingHeadsMeta().catch(() => null),
-    getSystemHealthSnapshot({ lightweight: true, includeExternalProbes: false }).catch(() => null),
-  ]);
+  // Gate runs with low connection_limit in CI; serial reads avoid pool checkout timeouts.
+  const latestHist = await prisma.fundPriceHistory.findFirst({
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  const latestSnap = await prisma.fundDailySnapshot.findFirst({
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  const heads = await readLatestServingHeadsMeta().catch(() => null);
+  const health = await getSystemHealthSnapshot({ lightweight: true, includeExternalProbes: false }).catch(() => null);
 
   const historyVerifyOk = isAtLeastExpectedSession(latestHist?.date ?? null, expectedSession);
   const snapshotAligned =

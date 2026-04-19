@@ -45,21 +45,20 @@ async function main() {
   const expected = expectedBusinessDateIso(new Date());
   const strict = process.argv.includes("--strict");
 
-  const [latestRaw, latestFundSnapshot, servingHeads] = await Promise.all([
-    prisma.rawPricesPayload
-      .findFirst({
-        orderBy: { effectiveDate: "desc" },
-        select: { effectiveDate: true, fetchedAt: true, parseStatus: true },
-      })
-      .catch(() => null),
-    prisma.fundDailySnapshot
-      .findFirst({
-        orderBy: { date: "desc" },
-        select: { date: true },
-      })
-      .catch(() => null),
-    readLatestServingHeadsMeta().catch(() => null),
-  ]);
+  // Serial reads reduce P2024 risk when connection_limit is intentionally tiny.
+  const latestRaw = await prisma.rawPricesPayload
+    .findFirst({
+      orderBy: { effectiveDate: "desc" },
+      select: { effectiveDate: true, fetchedAt: true, parseStatus: true },
+    })
+    .catch(() => null);
+  const latestFundSnapshot = await prisma.fundDailySnapshot
+    .findFirst({
+      orderBy: { date: "desc" },
+      select: { date: true },
+    })
+    .catch(() => null);
+  const servingHeads = await readLatestServingHeadsMeta().catch(() => null);
 
   const servingAsOf = maxDateOnly([
     servingHeads?.fundList?.snapshotAsOf,
