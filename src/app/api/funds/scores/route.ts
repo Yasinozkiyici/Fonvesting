@@ -223,6 +223,12 @@ function scoresTraceResponseHeaders(
   };
 }
 
+/** Tek tip süre gözlemi: warm path / hata cevapları dahil tüm JSON çıkışlarında kullanılır. */
+function scoresRouteDurationHeadersMs(routeStartedAtMs: number, resolvedMs?: number): Record<string, string> {
+  const ms = resolvedMs ?? Date.now() - routeStartedAtMs;
+  return { "X-Scores-Route-Duration-Ms": String(ms) };
+}
+
 function baseScoresKey(mode: RankingMode, categoryCode: string, limit: number | null): string {
   return `${mode}|${categoryCode || "all"}|${limit ?? "all"}`;
 }
@@ -732,6 +738,7 @@ export async function GET(request: NextRequest) {
             "X-Discovery-Request-Key": scopeRequestKey,
             ...dbHeaders,
             ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+            ...scoresRouteDurationHeadersMs(startedAt),
             ...scoresTraceResponseHeaders(trace, surfaceState, "memory", {
               scopeRequestKey,
               mode,
@@ -824,6 +831,7 @@ export async function GET(request: NextRequest) {
                 servingFundList.trust.degradedReason ??
                 "serving_primary_not_final",
             }),
+            ...scoresRouteDurationHeadersMs(startedAt),
             ...scoresTraceResponseHeaders(trace, "strict_violation", "serving_discovery_index", {
               scopeRequestKey,
               strictMode: 1,
@@ -976,6 +984,7 @@ export async function GET(request: NextRequest) {
           "X-Data-Freshness-Age-Ms": freshness.ageMs == null ? "unknown" : String(freshness.ageMs),
           "X-Discovery-Request-Key": scopeRequestKey,
           ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+          ...scoresRouteDurationHeadersMs(startedAt),
           ...scoresTraceResponseHeaders(trace, surfaceState, "serving_discovery_index", {
             scopeRequestKey,
             mode,
@@ -1009,6 +1018,7 @@ export async function GET(request: NextRequest) {
             reason: "serving_discovery_or_fund_list_unavailable",
           }),
           ...dbHeaders,
+          ...scoresRouteDurationHeadersMs(startedAt),
           ...scoresTraceResponseHeaders(trace, "strict_violation", "legacy_fallback", {
             scopeRequestKey,
             strictMode: 1,
@@ -1402,6 +1412,7 @@ export async function GET(request: NextRequest) {
       "X-Serving-FundList-Build-Id": servingWorld?.buildIds.fundList ?? "none",
       "X-Serving-Discovery-Build-Id": servingWorld?.buildIds.discovery ?? "none",
       ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+      ...scoresRouteDurationHeadersMs(startedAt, durationMs),
       ...scoresTraceResponseHeaders(trace, surfaceState, source, {
         scopeRequestKey,
         mode,

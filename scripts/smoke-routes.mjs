@@ -11,6 +11,10 @@ const forbiddenTokens = [
 const routeChecks = [
   { path: "/", mustInclude: ["Yatirim.io", "Fonlar"], maxMs: 6000 },
   { path: "/compare", mustInclude: ["Karşılaştır"], maxMs: 5000 },
+  { path: "/sectors", mustInclude: ["Kategoriler", "Fon listesi"], maxMs: 8000 },
+  { path: "/indices", mustInclude: ["Fon türleri", "Fon listesi"], maxMs: 8000 },
+  /** Kalıcı yönlendirme; fetch takip eder, gövde /hakkimizda içeriğidir */
+  { path: "/about", mustInclude: ["Hakkımızda", "Yatirim.io nedir"], maxMs: 6000 },
   { path: "/fund/VGA", mustInclude: ["Fon detayı", "Son fiyat", "Portföy"], maxMs: 6000 },
   { path: "/fund/TI1", mustInclude: ["Fon detayı", "Son fiyat"], maxMs: 6000 },
   { path: "/fund/ZP8", mustInclude: ["Fon detayı", "Son fiyat"], maxMs: 6000 },

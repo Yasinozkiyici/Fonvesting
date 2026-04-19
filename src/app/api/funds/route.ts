@@ -324,7 +324,8 @@ export async function GET(req: NextRequest) {
       ? (rawField as FundListSortField)
       : "portfolioSize";
     const sortDir = sortDirRaw === "asc" ? "asc" : "desc";
-    const cacheKey = [page, pageSize, q, category, fundType, sortField, sortDir].join("|");
+    const lightList = searchParams.get("light") === "1";
+    const cacheKey = [page, pageSize, q, category, fundType, sortField, sortDir, lightList ? "L1" : "L0"].join("|");
     const state = getFundsRouteState();
     const cached = state.cache.get(cacheKey);
     if (!strictMode && cached && Date.now() - cached.updatedAt <= FUNDS_CACHE_TTL_MS) {
@@ -393,29 +394,45 @@ export async function GET(req: NextRequest) {
           sortField,
           sortDir,
         })
-      : await withTimeout(
-          getFundsPage({
-            page,
-            pageSize,
-            q,
-            category,
-            fundType,
-            sortField,
-            sortDir,
-          }).then((result) => ({
-            items: result.items.map((item) => ({
-              ...item,
-              sparkline: [] as number[],
-              sparklineTrend:
-                item.dailyReturn > 0 ? "up" : item.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+      : lightList
+        ? await (async (): Promise<FundsPayload> => {
+            const fb = await buildServingFundsFallback(page, pageSize);
+            if (fb.items.length > 0) return fb;
+            const sc = await buildScoresCacheFundsFallback({
+              page,
+              pageSize,
+              q,
+              category,
+              fundType,
+              sortField,
+              sortDir,
+            });
+            if (sc.items.length > 0) return sc;
+            return { items: [], page, pageSize, total: 0, totalPages: 1 };
+          })()
+        : await withTimeout(
+            getFundsPage({
+              page,
+              pageSize,
+              q,
+              category,
+              fundType,
+              sortField,
+              sortDir,
+            }).then((result) => ({
+              items: result.items.map((item) => ({
+                ...item,
+                sparkline: [] as number[],
+                sparklineTrend:
+                  item.dailyReturn > 0 ? "up" : item.dailyReturn < 0 ? ("down" as const) : ("flat" as const),
+              })),
+              page,
+              pageSize: result.pageSize,
+              total: result.total,
+              totalPages: result.totalPages,
             })),
-            page,
-            pageSize: result.pageSize,
-            total: result.total,
-            totalPages: result.totalPages,
-          })),
-          FUNDS_TIMEOUT_MS
-        );
+            FUNDS_TIMEOUT_MS
+          );
     if (payload.items.length === 0) {
       const scoresFallback = await buildScoresCacheFundsFallback({
         page,

@@ -13,6 +13,12 @@ export const dynamic = "force-dynamic";
 
 const MAX_LOGO_BYTES = 2_500_000;
 const UPSTREAM_MS = 4_500;
+/** Boş görünümlü 1×1 şeffaf PNG — harici logo yok / upstream 404 durumunda 200 döner */
+const FALLBACK_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64"
+);
+
 const ALLOWED_IMAGE_CONTENT_TYPES = new Set([
   "image/png",
   "image/webp",
@@ -86,7 +92,14 @@ export async function GET(req: NextRequest) {
   if (id) {
     const fund = await loadFundLogoRowById(id);
     if (!fund) {
-      return new NextResponse(null, { status: 404 });
+      return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=3600",
+          "X-Fund-Logo-Fallback": "missing_fund_row",
+        },
+      });
     }
     const local = readLocalFundLogoBuffer(fund.code);
     if (local) {
@@ -103,12 +116,26 @@ export async function GET(req: NextRequest) {
   }
 
   if (!fundName.trim()) {
-    return new NextResponse(null, { status: 400 });
+    return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+      status: 200,
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=60",
+        "X-Fund-Logo-Fallback": "missing_name",
+      },
+    });
   }
 
   const target = resolveFundLogoUrl(stored || null, fundName);
   if (!target || !isResolvedLogoFetchAllowed(target, stored || null)) {
-    return new NextResponse(null, { status: 404 });
+    return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+      status: 200,
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=3600",
+        "X-Fund-Logo-Fallback": "unresolved_url",
+      },
+    });
   }
 
   try {
@@ -122,18 +149,49 @@ export async function GET(req: NextRequest) {
     });
 
     if (!upstream.ok) {
-      return new NextResponse(null, { status: upstream.status === 404 ? 404 : 502 });
+      if (upstream.status === 404) {
+        return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+          status: 200,
+          headers: {
+            "Content-Type": "image/png",
+            "Cache-Control": "public, max-age=600",
+            "X-Fund-Logo-Fallback": "upstream_404",
+          },
+        });
+      }
+      return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=120",
+          "X-Fund-Logo-Fallback": "upstream_error",
+        },
+      });
     }
 
     const buf = await upstream.arrayBuffer();
     if (buf.byteLength === 0 || buf.byteLength > MAX_LOGO_BYTES) {
-      return new NextResponse(null, { status: 502 });
+      return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=300",
+          "X-Fund-Logo-Fallback": "invalid_bytes",
+        },
+      });
     }
 
     const ct =
       upstream.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
     if (!ALLOWED_IMAGE_CONTENT_TYPES.has(ct)) {
-      return new NextResponse(null, { status: 502 });
+      return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=300",
+          "X-Fund-Logo-Fallback": "bad_content_type",
+        },
+      });
     }
 
     return new NextResponse(buf, {
@@ -144,6 +202,13 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch {
-    return new NextResponse(null, { status: 504 });
+    return new NextResponse(new Uint8Array(FALLBACK_PNG), {
+      status: 200,
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=120",
+        "X-Fund-Logo-Fallback": "fetch_error",
+      },
+    });
   }
 }

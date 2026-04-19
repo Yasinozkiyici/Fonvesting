@@ -477,6 +477,7 @@ export function FundDetailChart({ data }: Props) {
   const fundWindow = useMemo(() => filterWindow(fundSeries, range), [fundSeries, range]);
   const chartWindow = useMemo(() => filterWindow(fundSeries, range, anchorT), [fundSeries, range, anchorT]);
   useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
     const payloadMin = fundSeries[0]?.t ?? null;
     const payloadMax = fundSeries[fundSeries.length - 1]?.t ?? null;
     const renderedMin = chartWindow[0]?.t ?? null;
@@ -794,6 +795,7 @@ export function FundDetailChart({ data }: Props) {
     }
     if (comparisonSummaryStateLogRef.current === comparisonSummaryPanelState) return;
     comparisonSummaryStateLogRef.current = comparisonSummaryPanelState;
+    if (process.env.NODE_ENV === "production") return;
     console.warn(
       "[fund-detail-comparison-summary]",
       JSON.stringify({

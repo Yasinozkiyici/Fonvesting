@@ -348,19 +348,23 @@ export function HomePageClient({
   }, [activePresetMeta?.title, activePrimary, discoveryActive, resolvedFilters.secondaryLabel]);
 
   const [modeSpotlightPayload, setModeSpotlightPayload] = useState<ScoredResponse | null>(null);
+  const [spotlightPhase, setSpotlightPhase] = useState<"idle" | "loading" | "ready">("idle");
 
   useEffect(() => {
     if (!discoveryActive) {
       setModeSpotlightPayload(null);
+      setSpotlightPhase("idle");
       return;
     }
     const initialRows = initialScoresPreview?.funds.length ?? 0;
     if (initialRows >= 12) {
       // Avoid visible late pop-in when SSR already has enough rows for spotlight cards.
       setModeSpotlightPayload(null);
+      setSpotlightPhase("ready");
       return;
     }
     const ac = new AbortController();
+    setSpotlightPhase("loading");
     const hasScopedCategory = effectiveCategory.trim().length > 0;
     const spotlightLimitParam = effectiveTheme ? "&limit=2500" : hasScopedCategory ? "" : "&limit=300";
     const spotlightCategory =
@@ -395,6 +399,9 @@ export function HomePageClient({
           );
           setModeSpotlightPayload(null);
         }
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setSpotlightPhase("ready");
       });
     return () => ac.abort();
   }, [discoveryActive, effectiveCategory, effectiveMode, effectiveTheme, initialScoresPreview]);
@@ -682,14 +689,31 @@ export function HomePageClient({
             </p>
           ) : null}
 
-          <FeaturedThreeFunds
-            embedded
-            variant="signature"
-            routeActive={discoveryActive}
-            items={featuredSpotlights}
-            title={featuredSectionTitle}
-            subtitle={featuredSectionSubtitle}
-          />
+          {discoveryActive && spotlightPhase === "loading" ? (
+            <div className="mt-2.5 sm:mt-3" aria-busy="true" aria-label="Öne çıkan fonlar yükleniyor">
+              <FeaturedThreeFundsSkeleton />
+            </div>
+          ) : null}
+          {discoveryActive && spotlightPhase === "ready" && featuredSpotlights.length === 0 ? (
+            <p
+              className="mt-2.5 max-w-[40rem] text-[10px] font-medium leading-snug sm:mt-3 sm:text-[10.5px]"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              Bu seçim için öne çıkan üçlü oluşturulamadı (sunucu verisi veya filtre eşleşmesi). Tam liste tabloda
+              mevcuttur.
+            </p>
+          ) : null}
+
+          {!(discoveryActive && spotlightPhase === "loading") ? (
+            <FeaturedThreeFunds
+              embedded
+              variant="signature"
+              routeActive={discoveryActive}
+              items={featuredSpotlights}
+              title={featuredSectionTitle}
+              subtitle={featuredSectionSubtitle}
+            />
+          ) : null}
         </div>
       </section>
 

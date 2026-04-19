@@ -46,8 +46,8 @@ type SortField = "portfolioSize" | "dailyReturn" | "investorCount" | "lastPrice"
 type SortDir = "asc" | "desc";
 const DEFAULT_SORT_FIELD: SortField = "portfolioSize";
 const DEFAULT_SORT_DIR: SortDir = "desc";
-const SCORES_FETCH_TIMEOUT_MS_DEFAULT = 16_000;
-const SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN = 18_000;
+const SCORES_FETCH_TIMEOUT_MS_DEFAULT = 22_000;
+const SCORES_FETCH_TIMEOUT_MS_HIGH_RETURN = 24_000;
 const SCORES_BOOTSTRAP_RETRY_MS = 3_500;
 const SCORES_BOOTSTRAP_MAX_RETRY = 3;
 const SCORES_CORE_ROWS_FALLBACK_TIMEOUT_MS = 6_500;
@@ -1688,6 +1688,17 @@ export default function ScoredFundsTable({
           </div>
         ) : null}
       </div>
+
+      {showTableLoadingSkeleton ? (
+        <p
+          className="px-3 pt-1 text-[11px] font-medium md:px-4"
+          style={{ color: "var(--text-tertiary)" }}
+          role="status"
+          aria-live="polite"
+        >
+          Liste ve skorlar yükleniyor…
+        </p>
+      ) : null}
 
       <div className="md:hidden space-y-1.5 px-3 py-1.5">
         {showTableLoadingSkeleton ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronUp,
   ChevronDown,
@@ -32,6 +32,9 @@ type SortDir = "asc" | "desc";
 type FundsTableProps = {
   enableCategoryFilter?: boolean;
   initialItems?: FundListRow[];
+  /** SSR veya ön-yüklemeden gelen toplam; yoksa initialItems.length kullanılır */
+  initialListTotal?: number;
+  initialListTotalPages?: number;
   initialCategories?: FundListCategoryOption[];
   initialFundTypes?: FundListTypeOption[];
   initialQuery?: string;
@@ -39,9 +42,13 @@ type FundsTableProps = {
   initialFundType?: string;
 };
 
+const FUNDS_TABLE_FETCH_MS = 28_000;
+
 export default function FundsTable({
   enableCategoryFilter = true,
   initialItems = [],
+  initialListTotal,
+  initialListTotalPages,
   initialCategories = [],
   initialFundTypes = [],
   initialQuery = "",
@@ -51,8 +58,14 @@ export default function FundsTable({
   const [allFunds, setAllFunds] = useState<FundListRow[]>(initialItems);
   const [loading, setLoading] = useState(initialItems.length === 0);
   const [error, setError] = useState<string | null>(null);
-  const [total, setTotal] = useState(initialItems.length);
-  const [totalPages, setTotalPages] = useState(Math.max(1, Math.ceil(initialItems.length / 50)));
+  const [total, setTotal] = useState(
+    typeof initialListTotal === "number" && Number.isFinite(initialListTotal) ? initialListTotal : initialItems.length
+  );
+  const [totalPages, setTotalPages] = useState(
+    typeof initialListTotalPages === "number" && Number.isFinite(initialListTotalPages) && initialListTotalPages > 0
+      ? initialListTotalPages
+      : Math.max(1, Math.ceil(initialItems.length / 50))
+  );
   const [page, setPage] = useState(1);
   const [sortField, setSortField] = useState<SortField>("portfolioSize");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -64,6 +77,8 @@ export default function FundsTable({
   const [mobileSheet, setMobileSheet] = useState<null | "filters" | "sort">(null);
   const deferredSearch = useDeferredValue(search.trim());
   const pageSize = 50;
+  const firstFundsFetchRef = useRef(true);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     setCategory(enableCategoryFilter ? initialCategory : "");
@@ -110,13 +125,18 @@ export default function FundsTable({
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    if (firstFundsFetchRef.current && initialItems.length > 0) {
+      firstFundsFetchRef.current = false;
+    } else {
+      setLoading(true);
+    }
     setError(null);
 
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(pageSize),
       sort: `${sortField}:${sortDir}`,
+      light: "1",
     });
 
     if (deferredSearch) params.set("q", deferredSearch);
@@ -125,7 +145,7 @@ export default function FundsTable({
 
     fetchNormalizedJson(`/api/funds?${params.toString()}`, "Fon API", normalizeFundListResponse, {
       signal: controller.signal,
-    })
+    }, FUNDS_TABLE_FETCH_MS)
       .then((fundsResponse) => {
         if (controller.signal.aborted) return;
         setAllFunds(fundsResponse.items);
@@ -146,7 +166,7 @@ export default function FundsTable({
     return () => {
       controller.abort();
     };
-  }, [page, pageSize, sortField, sortDir, deferredSearch, category, fundType, enableCategoryFilter]);
+  }, [page, pageSize, sortField, sortDir, deferredSearch, category, fundType, enableCategoryFilter, reloadToken]);
 
   const syncUrlState = useCallback((next: {
     query?: string;
@@ -242,6 +262,19 @@ export default function FundsTable({
               fon
               <span className="hidden md:inline"> • Planlı güncelleme ile güncellenir</span>
             </p>
+            {error && paginatedFunds.length > 0 ? (
+              <p className="mt-2 text-[11px] md:text-xs" style={{ color: "var(--text-muted)" }}>
+                Liste yenilenemedi ({error}).{" "}
+                <button
+                  type="button"
+                  className="font-semibold underline underline-offset-2"
+                  style={{ color: "var(--accent-blue)" }}
+                  onClick={() => setReloadToken((n) => n + 1)}
+                >
+                  Yeniden dene
+                </button>
+              </p>
+            ) : null}
           </div>
 
           <div className="flex w-full flex-col gap-3 sm:max-w-none sm:items-end">
@@ -487,10 +520,20 @@ export default function FundsTable({
               </div>
             </div>
           ))
-        ) : error ? (
-          <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
-            {error}
-          </p>
+        ) : error && paginatedFunds.length === 0 ? (
+          <div className="py-8 text-center">
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={() => setReloadToken((n) => n + 1)}
+              className="mt-3 rounded-xl border px-4 py-2 text-sm font-medium"
+              style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
+            >
+              Yeniden dene
+            </button>
+          </div>
         ) : !paginatedFunds.length ? (
           <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
             Fon bulunamadı
@@ -536,10 +579,18 @@ export default function FundsTable({
                   </td>
                 </tr>
               ))
-            ) : error ? (
+            ) : error && paginatedFunds.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-6 text-center" style={{ color: "var(--text-muted)" }}>
-                  {error}
+                  <p>{error}</p>
+                  <button
+                    type="button"
+                    onClick={() => setReloadToken((n) => n + 1)}
+                    className="mt-3 rounded-xl border px-4 py-2 text-sm font-medium"
+                    style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
+                  >
+                    Yeniden dene
+                  </button>
                 </td>
               </tr>
             ) : (

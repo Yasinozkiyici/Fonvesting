@@ -2,6 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  async redirects() {
+    return [{ source: "/about", destination: "/hakkimizda", permanent: true }];
+  },
   async headers() {
     return [
       {

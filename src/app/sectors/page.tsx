@@ -6,6 +6,7 @@ import FundsTable from "@/components/tefas/FundsTable";
 import { LIVE_DATA_PAGE_REVALIDATE_SEC } from "@/lib/data-freshness";
 import { readSearchParam, type RouteSearchParams } from "@/lib/route-search-params";
 import { getCategorySummariesFromDailySnapshotSafe } from "@/lib/services/fund-daily-snapshot.service";
+import { loadFundsTableInitialSnapshot } from "@/lib/server/funds-table-initial";
 
 type CatRow = {
   code: string;
@@ -27,6 +28,11 @@ export default async function SectorsPage({
     name: category.name,
     stockCount: category.fundCount,
   }));
+
+  const tableInitial = await loadFundsTableInitialSnapshot({
+    initialCategory,
+    initialQuery,
+  });
 
   return (
     <SitePageShell>
@@ -81,6 +87,9 @@ export default async function SectorsPage({
               initialCategories={categories.map((item) => ({ code: item.code, name: item.name }))}
               initialCategory={initialCategory}
               initialQuery={initialQuery}
+              initialItems={tableInitial?.items ?? []}
+              initialListTotal={tableInitial?.total}
+              initialListTotalPages={tableInitial?.totalPages}
             />
           </div>
         </main>

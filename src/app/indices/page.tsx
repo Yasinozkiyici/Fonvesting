@@ -6,6 +6,7 @@ import FundsTable from "@/components/tefas/FundsTable";
 import { LIVE_DATA_PAGE_REVALIDATE_SEC } from "@/lib/data-freshness";
 import { readSearchParam, type RouteSearchParams } from "@/lib/route-search-params";
 import { getFundTypeSummariesFromDailySnapshotSafe } from "@/lib/services/fund-daily-snapshot.service";
+import { loadFundsTableInitialSnapshot } from "@/lib/server/funds-table-initial";
 
 type TypeRow = {
   code: string;
@@ -29,6 +30,11 @@ export default async function IndicesPage({
     stockCount: fundType.fundCount,
     value: fundType.totalPortfolioSize,
   }));
+
+  const tableInitial = await loadFundsTableInitialSnapshot({
+    initialFundType,
+    initialQuery,
+  });
 
   return (
     <SitePageShell>
@@ -95,6 +101,9 @@ export default async function IndicesPage({
               initialFundTypes={types.map((item) => ({ code: Number(item.code), name: item.name }))}
               initialFundType={initialFundType}
               initialQuery={initialQuery}
+              initialItems={tableInitial?.items ?? []}
+              initialListTotal={tableInitial?.total}
+              initialListTotalPages={tableInitial?.totalPages}
             />
           </div>
         </main>
