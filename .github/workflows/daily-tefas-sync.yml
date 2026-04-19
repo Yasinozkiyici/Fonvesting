@@ -112,6 +112,10 @@ jobs:
         run: |
           pnpm run import:tefas-full
 
+      - name: Install Playwright Chromium (history fallback)
+        run: |
+          pnpm exec playwright install chromium
+
       - name: Append recent TEFAS history (fallback)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
