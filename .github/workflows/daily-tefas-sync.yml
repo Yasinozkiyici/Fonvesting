@@ -75,7 +75,26 @@ jobs:
             echo "::error::DATABASE_URL Actions secret tanımlı değil. Repo ayarlarından ekleyin."
             exit 1
           fi
-          normalized_url="$(node -e 'const raw=(process.env.DATABASE_URL||\"\").trim().replace(/\\\\n/g,\"\");if(!raw){process.exit(2)};let out=raw;try{const u=new URL(raw);const host=(u.hostname||\"\").toLowerCase();if(host.includes(\"pooler.supabase.com\")){if(!u.port||u.port===\"5432\")u.port=\"6543\";u.searchParams.set(\"pgbouncer\",\"true\");if(!(u.searchParams.get(\"sslmode\")||\"\").trim())u.searchParams.set(\"sslmode\",\"require\");out=u.toString();}console.log(out);}catch{console.log(raw);}')" || {
+          normalized_url="$(
+            node <<'NODE'
+          const raw = (process.env.DATABASE_URL || "").trim().replace(/\\n/g, "");
+          if (!raw) process.exit(2);
+          let out = raw;
+          try {
+            const u = new URL(raw);
+            const host = (u.hostname || "").toLowerCase();
+            if (host.includes("pooler.supabase.com")) {
+              if (!u.port || u.port === "5432") u.port = "6543";
+              u.searchParams.set("pgbouncer", "true");
+              if (!(u.searchParams.get("sslmode") || "").trim()) u.searchParams.set("sslmode", "require");
+              out = u.toString();
+            }
+          } catch {
+            out = raw;
+          }
+          process.stdout.write(out);
+          NODE
+          )" || {
             echo "::error::DATABASE_URL normalize edilemedi."
             exit 1
           }
