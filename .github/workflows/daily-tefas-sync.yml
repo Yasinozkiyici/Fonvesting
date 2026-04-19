@@ -100,7 +100,6 @@ jobs:
           }
           echo "::add-mask::$normalized_url"
           echo "database_url=$normalized_url" >> "$GITHUB_OUTPUT"
-          node -e 'const u=new URL(process.argv[1]);const h=u.hostname||\"\";const p=u.port||\"5432\";console.log(`[daily-sync-db] normalized host=${h} port=${p} pgbouncer=${u.searchParams.get(\"pgbouncer\")??\"none\"} sslmode=${u.searchParams.get(\"sslmode\")??\"none\"}`)' "$normalized_url"
 
       - name: Run full TEFAS import
         env:
