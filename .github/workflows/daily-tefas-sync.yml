@@ -112,6 +112,14 @@ jobs:
         run: |
           pnpm run import:tefas-full
 
+      - name: Append recent TEFAS history (fallback)
+        env:
+          DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
+          DATABASE_CONNECTION_LIMIT: "2"
+          DATABASE_POOL_TIMEOUT: "30"
+        run: |
+          pnpm run sync:tefas-history -- --append
+
       - name: Phase A chain evidence (DB history → snapshot → v2 heads)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
