@@ -124,8 +124,16 @@ jobs:
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           set +e
-          pnpm run sync:tefas-history -- --append
-          code=$?
+          code=1
+          for attempt in 1 2 3; do
+            pnpm run sync:tefas-history -- --append
+            code=$?
+            if [ "$code" -eq 0 ]; then
+              break
+            fi
+            echo "[history-fallback] retry attempt=${attempt} failed"
+            sleep $((attempt * 10))
+          done
           echo "history_fallback_exit_code=$code"
           exit 0
 

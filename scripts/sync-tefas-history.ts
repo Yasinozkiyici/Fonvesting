@@ -1,5 +1,6 @@
 import "./load-env";
-import { prisma } from "../src/lib/prisma";
+import { prisma, resetPrismaEngine } from "../src/lib/prisma";
+import { classifyDatabaseError } from "../src/lib/database-error-classifier";
 import {
   appendRecentFundHistory,
   backfillFundHistoryDays,
@@ -33,11 +34,33 @@ function parseDateArg(raw: string): Date {
   throw new Error(`Geçersiz tarih argümanı: ${raw}`);
 }
 
+async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const classified = classifyDatabaseError(error);
+      if (!classified.retryable || attempt >= 3) throw error;
+      console.warn(
+        `[sync-tefas-history] transient_db_error label=${label} attempt=${attempt} class=${classified.category} ` +
+          `prisma_code=${classified.prismaCode ?? "none"}`
+      );
+      await resetPrismaEngine();
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 async function resolveLatestSnapshotDate(fallbackDate: Date): Promise<Date> {
-  const latestHistory = await prisma.fundPriceHistory.findFirst({
-    orderBy: { date: "desc" },
-    select: { date: true },
-  });
+  const latestHistory = await withDbRetry("fundPriceHistory.findFirst", () =>
+    prisma.fundPriceHistory.findFirst({
+      orderBy: { date: "desc" },
+      select: { date: true },
+    })
+  );
   return startOfUtcDay(latestHistory?.date ?? fallbackDate);
 }
 
@@ -52,7 +75,19 @@ async function main() {
   const staleMinutes = staleMinutesRaw ? Number(staleMinutesRaw) : 120;
   const appendOverlapDays = 7;
 
-  const recovery = await recoverStaleHistorySyncState(Number.isFinite(staleMinutes) ? staleMinutes : 120);
+  let recovery = { recovered: false, previousStatus: null as string | null };
+  try {
+    recovery = await withDbRetry("recoverStaleHistorySyncState", () =>
+      recoverStaleHistorySyncState(Number.isFinite(staleMinutes) ? staleMinutes : 120)
+    );
+  } catch (error) {
+    const classified = classifyDatabaseError(error);
+    if (!classified.retryable) throw error;
+    console.warn(
+      `[sync-tefas-history] stale_recovery_skipped_due_db_fragility class=${classified.category} ` +
+        `prisma_code=${classified.prismaCode ?? "none"}`
+    );
+  }
 
   let result;
   if (append) {
