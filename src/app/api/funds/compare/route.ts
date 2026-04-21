@@ -1,22 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC, liveDataCacheControl } from "@/lib/data-freshness";
-import { prisma } from "@/lib/prisma";
 import { getFundLogoUrlForUi } from "@/lib/services/fund-logo.service";
 import { fundTypeForApi } from "@/lib/fund-type-display";
-import {
-  getFundDetailCoreServingCached,
-  getFundDetailCoreServingUniversePayloads,
-} from "@/lib/services/fund-detail-core-serving.service";
 import {
   loadCompareContext,
   type CompareContextDto,
 } from "@/lib/services/compare-reference.service";
-import { readServingPayloadForCompareSeries } from "@/lib/services/compare-series-resolution";
 import {
   hasUsableCompareRows,
   shouldUseFastCompareContextFallback,
 } from "@/lib/operational-hardening";
-import { readActiveRegistryFundsByCodes } from "@/lib/services/fund-registry-read.service";
 import {
   enforceServingRouteTrust,
   readServingComparePrimary,
@@ -41,11 +34,7 @@ const MAX = 4;
 const CODE_RE = /^[A-Z0-9]{2,12}$/;
 const COMPARE_ROUTE_SERVING_COMPARE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_COMPARE_TIMEOUT_MS ?? "1600");
 const COMPARE_ROUTE_SERVING_FUND_LIST_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_FUND_LIST_TIMEOUT_MS ?? "1600");
-const COMPARE_DB_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_DB_TIMEOUT_MS ?? "1400");
 const COMPARE_CONTEXT_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_CONTEXT_TIMEOUT_MS ?? "900");
-const COMPARE_SERVING_UNIVERSE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_UNIVERSE_TIMEOUT_MS ?? "1400");
-const COMPARE_SERVING_CODE_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_SERVING_CODE_TIMEOUT_MS ?? "1800");
-const COMPARE_REGISTRY_TIMEOUT_MS = Number(process.env.COMPARE_ROUTE_REGISTRY_TIMEOUT_MS ?? "1800");
 const COMPARE_FRESHNESS_FRESH_MS = Number(process.env.COMPARE_FRESHNESS_FRESH_MS ?? 6 * 60 * 60_000);
 const COMPARE_FRESHNESS_STALE_MS = Number(process.env.COMPARE_FRESHNESS_STALE_MS ?? 36 * 60 * 60_000);
 
@@ -67,7 +56,6 @@ type CompareFundRow = {
   fundTypeName: string | null;
   categoryId: string | null;
   isActive: boolean;
-  fallbackOnly?: boolean;
 };
 
 type ContextLoadOutcome = {
@@ -159,172 +147,6 @@ function buildDegradedCompareContext(codes: string[]): CompareContextDto {
   };
 }
 
-async function loadRowsFromSnapshot(codes: string[]): Promise<CompareFundRow[]> {
-  const latest = await withTimeout(
-    prisma.fundDailySnapshot.findFirst({
-      orderBy: [{ date: "desc" }, { updatedAt: "desc" }],
-      select: { date: true },
-    }),
-    COMPARE_DB_TIMEOUT_MS,
-    "compare_latest_snapshot"
-  );
-  if (!latest) return [];
-  const rows = await withTimeout(
-    prisma.fundDailySnapshot.findMany({
-      where: {
-        date: latest.date,
-        code: { in: codes },
-      },
-      select: {
-        fundId: true,
-        code: true,
-        name: true,
-        shortName: true,
-        logoUrl: true,
-        lastPrice: true,
-        dailyReturn: true,
-        monthlyReturn: true,
-        yearlyReturn: true,
-        portfolioSize: true,
-        investorCount: true,
-        categoryCode: true,
-        categoryName: true,
-        fundTypeCode: true,
-        fundTypeName: true,
-        fund: {
-          select: {
-            isActive: true,
-            categoryId: true,
-            logoUrl: true,
-          },
-        },
-      },
-    }),
-    COMPARE_DB_TIMEOUT_MS,
-    "compare_snapshot_rows"
-  );
-  return rows.map((row) => ({
-    fundId: row.fundId,
-    code: row.code,
-    name: row.name,
-    shortName: row.shortName,
-    logoUrl: row.logoUrl ?? row.fund.logoUrl,
-    lastPrice: row.lastPrice,
-    dailyReturn: row.dailyReturn,
-    monthlyReturn: row.monthlyReturn,
-    yearlyReturn: row.yearlyReturn,
-    portfolioSize: row.portfolioSize,
-    investorCount: row.investorCount,
-    categoryCode: row.categoryCode,
-    categoryName: row.categoryName,
-    fundTypeCode: row.fundTypeCode,
-    fundTypeName: row.fundTypeName,
-    categoryId: row.fund.categoryId,
-    isActive: row.fund.isActive,
-  }));
-}
-
-async function loadRowsFromServing(codes: string[]): Promise<CompareFundRow[]> {
-  const requested = new Set(codes.map((code) => code.trim().toUpperCase()));
-  const reads = await Promise.all(
-    codes.map(async (code) => {
-      try {
-        return await withTimeout(
-          readServingPayloadForCompareSeries(code, getFundDetailCoreServingCached),
-          COMPARE_SERVING_CODE_TIMEOUT_MS,
-          "compare_serving_code"
-        );
-      } catch {
-        return { payload: null };
-      }
-    })
-  );
-  const rowsFromCodeReads = reads
-    .map((read) => read.payload)
-    .filter((payload): payload is NonNullable<(typeof reads)[number]["payload"]> => payload != null)
-    .map((payload) => ({
-      fundId: payload.fund.fundId,
-      code: payload.fund.code,
-      name: payload.fund.name,
-      shortName: payload.fund.shortName,
-      logoUrl: payload.fund.logoUrl,
-      lastPrice: payload.latestPrice,
-      dailyReturn: payload.dailyChangePct,
-      monthlyReturn: payload.monthlyReturn,
-      yearlyReturn: payload.yearlyReturn,
-      portfolioSize: payload.portfolioSummary.current,
-      investorCount: payload.investorSummary.current,
-      categoryCode: payload.fund.categoryCode,
-      categoryName: payload.fund.categoryName,
-      fundTypeCode: payload.fund.fundTypeCode,
-      fundTypeName: payload.fund.fundTypeName,
-      categoryId: null,
-      isActive: true,
-      fallbackOnly: true,
-    }));
-  if (rowsFromCodeReads.length >= Math.min(codes.length, MAX)) return rowsFromCodeReads;
-
-  const foundCodes = new Set(rowsFromCodeReads.map((row) => row.code.trim().toUpperCase()));
-  const universe = await withTimeout(
-    getFundDetailCoreServingUniversePayloads(),
-    COMPARE_SERVING_UNIVERSE_TIMEOUT_MS,
-    "compare_serving_universe"
-  ).catch(() => null);
-  const rowsFromUniverse =
-    universe?.records
-      .filter((payload) => requested.has(payload.fund.code.trim().toUpperCase()))
-      .filter((payload) => !foundCodes.has(payload.fund.code.trim().toUpperCase()))
-      .map((payload) => ({
-        fundId: payload.fund.fundId,
-        code: payload.fund.code,
-        name: payload.fund.name,
-        shortName: payload.fund.shortName,
-        logoUrl: payload.fund.logoUrl,
-        lastPrice: payload.latestPrice,
-        dailyReturn: payload.dailyChangePct,
-        monthlyReturn: payload.monthlyReturn,
-        yearlyReturn: payload.yearlyReturn,
-        portfolioSize: payload.portfolioSummary.current,
-        investorCount: payload.investorSummary.current,
-        categoryCode: payload.fund.categoryCode,
-        categoryName: payload.fund.categoryName,
-        fundTypeCode: payload.fund.fundTypeCode,
-        fundTypeName: payload.fund.fundTypeName,
-        categoryId: null,
-        isActive: true,
-        fallbackOnly: true,
-      })) ?? [];
-
-  return [...rowsFromCodeReads, ...rowsFromUniverse];
-}
-
-async function loadRowsFromFundRegistry(codes: string[]): Promise<CompareFundRow[]> {
-  const rows = await withTimeout(
-    readActiveRegistryFundsByCodes(codes),
-    COMPARE_REGISTRY_TIMEOUT_MS,
-    "compare_registry_rows"
-  ).catch(() => []);
-  return rows.map((row) => ({
-    fundId: row.id,
-    code: row.code,
-    name: row.name,
-    shortName: row.shortName,
-    logoUrl: row.logoUrl,
-    lastPrice: row.lastPrice,
-    dailyReturn: row.dailyReturn,
-    monthlyReturn: 0,
-    yearlyReturn: 0,
-    portfolioSize: row.portfolioSize,
-    investorCount: row.investorCount,
-    categoryCode: null,
-    categoryName: null,
-    fundTypeCode: null,
-    fundTypeName: null,
-    categoryId: null,
-    isActive: true,
-    fallbackOnly: true,
-  }));
-}
 
 async function loadContextForRows(rows: CompareFundRow[]): Promise<ContextLoadOutcome> {
   const orderedCodes = rows.map((row) => row.code.trim().toUpperCase());
@@ -448,7 +270,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    let rows = (() => {
+    const rows = (() => {
       if (!servingCompare.payload || !servingList.payload) return [] as CompareFundRow[];
       const selected = new Set(codes.map((code) => code.trim().toUpperCase()));
       const listByCode = new Map(
@@ -479,38 +301,7 @@ export async function GET(req: NextRequest) {
           } satisfies CompareFundRow;
         });
     })();
-    let degradedSource: string | null = null;
-    if (rows.length > 0) degradedSource = "serving_compare_inputs";
-    if (rows.length === 0) {
-      const snapT = performance.now();
-      rows = await loadRowsFromSnapshot(codes).catch(() => []);
-      trace.record(
-        "snapshot_rows",
-        Math.round(performance.now() - snapT),
-        rows.length > 0 ? "ok" : "empty"
-      );
-      if (rows.length > 0) degradedSource = "snapshot_fallback";
-    }
-    if (rows.length === 0) {
-      const regT = performance.now();
-      rows = await loadRowsFromFundRegistry(codes).catch(() => []);
-      trace.record(
-        "registry_rows",
-        Math.round(performance.now() - regT),
-        rows.length > 0 ? "ok" : "empty"
-      );
-      if (rows.length > 0) degradedSource = "registry";
-    }
-    if (rows.length === 0) {
-      const coreT = performance.now();
-      rows = await loadRowsFromServing(codes).catch(() => []);
-      trace.record(
-        "core_serving_rows",
-        Math.round(performance.now() - coreT),
-        rows.length > 0 ? "ok" : "empty"
-      );
-      if (rows.length > 0) degradedSource = "core_serving_fallback";
-    }
+    let degradedSource: string | null = rows.length > 0 ? "serving_compare_inputs" : "source_unavailable";
 
     const activeRows = rows.filter((row) => row.isActive);
     const byCode = new Map(activeRows.map((row) => [row.code.trim().toUpperCase(), row]));
@@ -534,7 +325,6 @@ export async function GET(req: NextRequest) {
     const extrasById = contextOutcome.extrasById;
     if (contextOutcome.degraded && !degradedSource) degradedSource = "context_fallback";
     const rowsUsable = hasUsableCompareRows(ordered);
-    if (!rowsUsable) degradedSource = degradedSource ?? "empty_or_unusable";
     const compareHealth = deriveCompareHealth({
       rowsUsable,
       degradedSource,
@@ -723,73 +513,6 @@ export async function GET(req: NextRequest) {
       );
     }
     const codes = parseCodes(req.nextUrl.searchParams.get("codes"));
-    const servingRows = codes.length > 0 ? await loadRowsFromServing(codes).catch(() => []) : [];
-    if (servingRows.length > 0) {
-      const byCode = new Map(servingRows.map((row) => [row.code.trim().toUpperCase(), row]));
-      const ordered = codes.map((code) => byCode.get(code)).filter(Boolean) as CompareFundRow[];
-      const fallbackFunds = ordered.map((it) => ({
-        code: it.code,
-        name: it.name,
-        shortName: it.shortName,
-        logoUrl: getFundLogoUrlForUi(it.fundId, it.code, it.logoUrl, it.name),
-        lastPrice: it.lastPrice,
-        dailyReturn: it.dailyReturn,
-        monthlyReturn: it.monthlyReturn,
-        yearlyReturn: it.yearlyReturn,
-        portfolioSize: it.portfolioSize,
-        investorCount: it.investorCount,
-        category:
-          it.categoryCode && it.categoryName
-            ? { code: it.categoryCode, name: it.categoryName }
-            : null,
-        fundType:
-          it.fundTypeCode != null && it.fundTypeName
-            ? fundTypeForApi({ code: it.fundTypeCode, name: it.fundTypeName })
-            : null,
-        volatility1y: null,
-        maxDrawdown1y: null,
-        variabilityLabel: null,
-      }));
-      const failureClass = isTimeoutLike(e) ? "timeout" : "compare_failed";
-      const surfaceState = resolveCompareSurfaceState({
-        requestedCount: codes.length,
-        returnedCount: fallbackFunds.length,
-        failureClass,
-        degradedSource: "serving_exception_fallback",
-        payloadInvalid: false,
-      });
-      logCompareDataFlowEvidence({
-        requestedCount: codes.length,
-        returnedCount: fallbackFunds.length,
-        surfaceState: surfaceState.kind,
-        degradedSource: "serving_exception_fallback",
-        failureClass,
-      });
-      return NextResponse.json(
-        {
-          funds: fallbackFunds,
-          compare: buildDegradedCompareContext(ordered.map((row) => row.code.trim().toUpperCase())),
-          meta: {
-            degradedSource: "serving_exception_fallback",
-            failureClass,
-            surfaceState,
-          },
-        },
-        {
-          headers: {
-            "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
-            ...trace.finish({
-              httpStatus: 200,
-              classification: "exception_fallback_rows",
-              failureClass,
-              rowSource: "serving_exception_fallback",
-            }),
-            "X-Compare-Degraded-Source": "serving_exception_fallback",
-            "X-Compare-Failure-Class": failureClass,
-          },
-        }
-      );
-    }
     if (process.env.NODE_ENV !== "production") {
       console.error("[funds/compare]", e);
     }

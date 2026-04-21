@@ -72,7 +72,7 @@ async function readFromHealthTruth(expected: string) {
   const freshnessTruth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth ?? null;
   const actualRaw = asDateOnly(freshnessTruth?.rawSnapshotAsOf ?? null);
   const actualSnapshot = asDateOnly(
-    freshnessTruth?.fundSnapshotAsOf ?? payload?.freshness?.latestFundSnapshotDate ?? null
+    freshnessTruth?.snapshotAsOf ?? payload?.freshness?.latestFundSnapshotDate ?? null
   );
   const servingAsOf = asDateOnly(freshnessTruth?.servingSnapshotAsOf ?? null);
   return {

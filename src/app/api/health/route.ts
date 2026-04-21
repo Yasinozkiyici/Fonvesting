@@ -3,6 +3,7 @@ import { getBuildFingerprint } from "@/lib/build-fingerprint";
 import { resolveDbConnectionProfile } from "@/lib/db/db-connection-profile";
 import { getSystemHealthSnapshot } from "@/lib/system-health";
 import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
+import { DATA_PLATFORM_CUTOVER_PHASE } from "@/lib/data-platform/cutover-boundaries";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -125,8 +126,11 @@ export async function GET(request: Request) {
     "X-Freshness-Latest-Successful-Sync-At": freshnessTruth.latestSuccessfulSyncAt ?? "unknown",
     "X-Freshness-Serving-Lag-Days": freshnessTruth.servingLagDays == null ? "unknown" : String(freshnessTruth.servingLagDays),
     "X-Freshness-Raw-Lag-Days": freshnessTruth.rawLagDays == null ? "unknown" : String(freshnessTruth.rawLagDays),
+    "X-Freshness-Chart-Snapshot-As-Of": freshnessTruth.chartSnapshotAsOf ?? "unknown",
+    "X-Freshness-Comparison-Snapshot-As-Of": freshnessTruth.comparisonSnapshotAsOf ?? "unknown",
     "X-Build-Commit": buildFingerprint.commitShort ?? "unknown",
     "X-Build-Env": buildFingerprint.env ?? "unknown",
+    "X-Data-Cutover-Phase": DATA_PLATFORM_CUTOVER_PHASE,
   };
 
   if (isProduction && !allowDetails) {

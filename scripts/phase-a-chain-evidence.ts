@@ -101,7 +101,7 @@ async function main() {
 
   const latestRaw = toIsoOrNull(freshnessTruth?.rawSnapshotAsOf ?? null);
   const latestSnapshot =
-    toIsoOrNull(freshnessTruth?.fundSnapshotAsOf ?? null) ??
+    toIsoOrNull(freshnessTruth?.snapshotAsOf ?? null) ??
     toIsoOrNull(payload?.freshness?.latestFundSnapshotDate ?? null);
   const latestServing = toIsoOrNull(freshnessTruth?.servingSnapshotAsOf ?? null);
   const latestSuccessfulSyncAt = toIsoOrNull(payload?.freshness?.lastSuccessfulIngestionAt ?? null);

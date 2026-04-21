@@ -3,7 +3,8 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import { getDbEnvStatus, sanitizeFailureDetail, type DbConnectionMode } from "@/lib/db-env-validation";
-import { parseDailySyncRunMeta, type DailySyncRunMeta } from "@/lib/daily-sync-run-meta";
+import { parseDailySyncMetaWithLedgerFallback } from "@/lib/pipeline/run-ledger";
+import type { DailySyncRunMeta } from "@/lib/daily-sync-run-meta";
 import { DAILY_JOB_SLA_MINUTES, getIstanbulWallClock, toIstanbulDateKey } from "@/lib/daily-sync-policy";
 import {
   areRuntimeTargetsIdentical,
@@ -1068,7 +1069,7 @@ export async function getSystemHealthSnapshot(options?: {
   const servingRebuildDateKey = toIstanbulDateKey(servingRebuildJob?.completedAt ?? null);
   const warmScoresDateKey = toIstanbulDateKey(warmScoresJob?.completedAt ?? null);
   const dailySyncDateKey = toIstanbulDateKey(dailySyncJob?.completedAt ?? null);
-  const dailySyncMeta = parseDailySyncRunMeta(dailySyncJob?.errorMessage);
+  const dailySyncMeta = parseDailySyncMetaWithLedgerFallback(dailySyncJob?.errorMessage);
   const lastSuccessfulIngestionAt =
     dailySyncJob?.status === "SUCCESS" && dailySyncMeta?.sourceStatus === "success"
       ? dailySyncJob.completedAt?.toISOString() ?? null
@@ -1120,7 +1121,7 @@ export async function getSystemHealthSnapshot(options?: {
           ? ((dailySyncJob?.fundsUpdated ?? 0) > 0 ? "success_with_data" : "successful_noop")
         : "unknown",
     sourceQualityReason: dailySyncMeta?.sourceQualityReason ?? null,
-    processedSnapshotDate: dailySyncMeta?.processedSnapshotDate ?? latestFundSnapshotDate?.toISOString() ?? null,
+    processedSnapshotDate: dailySyncMeta?.processedSnapshotDate ?? null,
     fetchedFundRows:
       typeof dailySyncMeta?.fetchedFundRows === "number"
         ? dailySyncMeta.fetchedFundRows

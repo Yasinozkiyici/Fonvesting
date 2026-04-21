@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { getSystemHealthSnapshot } from "@/lib/system-health";
 import { readFreshnessTruthCached } from "@/lib/services/freshness-truth.service";
 
@@ -21,58 +20,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const [snapshot, rawCounts, servingHeads, servingAlignment, freshnessTruth] = await Promise.all([
+  const [snapshot, freshnessTruth] = await Promise.all([
     getSystemHealthSnapshot({ lightweight: false, includeExternalProbes: false }),
-    Promise.all([
-      prisma.rawMarketPayload.count().catch(() => -1),
-      prisma.rawPricesPayload.count().catch(() => -1),
-      prisma.rawFundMetadataPayload.count().catch(() => -1),
-      prisma.rawPricesPayload.count({ where: { parseStatus: "FAILED" } }).catch(() => -1),
-      prisma.rawPricesPayload.findFirst({ orderBy: { fetchedAt: "desc" }, select: { fetchedAt: true } }).catch(() => null),
-    ]).then(([market, prices, meta, priceParseFailed, latestRawPrice]) => ({
-      market,
-      prices,
-      metadata: meta,
-      priceParseFailed,
-      latestRawPriceFetchedAt: latestRawPrice?.fetchedAt?.toISOString() ?? null,
-    })),
-    prisma.servingSystemStatus.findFirst({ orderBy: { updatedAt: "desc" }, select: { buildId: true, updatedAt: true } }).catch(() => null),
-    Promise.all([
-      prisma.servingFundList.findFirst({ orderBy: { updatedAt: "desc" }, select: { buildId: true } }).catch(() => null),
-      prisma.servingFundDetail.findFirst({ orderBy: { updatedAt: "desc" }, select: { buildId: true } }).catch(() => null),
-      prisma.servingCompareInputs.findFirst({ orderBy: { updatedAt: "desc" }, select: { buildId: true } }).catch(() => null),
-    ]).then(([list, detail, compare]) => ({
-      listBuildId: list?.buildId ?? null,
-      detailBuildId: detail?.buildId ?? null,
-      compareBuildId: compare?.buildId ?? null,
-      aligned: Boolean(list?.buildId && detail?.buildId && compare?.buildId && list.buildId === detail.buildId && detail.buildId === compare.buildId),
-    })),
     readFreshnessTruthCached(),
   ]);
 
   return NextResponse.json({
     ok: snapshot.database.canConnect,
     checkedAt: snapshot.checkedAt,
-    freshness: snapshot.freshness,
-    integrity: snapshot.integrity,
-    jobs: snapshot.jobs,
-    canonicalCounts: snapshot.counts,
-    rawIngestionRowCounts: rawCounts,
-    latestRawFetchTimestamp: rawCounts.latestRawPriceFetchedAt,
-    latestCanonicalSnapshotDate: snapshot.freshness.latestFundSnapshotDate,
-    latestServingBuildId: servingHeads?.buildId ?? null,
-    buildAlignment: servingAlignment,
-    dailyPipelineTruth: {
-      dailySync: snapshot.jobs.dailySync,
-      dailySyncStatus: snapshot.jobs.dailySyncStatus,
-      issues: snapshot.issues.filter((issue) => issue.code.startsWith("daily_sync")),
+    dailySync: snapshot.jobs.dailySync,
+    dailySyncStatus: snapshot.jobs.dailySyncStatus,
+    canonicalFreshnessTruth: freshnessTruth,
+    canonicalDates: {
+      snapshotAsOf: freshnessTruth.snapshotAsOf,
+      servingSnapshotAsOf: freshnessTruth.servingSnapshotAsOf,
+      chartSnapshotAsOf: freshnessTruth.chartSnapshotAsOf,
+      comparisonSnapshotAsOf: freshnessTruth.comparisonSnapshotAsOf,
+      rawSnapshotAsOf: freshnessTruth.rawSnapshotAsOf,
     },
-    freshnessAssessment: {
-      status: snapshot.status,
-      staleDays: snapshot.freshness.daysSinceLatestFundSnapshot,
-      canonicalTruth: freshnessTruth,
-      sourceUnavailable: freshnessTruth.degradedReason === "source_unavailable",
-      staleButServing: freshnessTruth.staleButServing,
-    },
+    issues: snapshot.issues.filter((issue) => issue.code.startsWith("daily_sync")),
   });
 }

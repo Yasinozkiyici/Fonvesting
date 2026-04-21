@@ -261,6 +261,85 @@ model SyncLog {
   @@index([syncType, startedAt(sort: Desc)])
 }
 
+model CanonicalRawIngestRun {
+  runId               String   @id @map("run_id")
+  triggerType         String   @map("trigger_type")
+  sourceEffectiveDate DateTime? @map("source_effective_date")
+  fetchedRows         Int      @default(0) @map("fetched_rows")
+  writtenRows         Int      @default(0) @map("written_rows")
+  fetchSucceeded      Boolean  @default(false) @map("fetch_succeeded")
+  writeSucceeded      Boolean  @default(false) @map("write_succeeded")
+  isNoop              Boolean  @default(false) @map("is_noop")
+  stageStatus         String   @map("stage_status")
+  stageReason         String?  @map("stage_reason")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  @@index([sourceEffectiveDate(sort: Desc)])
+  @@index([updatedAt(sort: Desc)])
+  @@map("canonical_raw_ingest_runs")
+}
+
+model CanonicalSnapshotRun {
+  runId       String   @id @map("run_id")
+  snapshotDate DateTime? @map("snapshot_date")
+  rowsWritten Int      @default(0) @map("rows_written")
+  stageStatus String   @map("stage_status")
+  stageReason String?  @map("stage_reason")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  @@index([snapshotDate(sort: Desc)])
+  @@index([updatedAt(sort: Desc)])
+  @@map("canonical_snapshot_runs")
+}
+
+model CanonicalServingPublishRun {
+  runId        String   @id @map("run_id")
+  buildId      String?  @map("build_id")
+  snapshotDate DateTime? @map("snapshot_date")
+  listRows     Int      @default(0) @map("list_rows")
+  detailRows   Int      @default(0) @map("detail_rows")
+  compareRows  Int      @default(0) @map("compare_rows")
+  discoveryRows Int     @default(0) @map("discovery_rows")
+  stageStatus  String   @map("stage_status")
+  stageReason  String?  @map("stage_reason")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@index([snapshotDate(sort: Desc)])
+  @@index([buildId])
+  @@index([updatedAt(sort: Desc)])
+  @@map("canonical_serving_publish_runs")
+}
+
+model CanonicalChartPublishRun {
+  runId        String   @id @map("run_id")
+  buildId      String?  @map("build_id")
+  snapshotDate DateTime? @map("snapshot_date")
+  chartRows    Int      @default(0) @map("chart_rows")
+  stageStatus  String   @map("stage_status")
+  stageReason  String?  @map("stage_reason")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  @@index([snapshotDate(sort: Desc)])
+  @@index([buildId])
+  @@index([updatedAt(sort: Desc)])
+  @@map("canonical_chart_publish_runs")
+}
+
+model CanonicalComparisonPublishRun {
+  runId          String   @id @map("run_id")
+  buildId        String?  @map("build_id")
+  snapshotDate   DateTime? @map("snapshot_date")
+  comparisonRows Int      @default(0) @map("comparison_rows")
+  stageStatus    String   @map("stage_status")
+  stageReason    String?  @map("stage_reason")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  @@index([snapshotDate(sort: Desc)])
+  @@index([buildId])
+  @@index([updatedAt(sort: Desc)])
+  @@map("canonical_comparison_publish_runs")
+}
+
 model User {
   id           String      @id @default(cuid())
   email        String      @unique

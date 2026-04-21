@@ -373,16 +373,9 @@ export default function ScoredFundsTable({
       ? payloadForCurrentMode
       : null;
   const lastGoodMatchesScope = lastGoodScopeKey != null && lastGoodScopeKey === currentFetchScopeKey;
-  const lastGoodSameScopeBase =
-    Boolean(lastGoodPayload && lastGoodPayload.funds.length > 0) &&
-    lastGoodScopeKey != null &&
-    stripScoresScopeQuerySuffix(lastGoodScopeKey) === stripScoresScopeQuerySuffix(currentFetchScopeKey) &&
-    // Arama varken q: önekini strip edip SSR/lastGood önizleme satırlarına düşmek, sunucu q= ile bulunan kodu (ör. ZP8) tabloda göstermez.
-    !search.trim();
   const displayPayload =
     payloadForCurrentScope ??
-    (lastGoodMatchesScope ? lastGoodPayload : null) ??
-    (lastGoodSameScopeBase ? lastGoodPayload : null);
+    (lastGoodMatchesScope ? lastGoodPayload : null);
 
   useEffect(() => {
     setRankingMode(initialMode);
@@ -617,7 +610,7 @@ export default function ScoredFundsTable({
     );
 
     let scoresResolved = false;
-    if (bootstrapWithoutRows) {
+    if (false && bootstrapWithoutRows) {
       const coreRowsUrl = `/api/funds?page=1&pageSize=${SCORES_CORE_ROWS_FALLBACK_PAGE_SIZE}&sort=portfolioSize:desc&light=1`;
       void fetchNormalizedJsonWithMeta(
         coreRowsUrl,

@@ -1,12 +1,11 @@
 /**
  * Son N adet `daily_sync` SyncLog satırında truth alanlarının ardışık doluluğunu raporlar.
- * Health/gate ile aynı meta ayrıştırmasını kullanır (`parseDailySyncRunMeta`).
+ * Health/gate ile aynı meta ayrıştırmasını kullanır (`parseDailySyncMetaWithLedgerFallback`).
  * Varsayılan: yalnızca `completedAt` dolu (terminal) run’lar — RUNNING hayaletleri strict penceresinden çıkar.
  * Tüm run’lar için: `--include-running`
  */
 import "../load-env";
-import { readLatestServingHeads } from "../../src/lib/data-platform/serving-head";
-import { parseDailySyncRunMeta } from "../../src/lib/system-health";
+import { parseDailySyncMetaWithLedgerFallback } from "../../src/lib/pipeline/run-ledger";
 import { prisma } from "../../src/lib/prisma";
 
 type DailySyncRow = {
@@ -37,8 +36,8 @@ function parseLimit(argv: string[]): number {
   return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 50) : 10;
 }
 
-function resolveTruthFields(row: DailySyncRow, servingFallback: { snapshotIso: string | null; buildId: string | null }): TruthView {
-  const meta = parseDailySyncRunMeta(row.errorMessage);
+function resolveTruthFields(row: DailySyncRow): TruthView {
+  const meta = parseDailySyncMetaWithLedgerFallback(row.errorMessage);
   const outcome =
     meta?.outcome === "running" ||
     meta?.outcome === "success" ||
@@ -83,16 +82,12 @@ function resolveTruthFields(row: DailySyncRow, servingFallback: { snapshotIso: s
   if (sourceQuality === "unknown" && (row.status === "FAILED" || row.status === "TIMEOUT")) {
     sourceQuality = "partial_source_failure";
   }
-  let processedSnapshotDate: string | null =
+  const processedSnapshotDate: string | null =
     typeof meta?.processedSnapshotDate === "string" && meta.processedSnapshotDate.length > 0
       ? meta.processedSnapshotDate
       : null;
-  let publishBuildId: string | null =
+  const publishBuildId: string | null =
     typeof meta?.publishBuildId === "string" && meta.publishBuildId.length > 0 ? meta.publishBuildId : null;
-  if (row.status === "SUCCESS") {
-    if (!processedSnapshotDate && servingFallback.snapshotIso) processedSnapshotDate = servingFallback.snapshotIso;
-    if (!publishBuildId && servingFallback.buildId) publishBuildId = servingFallback.buildId;
-  }
 
   return { outcome, sourceStatus, publishStatus, sourceQuality, processedSnapshotDate, publishBuildId };
 }
@@ -126,8 +121,7 @@ async function main() {
   const strict = argv.includes("--strict");
   const includeRunning = argv.includes("--include-running");
 
-  const [rowsDesc, latestSnap, heads] = await Promise.all([
-    prisma.syncLog.findMany({
+  const rowsDesc = await prisma.syncLog.findMany({
     where: {
       syncType: "daily_sync",
       ...(includeRunning ? {} : { completedAt: { not: null } }),
@@ -142,35 +136,19 @@ async function main() {
       fundsUpdated: true,
       errorMessage: true,
     },
-  }),
-    prisma.fundDailySnapshot
-      .findFirst({ orderBy: { date: "desc" }, select: { date: true } })
-      .catch(() => null),
-    readLatestServingHeads().catch(() => null),
-  ]);
-
-  const servingFallback = {
-    snapshotIso: latestSnap?.date?.toISOString() ?? null,
-    buildId: heads?.fundList?.buildId ?? heads?.system?.buildId ?? null,
-  };
+  });
 
   const chronological = [...rowsDesc].reverse();
   const runs = chronological.map((row) => {
-    const metaOnce = parseDailySyncRunMeta(row.errorMessage);
-    const truth = resolveTruthFields(row, servingFallback);
+    const metaOnce = parseDailySyncMetaWithLedgerFallback(row.errorMessage);
+    const truth = resolveTruthFields(row);
     const metaParsed = metaOnce != null;
-    const truthAugmentedFromServing =
-      row.status === "SUCCESS" &&
-      metaParsed &&
-      ((!metaOnce.publishBuildId && Boolean(servingFallback.buildId)) ||
-        (!metaOnce.processedSnapshotDate && Boolean(servingFallback.snapshotIso)));
     return {
       id: row.id,
       startedAt: row.startedAt.toISOString(),
       completedAt: row.completedAt?.toISOString() ?? null,
       jobStatus: row.status,
       metaJsonParsed: metaParsed,
-      truthAugmentedFromServing,
       ...truth,
       strictTruthComplete: terminalRunStrictOk({ ...row, jobStatus: row.status }, truth),
     };

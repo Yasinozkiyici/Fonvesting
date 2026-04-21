@@ -23,6 +23,10 @@ export type DailySyncRunMeta = {
   metaTruncated?: boolean;
 };
 
+/**
+ * Transitional parser for legacy daily_sync JSON meta.
+ * Canonical reader path is `parseDailySyncMetaWithLedgerFallback` in run-ledger.
+ */
 export function parseDailySyncRunMeta(message: string | null | undefined): DailySyncRunMeta | null {
   if (!message) return null;
   try {

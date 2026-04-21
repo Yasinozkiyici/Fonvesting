@@ -1,7 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { getIstanbulWallClock, toIstanbulDateKey } from "@/lib/daily-sync-policy";
 import { deriveFreshnessContract } from "@/lib/freshness-contract";
-import { parseDailySyncRunMeta } from "@/lib/daily-sync-run-meta";
+import { parseDailySyncMetaWithLedgerFallback, parseRunLedgerFromSyncLog } from "@/lib/pipeline/run-ledger";
+import {
+  readLatestCanonicalChartSnapshotDate,
+  readLatestCanonicalComparisonSnapshotDate,
+  readLatestCanonicalServingSnapshotDate,
+  readLatestCanonicalSnapshotDate,
+} from "@/lib/pipeline/canonical-pipeline-store";
 
 export type FreshnessDegradedReason =
   | "none"
@@ -15,6 +21,8 @@ export type FreshnessTruth = {
   snapshotAsOf: string | null;
   rawSnapshotAsOf: string | null;
   servingSnapshotAsOf: string | null;
+  chartSnapshotAsOf: string | null;
+  comparisonSnapshotAsOf: string | null;
   latestSuccessfulSyncAt: string | null;
   staleByHours: number | null;
   staleByDays: number | null;
@@ -33,6 +41,8 @@ export function evaluateFreshnessTruth(input: {
   snapshotAsOf: string | null;
   rawSnapshotAsOf: string | null;
   servingSnapshotAsOf: string | null;
+  chartSnapshotAsOf: string | null;
+  comparisonSnapshotAsOf: string | null;
   latestSuccessfulSyncAt: string | null;
   lastDailySyncCompletedDateKey: string | null;
   sourceUnavailable: boolean;
@@ -83,6 +93,8 @@ export function evaluateFreshnessTruth(input: {
     snapshotAsOf: input.snapshotAsOf,
     rawSnapshotAsOf: input.rawSnapshotAsOf,
     servingSnapshotAsOf: input.servingSnapshotAsOf,
+    chartSnapshotAsOf: input.chartSnapshotAsOf,
+    comparisonSnapshotAsOf: input.comparisonSnapshotAsOf,
     latestSuccessfulSyncAt: input.latestSuccessfulSyncAt,
     staleByHours,
     staleByDays,
@@ -118,17 +130,32 @@ export async function readFreshnessTruthCached(): Promise<FreshnessTruth> {
   const task = (async (): Promise<FreshnessTruth> => {
     const ist = getIstanbulWallClock();
     try {
-      const [latestSnapshot, latestRawSnapshot, latestServing, latestDailySync] = await Promise.all([
+      const [
+        latestCanonicalSnapshotDate,
+        latestCanonicalServingSnapshotDate,
+        latestCanonicalChartSnapshotDate,
+        latestCanonicalComparisonSnapshotDate,
+        latestSnapshot,
+        latestRawSnapshot,
+        latestDailySyncRows,
+      ] = await Promise.all([
+        readLatestCanonicalSnapshotDate().catch(() => null),
+        readLatestCanonicalServingSnapshotDate().catch(() => null),
+        readLatestCanonicalChartSnapshotDate().catch(() => null),
+        readLatestCanonicalComparisonSnapshotDate().catch(() => null),
         prisma.fundDailySnapshot.findFirst({ orderBy: { date: "desc" }, select: { date: true } }),
         prisma.rawPricesPayload.findFirst({ orderBy: { effectiveDate: "desc" }, select: { effectiveDate: true } }),
-        prisma.servingFundList.findFirst({ orderBy: { snapshotAsOf: "desc" }, select: { snapshotAsOf: true } }),
-        prisma.syncLog.findFirst({
+        prisma.syncLog.findMany({
           where: { syncType: "daily_sync" },
           orderBy: { startedAt: "desc" },
+          take: 8,
           select: { status: true, completedAt: true, errorMessage: true },
         }),
       ]);
-      const meta = parseDailySyncRunMeta(latestDailySync?.errorMessage);
+      const latestDailySync =
+        latestDailySyncRows.find((row) => row.completedAt != null && row.status !== "RUNNING") ?? latestDailySyncRows[0] ?? null;
+      const meta = parseDailySyncMetaWithLedgerFallback(latestDailySync?.errorMessage);
+      const runLedger = parseRunLedgerFromSyncLog(latestDailySync?.errorMessage);
       const syncMetaMalformed = Boolean(
         latestDailySync &&
           typeof latestDailySync.errorMessage === "string" &&
@@ -143,9 +170,12 @@ export async function readFreshnessTruthCached(): Promise<FreshnessTruth> {
       return evaluateFreshnessTruth({
         nowMs: now,
         expectedDateKey: ist.dateKey,
-        snapshotAsOf: latestSnapshot?.date?.toISOString() ?? null,
+        snapshotAsOf: latestCanonicalSnapshotDate ?? latestSnapshot?.date?.toISOString() ?? null,
         rawSnapshotAsOf: latestRawSnapshot?.effectiveDate?.toISOString() ?? null,
-        servingSnapshotAsOf: latestServing?.snapshotAsOf?.toISOString() ?? null,
+        servingSnapshotAsOf: latestCanonicalServingSnapshotDate ?? runLedger?.servingPublish.effectiveDate ?? null,
+        chartSnapshotAsOf: latestCanonicalChartSnapshotDate ?? runLedger?.chartPublish.effectiveDate ?? null,
+        comparisonSnapshotAsOf:
+          latestCanonicalComparisonSnapshotDate ?? runLedger?.returnComparisonPublish.effectiveDate ?? null,
         latestSuccessfulSyncAt,
         lastDailySyncCompletedDateKey: dailySyncCompletedDateKey,
         sourceUnavailable: false,
@@ -158,6 +188,8 @@ export async function readFreshnessTruthCached(): Promise<FreshnessTruth> {
         snapshotAsOf: null,
         rawSnapshotAsOf: null,
         servingSnapshotAsOf: null,
+        chartSnapshotAsOf: null,
+        comparisonSnapshotAsOf: null,
         latestSuccessfulSyncAt: null,
         lastDailySyncCompletedDateKey: null,
         sourceUnavailable: true,

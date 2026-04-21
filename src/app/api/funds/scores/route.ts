@@ -1014,6 +1014,101 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Cutover Phase 3: publish-first read path.
+  // Serving publish truth unavailable -> deterministic degraded payload, no legacy fallback ladder.
+  const publishOnlyDegradedReason = "publish_truth_unavailable";
+  const publishOnlyFailureClass = "serving_payload_missing";
+  const degradedPayload = createScoresPayload({
+    mode,
+    funds: [],
+    universeTotal: 0,
+    matchedTotal: 0,
+  });
+  const degradedSurfaceState = resolveScoresApiSurfaceState({
+    payload: degradedPayload,
+    degradedReason: publishOnlyDegradedReason,
+  });
+  const degradedDiscoveryHealth = deriveDiscoveryHealth({
+    payload: degradedPayload,
+    scope: {
+      mode,
+      categoryCode,
+      theme,
+      queryTrim,
+    },
+    source: "empty",
+    degradedReason: publishOnlyDegradedReason,
+    failureClass: publishOnlyFailureClass,
+    stale: false,
+    requestConsistent: true,
+  });
+  const degradedFreshness = deriveFreshnessContract({
+    asOf:
+      servingWorld?.snapshotAsOf.discovery ??
+      servingWorld?.snapshotAsOf.fundList ??
+      servingWorld?.snapshotAsOf.system ??
+      null,
+    freshTtlMs: SCORES_FRESHNESS_FRESH_MS,
+    staleTtlMs: SCORES_FRESHNESS_STALE_MS,
+    unknownAsDegraded: true,
+  });
+  return NextResponse.json(
+    {
+      ...degradedPayload,
+      meta: {
+        servingWorld,
+        surfaceState: degradedSurfaceState,
+        freshness: degradedFreshness,
+        canonicalFreshness: toCanonicalFreshnessContract(degradedFreshness, "scores_api:publish_truth_missing", {
+          latestSuccessfulSyncAt: freshnessTruth.latestSuccessfulSyncAt,
+          degradedReason: publishOnlyDegradedReason,
+        }),
+        reliability: {
+          overall: degradedDiscoveryHealth.overallDiscoveryHealth,
+          scope: degradedDiscoveryHealth.scopeHealth,
+          trustAsFinal: false,
+        },
+        discovery: buildDiscoveryPayloadContract({
+          payload: degradedPayload,
+          scope: discoveryScopeInput(mode, categoryCode, theme, queryTrim, limit),
+          scopeHealth: degradedDiscoveryHealth.scopeHealth,
+          discoverySource: "empty",
+          trustAsFinal: false,
+          degradedReason: publishOnlyDegradedReason,
+        }),
+      },
+    },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": liveDataCacheControl(LIVE_DATA_CACHE_SEC, LIVE_DATA_SWR_SEC),
+        "X-Scores-Source": "empty",
+        "X-Scores-Cache": "empty",
+        "X-Scores-Surface-State": degradedSurfaceState,
+        "X-Scores-Empty-Result": "degraded",
+        "X-Scores-Degraded": publishOnlyDegradedReason,
+        "X-Scores-Failure-Class": publishOnlyFailureClass,
+        "X-Discovery-Trust-Final": "0",
+        "X-Discovery-Request-Key": scopeRequestKey,
+        ...dbHeaders,
+        ...servingHeaders({
+          world: servingWorld,
+          trust: servingPrimaryTrust,
+          routeSource: "serving_discovery_index",
+          fallbackUsed: true,
+        }),
+        ...servingStrictHeaders({ enabled: strictMode, violated: false }),
+        ...scoresRouteDurationHeadersMs(startedAt),
+        ...scoresTraceResponseHeaders(trace, degradedSurfaceState, "empty", {
+          scopeRequestKey,
+          degradedReason: publishOnlyDegradedReason,
+          failureClass: publishOnlyFailureClass,
+        }),
+      },
+    }
+  );
+
+  /*
   trace.mark("legacy_fallback");
   let cacheState: "hit" | "miss" | "dedupe" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "miss";
   let source: "snapshot" | "memory" | "stale" | "db-cache" | "light" | "funds-list" | "empty" = "snapshot";
@@ -1436,4 +1531,6 @@ export async function GET(request: NextRequest) {
     },
   }
   );
+  */
+  throw new Error("legacy_scores_fallback_disabled");
 }

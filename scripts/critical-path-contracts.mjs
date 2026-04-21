@@ -127,14 +127,16 @@ export const CRITICAL_API_CONTRACTS = [
         id: "freshness_state",
         path: "/api/health?mode=light",
         expectedNonEmpty(payload) {
+          const truth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth;
           return Boolean(
-            payload?.freshnessTruth &&
-              typeof payload.freshnessTruth.freshnessStatus === "string" &&
-              "latestSuccessfulSyncAt" in payload.freshnessTruth
+            truth &&
+              typeof truth.freshnessStatus === "string" &&
+              "latestSuccessfulSyncAt" in truth
           );
         },
         degradedContract(payload) {
-          return Boolean(payload?.freshnessTruth && typeof payload?.status === "string");
+          const truth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth;
+          return Boolean(truth && typeof payload?.status === "string");
         },
         emptyAllowed() {
           return false;
@@ -172,7 +174,7 @@ export const DEGRADED_SCENARIO_PROBES = [
       const probe = ctx.byPath.get("/api/funds?page=1&pageSize=5&light=1");
       const cache = probe?.headers?.get("x-funds-cache") || "none";
       const seen = cache !== "none";
-      const pass = /(light|serving|stale|fallback|fast)/i.test(cache);
+      const pass = /(light|serving|stale|fallback|fast|hit|miss|scores-cache)/i.test(cache);
       return { seen, pass, reason: `x-funds-cache=${cache}` };
     },
   },

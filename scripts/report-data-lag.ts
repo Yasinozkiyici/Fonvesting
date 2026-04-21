@@ -77,7 +77,7 @@ async function readHealthLagTruth() {
       : {};
   const truth = isRecord(truthCandidate) ? truthCandidate : {};
   const latestRaw = toDateKey(truth?.rawSnapshotAsOf ?? null);
-  const latestSnapshot = toDateKey(truth?.fundSnapshotAsOf ?? freshness?.latestFundSnapshotDate ?? null);
+  const latestSnapshot = toDateKey(truth?.snapshotAsOf ?? freshness?.latestFundSnapshotDate ?? null);
   const latestServing = toDateKey(truth?.servingSnapshotAsOf ?? null);
   return {
     generatedAt: new Date().toISOString(),

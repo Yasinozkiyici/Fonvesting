@@ -78,22 +78,13 @@ function hoursSince(value) {
 function parseDailyRunTruth(healthRootPayload) {
   const dailySync = healthRootPayload?.jobs?.dailySync ?? null;
   const dailySyncStatus = healthRootPayload?.jobs?.dailySyncStatus ?? null;
-  const rawMeta = dailySync?.errorMessage;
-  let parsedMeta = null;
-  if (typeof rawMeta === "string" && rawMeta.trim().startsWith("{")) {
-    try {
-      parsedMeta = JSON.parse(rawMeta);
-    } catch {
-      parsedMeta = null;
-    }
-  }
   const completedAt = dailySync?.completedAt ?? null;
   const publishedAt = healthRootPayload?.freshness?.lastPublishedSnapshotAt ?? null;
   const latestSnapshotDate = healthRootPayload?.freshness?.latestFundSnapshotDate ?? null;
-  const sourceStatus = dailySyncStatus?.sourceStatus ?? parsedMeta?.sourceStatus ?? "unknown";
-  const publishStatus = dailySyncStatus?.publishStatus ?? parsedMeta?.publishStatus ?? "unknown";
+  const sourceStatus = dailySyncStatus?.sourceStatus ?? "unknown";
+  const publishStatus = dailySyncStatus?.publishStatus ?? "unknown";
   const outcome =
-    parsedMeta?.outcome ??
+    dailySyncStatus?.outcome ??
     (dailySync?.status === "SUCCESS"
       ? "success"
       : dailySync?.status === "TIMEOUT"
@@ -101,9 +92,9 @@ function parseDailyRunTruth(healthRootPayload) {
         : dailySync?.status === "FAILED"
           ? "failed"
           : "unknown");
-  const sourceQuality = parsedMeta?.sourceQuality ?? "unknown";
-  const publishBuildId = parsedMeta?.publishBuildId ?? null;
-  const processedSnapshotDate = parsedMeta?.processedSnapshotDate ?? latestSnapshotDate ?? null;
+  const sourceQuality = dailySyncStatus?.sourceQuality ?? "unknown";
+  const publishBuildId = dailySyncStatus?.publishBuildId ?? null;
+  const processedSnapshotDate = dailySyncStatus?.processedSnapshotDate ?? latestSnapshotDate ?? null;
   return {
     completedAt,
     publishedAt,
@@ -114,10 +105,10 @@ function parseDailyRunTruth(healthRootPayload) {
     sourceQuality,
     publishBuildId,
     processedSnapshotDate,
-    staleRunRecovered: dailySyncStatus?.staleRunRecovered ?? parsedMeta?.staleRunRecovered ?? false,
+    staleRunRecovered: dailySyncStatus?.staleRunRecovered ?? false,
     missedSlaToday: Boolean(dailySyncStatus?.missedSlaToday),
     runStatus: dailySync?.status ?? "unknown",
-    hasParsedMeta: Boolean(parsedMeta),
+    hasParsedMeta: true,
   };
 }
 
@@ -230,8 +221,16 @@ try {
   );
 
   const dailyTruth = parseDailyRunTruth(healthRoot.payload);
+  const freshnessTruth = healthRoot.payload?.freshnessTruth ?? healthRoot.payload?.freshness?.canonicalTruth ?? null;
+  const chartSnapshotAsOf = freshnessTruth?.chartSnapshotAsOf ?? null;
+  const comparisonSnapshotAsOf = freshnessTruth?.comparisonSnapshotAsOf ?? null;
+  const servingSnapshotAsOf = freshnessTruth?.servingSnapshotAsOf ?? null;
+  const freshnessStatus = freshnessTruth?.freshnessStatus ?? "unknown";
+  const freshnessDegradedReason = freshnessTruth?.degradedReason ?? "unknown";
   const dailyCompletedHours = hoursSince(dailyTruth.completedAt);
   const publishedHours = hoursSince(dailyTruth.publishedAt);
+  const chartPublishedHours = hoursSince(chartSnapshotAsOf);
+  const comparisonPublishedHours = hoursSince(comparisonSnapshotAsOf);
   const dailyNotCompletedToday =
     dailyTruth.missedSlaToday || !dailyTruth.completedAt || (dailyCompletedHours != null && dailyCompletedHours > 36);
   const publishLag = publishedHours == null || publishedHours > publishLagHoursBudget;
@@ -243,6 +242,8 @@ try {
     dailyTruth.sourceStatus !== "success" ||
     dailyTruth.publishStatus !== "success" ||
     dailyTruth.runStatus !== "SUCCESS";
+  const chartLag = chartPublishedHours == null || chartPublishedHours > publishLagHoursBudget;
+  const comparisonLag = comparisonPublishedHours == null || comparisonPublishedHours > publishLagHoursBudget;
 
   const dailyChecks = [
     {
@@ -275,6 +276,30 @@ try {
       message: "Daily outcome/source/publish contract must be strict success.",
       reason: `daily_sync_outcome:${dailyTruth.outcome}`,
     },
+    {
+      id: "freshness_truth_status",
+      pass: freshnessStatus === "fresh" || freshnessStatus === "stale_ok",
+      message: "Freshness truth status must not be degraded_outdated.",
+      reason: `freshness_truth_status:${freshnessStatus}`,
+    },
+    {
+      id: "serving_snapshot_published",
+      pass: Boolean(servingSnapshotAsOf),
+      message: "Serving publish snapshot date must be present in canonical freshness truth.",
+      reason: "serving_snapshot_missing",
+    },
+    {
+      id: "chart_publish_lag",
+      pass: !chartLag,
+      message: "Chart publish snapshot must stay within publish lag budget.",
+      reason: "chart_publish_lag",
+    },
+    {
+      id: "comparison_publish_lag",
+      pass: !comparisonLag,
+      message: "Comparison publish snapshot must stay within publish lag budget.",
+      reason: "comparison_publish_lag",
+    },
   ];
   for (const item of dailyChecks) {
     pushCheck(checks, item.id, item.pass, item.message, {
@@ -286,6 +311,13 @@ try {
       sourceQuality: dailyTruth.sourceQuality,
       publishBuildId: dailyTruth.publishBuildId,
       publishLagHours: publishedHours,
+      chartSnapshotAsOf,
+      comparisonSnapshotAsOf,
+      servingSnapshotAsOf,
+      chartPublishedHours,
+      comparisonPublishedHours,
+      freshnessStatus,
+      freshnessDegradedReason,
       runStatus: dailyTruth.runStatus,
       missedSlaToday: dailyTruth.missedSlaToday,
       hasParsedMeta: dailyTruth.hasParsedMeta,

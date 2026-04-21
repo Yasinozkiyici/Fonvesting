@@ -103,41 +103,32 @@ jobs:
           echo "::add-mask::$normalized_url"
           echo "database_url=$normalized_url" >> "$GITHUB_OUTPUT"
 
-      - name: Run full TEFAS import
+      - name: Run canonical daily sync pipeline
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          # resolvePrismaDatasourceUrl: pooler + uzun import; limit/timeout URL'deki sabitleri ezer.
+          # Canonical pipeline: source -> raw ingest -> snapshot -> serving -> chart -> comparison -> freshness
           DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
-          pnpm run import:tefas-full
+          pnpm run data:sync:daily
 
-      - name: Install Playwright Chromium (history fallback)
-        run: |
-          pnpm exec playwright install chromium
-
-      - name: Append recent TEFAS history (fallback)
-        continue-on-error: true
+      - name: Daily ledger strict evidence
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
-          set +e
-          code=1
-          for attempt in 1 2 3; do
-            pnpm run sync:tefas-history -- --append
-            code=$?
-            if [ "$code" -eq 0 ]; then
-              break
-            fi
-            echo "[history-fallback] retry attempt=${attempt} failed"
-            sleep $((attempt * 10))
-          done
-          echo "history_fallback_exit_code=$code"
-          exit 0
+          pnpm run data:daily:ledger-evidence -- --strict --limit 10
 
-      - name: Phase A chain evidence (DB history → snapshot → v2 heads)
+      - name: Canonical health report strict
+        env:
+          DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
+          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_POOL_TIMEOUT: "60"
+        run: |
+          pnpm run data:health:report -- --strict
+
+      - name: Phase A chain evidence (health-truth integrity)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           DATABASE_CONNECTION_LIMIT: "1"

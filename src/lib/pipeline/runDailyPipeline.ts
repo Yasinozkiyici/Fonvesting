@@ -73,6 +73,7 @@ export type DailyPipelineRunResult = {
     outcome: "success" | "partial" | "failed";
   };
   processedSnapshotDate: string | null;
+  sourceEffectiveDate: string | null;
   steps: DailyPipelineStepState[];
   firstFailedStep: DailyStepName | null;
   failureKind: "none" | "exception" | "timeout_suspected";
@@ -135,6 +136,17 @@ function makeStep(step: DailyStepName): DailyPipelineStepState {
 
 function isTimeoutLike(message: string): boolean {
   return /timeout|timed out|_timeout_|stale_timeout/i.test(message);
+}
+
+function isSnapshotMaterializedForSource(input: {
+  sourceEffectiveDate: string | null;
+  processedSnapshotDate: string | null;
+}): boolean {
+  if (!input.sourceEffectiveDate || !input.processedSnapshotDate) return false;
+  const sourceMs = Date.parse(input.sourceEffectiveDate);
+  const snapshotMs = Date.parse(input.processedSnapshotDate);
+  if (!Number.isFinite(sourceMs) || !Number.isFinite(snapshotMs)) return false;
+  return snapshotMs >= sourceMs;
 }
 
 export async function runDailyPipeline(options?: DailyPipelineOptions): Promise<DailyPipelineRunResult> {
@@ -336,6 +348,7 @@ export async function runDailyPipeline(options?: DailyPipelineOptions): Promise<
           : "partial",
     },
     processedSnapshotDate: servingResult.snapshotDate ?? null,
+    sourceEffectiveDate: sourceResult.history.endDate ?? null,
     steps,
     firstFailedStep,
     failureKind,
@@ -351,6 +364,17 @@ export async function runDailyPipeline(options?: DailyPipelineOptions): Promise<
       serving: servingResult.timings,
     },
   };
+
+  if (
+    !isSnapshotMaterializedForSource({
+      sourceEffectiveDate: result.sourceEffectiveDate,
+      processedSnapshotDate: result.processedSnapshotDate,
+    })
+  ) {
+    throw new Error(
+      `snapshot_not_materialized_for_source source_effective_date=${result.sourceEffectiveDate ?? "none"} processed_snapshot_date=${result.processedSnapshotDate ?? "none"}`
+    );
+  }
 
   console.info("[daily-cron] cron_finished", {
     startedAt,
