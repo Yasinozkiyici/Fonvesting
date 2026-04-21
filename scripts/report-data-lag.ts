@@ -8,15 +8,28 @@ import "./load-env";
 
 type NullableDateInput = Date | string | null | undefined;
 
-function toIsoOrNull(value: NullableDateInput): string | null {
-  if (!value) return null;
-  const parsed = value instanceof Date ? value : new Date(value);
-  const ms = parsed.getTime();
-  if (!Number.isFinite(ms)) return null;
-  return new Date(ms).toISOString();
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function toDateKey(value: NullableDateInput): string | null {
+function normalizeDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? new Date(ms) : null;
+  }
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  const ms = parsed.getTime();
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+function toIsoOrNull(value: unknown): string | null {
+  const normalized = normalizeDate(value);
+  return normalized ? normalized.toISOString() : null;
+}
+
+function toDateKey(value: unknown): string | null {
   const iso = toIsoOrNull(value);
   return iso ? iso.slice(0, 10) : null;
 }
@@ -51,10 +64,20 @@ async function readHealthLagTruth() {
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) throw new Error(`health_fetch_failed status=${response.status}`);
-  const payload = await response.json();
-  const truth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth ?? {};
+  const payloadUnknown = await response.json();
+  if (!isRecord(payloadUnknown)) {
+    throw new Error("health_payload_invalid_shape");
+  }
+  const payload = payloadUnknown;
+  const freshness = isRecord(payload.freshness) ? payload.freshness : null;
+  const truthCandidate = isRecord(payload.freshnessTruth)
+    ? payload.freshnessTruth
+    : freshness && isRecord(freshness.canonicalTruth)
+      ? freshness.canonicalTruth
+      : {};
+  const truth = isRecord(truthCandidate) ? truthCandidate : {};
   const latestRaw = toDateKey(truth?.rawSnapshotAsOf ?? null);
-  const latestSnapshot = toDateKey(truth?.fundSnapshotAsOf ?? payload?.freshness?.latestFundSnapshotDate ?? null);
+  const latestSnapshot = toDateKey(truth?.fundSnapshotAsOf ?? freshness?.latestFundSnapshotDate ?? null);
   const latestServing = toDateKey(truth?.servingSnapshotAsOf ?? null);
   return {
     generatedAt: new Date().toISOString(),
@@ -84,15 +107,18 @@ async function readHealthLagTruth() {
     },
     latestSyncLog: {
       syncType: "daily_sync",
-      status: payload?.jobs?.dailySync?.status ?? null,
-      startedAt: toIsoOrNull(payload?.jobs?.dailySync?.startedAt ?? null),
-      completedAt: toIsoOrNull(payload?.jobs?.dailySync?.completedAt ?? null),
-      errorMessage: payload?.jobs?.dailySync?.errorMessage ?? null,
+      status: isRecord(payload.jobs) && isRecord(payload.jobs.dailySync) ? (payload.jobs.dailySync.status ?? null) : null,
+      startedAt:
+        isRecord(payload.jobs) && isRecord(payload.jobs.dailySync) ? toIsoOrNull(payload.jobs.dailySync.startedAt ?? null) : null,
+      completedAt:
+        isRecord(payload.jobs) && isRecord(payload.jobs.dailySync) ? toIsoOrNull(payload.jobs.dailySync.completedAt ?? null) : null,
+      errorMessage:
+        isRecord(payload.jobs) && isRecord(payload.jobs.dailySync) ? (payload.jobs.dailySync.errorMessage ?? null) : null,
     },
     truthSignals: {
       freshnessStatus: truth?.freshnessStatus ?? null,
       degradedReason: truth?.degradedReason ?? null,
-      latestSuccessfulSyncAt: toIsoOrNull(truth?.latestSuccessfulSyncAt ?? payload?.freshness?.lastSuccessfulIngestionAt ?? null),
+      latestSuccessfulSyncAt: toIsoOrNull(truth?.latestSuccessfulSyncAt ?? freshness?.lastSuccessfulIngestionAt ?? null),
     },
   };
 }
