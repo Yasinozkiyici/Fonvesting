@@ -18,6 +18,11 @@ const MAX_API_CODES = 10;
 const DEFAULT_API_POINT_LIMIT = 400;
 const MAX_API_POINT_LIMIT = 800;
 
+function isMacroStateStoreTransientFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECHECKOUTTIMEOUT|pool after|connection: Error \{ kind: Closed|timeout/i.test(message);
+}
+
 type MacroFrequency = "daily" | "monthly" | "event";
 type MacroSource = "yahoo" | "yahoo_derived" | "tcmb_web";
 
@@ -694,13 +699,19 @@ export async function refreshMacroSyncState(details?: Record<string, unknown>): 
 export async function recoverStaleMacroSyncState(
   staleAfterMinutes: number = DEFAULT_STALE_RUN_MINUTES
 ): Promise<MacroHistorySyncRecoveryResult> {
-  const state = await prisma.macroSyncState.findUnique({
-    where: { key: MACRO_SYNC_KEY },
-    select: {
-      status: true,
-      lastStartedAt: true,
-    },
-  });
+  let state: { status: string; lastStartedAt: Date | null } | null = null;
+  try {
+    state = await prisma.macroSyncState.findUnique({
+      where: { key: MACRO_SYNC_KEY },
+      select: {
+        status: true,
+        lastStartedAt: true,
+      },
+    });
+  } catch (error) {
+    if (!isMacroStateStoreTransientFailure(error)) throw error;
+    return { recovered: false, previousStatus: null, reason: "state_store_unavailable" };
+  }
 
   if (!state || state.status !== "RUNNING" || !state.lastStartedAt) {
     return { recovered: false, previousStatus: state?.status ?? null };
