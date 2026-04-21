@@ -127,7 +127,15 @@ async function main() {
   const systemKnownDateConsistent =
     latestKnownDate && systemLatestKnownDate ? latestKnownDate >= systemLatestKnownDate : null;
 
-  const optionalDbProbe = await readOptionalDbProbe();
+  const enableOptionalDbProbe = String(process.env.PHASE_A_ENABLE_DB_PROBE ?? "").trim() === "1";
+  const optionalDbProbe = enableOptionalDbProbe
+    ? await readOptionalDbProbe()
+    : {
+        ok: false,
+        message: "disabled_by_default",
+        fundListBuildId: null,
+        systemBuildId: null,
+      };
   const evidence = {
     generatedAt: new Date().toISOString(),
     gateMode: gate,

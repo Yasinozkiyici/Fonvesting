@@ -2692,3 +2692,5 @@
 | 13:19 | Created scripts/check-freshness-target.ts | — | ~2101 |
 | 13:21 | Created scripts/phase-a-chain-evidence.ts | — | ~1773 |
 | 13:21 | Refactored Phase A to health-truth authority; DB probe now optional/non-blocking | scripts/phase-a-chain-evidence.ts | done | ~1500 |
+| 13:39 | Disabled Phase A DB probe by default to prevent CI hang from lingering Prisma handles | scripts/phase-a-chain-evidence.ts | done | ~400 |
+| 13:39 | Created scripts/phase-a-chain-evidence.ts | — | ~1848 |

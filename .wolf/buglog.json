@@ -892,6 +892,18 @@
       "related_bugs": ["bug-001"],
       "occurrences": 1,
       "last_seen": "2026-04-21T10:21:59Z"
+    },
+    {
+      "id": "bug-050",
+      "timestamp": "2026-04-21T10:39:36Z",
+      "error_message": "Phase A adımı CI'da in_progress durumda takılı kalıyor (step exit etmiyor).",
+      "file": "scripts/phase-a-chain-evidence.ts",
+      "root_cause": "Opsiyonel DB probe Promise.race ile timeout olsa da alttaki Prisma sorgusu/engine handle açık kalabildiği için Node process kapanmayabiliyor.",
+      "fix": "Opsiyonel DB probe default devre dışı bırakıldı; yalnız `PHASE_A_ENABLE_DB_PROBE=1` ile açılacak şekilde gate akışından ayrıldı.",
+      "tags": ["phase-a", "ci", "prisma", "hang", "optional-probe"],
+      "related_bugs": ["bug-049"],
+      "occurrences": 1,
+      "last_seen": "2026-04-21T10:39:36Z"
     }
   ]
 }

@@ -69,6 +69,7 @@
 - Serving **world meta** yolu için `readLatestServingHeads()` (tam satır + büyük `payload` JSON) gereksiz ağırlıktır; `buildId`/`snapshotAsOf` yeterliyse `readLatestServingHeadsMeta()` kullanılmalı. Aynı istekte birden fazla `readServing*Primary` varsa kısa TTL + in-flight dedupe (`readUiServingWorldMetaCached`) tekrarlayan head okumalarını keser. Tam satır gerektiren health/operasyon yolları `readLatestServingHeads()` ile kalabilir.
 - Regression firewall için homepage/compare yüzeylerinde "tek semantik owner" zorunlu: filtresiz total sadece `canonicalUniverseTotal`, filtreli total sadece scoped `matchedTotal`; UI satır sayısı/preview sayısından total türetemez. Compare/detail tarafında `ready` render yalnız typed state + renderable payload birlikte sağlanır; aksi durumda explicit degraded state ve reason attribute zorunlu.
 - Phase A chain evidence CI’da DB checkout timeout etkisinden çıkarılmalı: gate kararı `/api/health?mode=full` canonical truth (freshness + daily sync status) üzerinden verilmeli; direct DB/serving head okumaları yalnız best-effort telemetri olmalı.
+- Node/Prisma'da Promise.race timeout’u tek başına yeterli değil; yarıştan düşen DB sorgusu process handle’ı açık bırakabilir. CI scriptlerinde opsiyonel DB probe default kapalı olmalı veya explicit env ile açılmalı.
 
 ## Do-Not-Repeat
 
