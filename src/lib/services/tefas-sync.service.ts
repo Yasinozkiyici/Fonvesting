@@ -1,4 +1,5 @@
-import { prisma } from "@/lib/prisma";
+import { prisma, resetPrismaEngine } from "@/lib/prisma";
+import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import {
   deriveFundPerformanceFromHistory,
   FUND_PRICE_HISTORY_LOOKBACK_DAYS,
@@ -23,6 +24,37 @@ export type TefasSyncResult = {
   updated: number;
   message?: string;
 };
+
+type SyncLogWriteInput = {
+  syncType: string;
+  status: string;
+  fundsUpdated: number;
+  fundsCreated: number;
+  errorMessage?: string;
+  startedAt: Date;
+  completedAt: Date;
+  durationMs: number;
+};
+
+async function writeSyncLogSafe(data: SyncLogWriteInput, context: string): Promise<void> {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await prisma.syncLog.create({ data });
+      return;
+    } catch (error) {
+      const classified = classifyDatabaseError(error);
+      if (!classified.retryable || attempt >= 3) {
+        console.error(
+          `[tefas-sync] sync_log_write_failed context=${context} class=${classified.category} ` +
+            `prisma_code=${classified.prismaCode ?? "none"}`
+        );
+        return;
+      }
+      await resetPrismaEngine();
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+}
 
 function clampReturn(x: number): number {
   if (!Number.isFinite(x) || Math.abs(x) > 100) return 0;
@@ -460,8 +492,8 @@ export async function runTefasSync(options?: {
   } catch (e: unknown) {
     const msg = (e instanceof Error ? e.message : String(e)) || "TEFAS browser fetch çalıştırılamadı";
     console.error("[tefas-sync] TEFAS çekilemedi, mevcut veri korunuyor:", msg);
-    await prisma.syncLog.create({
-      data: {
+    await writeSyncLogSafe(
+      {
         syncType: "TEFAS",
         status: "FAILED",
         fundsUpdated: 0,
@@ -471,15 +503,16 @@ export async function runTefasSync(options?: {
         completedAt: new Date(),
         durationMs: Date.now() - started,
       },
-    });
+      "fetch_latest_payload_exception"
+    );
     return { ok: false, skipped: true, updated: 0, message: msg };
   }
 
   if (!payload.ok) {
     const msg = "error" in payload ? payload.error : "bilinmeyen";
     console.error("[tefas-sync] Payload hata:", msg);
-    await prisma.syncLog.create({
-      data: {
+    await writeSyncLogSafe(
+      {
         syncType: "TEFAS",
         status: "FAILED",
         fundsUpdated: 0,
@@ -489,14 +522,15 @@ export async function runTefasSync(options?: {
         completedAt: new Date(),
         durationMs: Date.now() - started,
       },
-    });
+      "payload_not_ok"
+    );
     return { ok: false, skipped: true, updated: 0, message: msg };
   }
 
   if ("empty" in payload && payload.empty) {
     console.warn("[tefas-sync] TEFAS boş döndü, mevcut veri korunuyor.");
-    await prisma.syncLog.create({
-      data: {
+    await writeSyncLogSafe(
+      {
         syncType: "TEFAS",
         status: "SKIPPED",
         fundsUpdated: 0,
@@ -506,7 +540,8 @@ export async function runTefasSync(options?: {
         completedAt: new Date(),
         durationMs: Date.now() - started,
       },
-    });
+      "payload_empty"
+    );
     return { ok: true, skipped: true, updated: 0, message: "empty" };
   }
 
