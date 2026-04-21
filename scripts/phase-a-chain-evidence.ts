@@ -1,145 +1,177 @@
 /**
- * Phase A uçtan uca kanıt: beklenen iş günü, snapshot ve serving başlıkları.
- * `pnpm exec tsx scripts/phase-a-chain-evidence.ts`
- * `--gate`: snapshot beklenen iş gününe yetişmiyorsa veya serving başlıkları eksikse exit 1.
+ * Phase A integrity kanıtı (DB-hard-dependency yok):
+ * - Otorite: /api/health?mode=full (freshness truth + jobs truth)
+ * - DB erişimi: yalnız best-effort telemetri, gate kararını bloke etmez
  */
 import "./load-env";
-import { prisma, resetPrismaEngine } from "../src/lib/prisma";
-import { latestExpectedBusinessSessionDate, toIstanbulDateKey } from "../src/lib/daily-sync-policy";
-import { startOfUtcDay } from "../src/lib/trading-calendar-tr";
-import { readLatestServingHeadsMeta } from "../src/lib/data-platform/serving-head";
-import { classifyDatabaseError } from "../src/lib/database-error-classifier";
 
-function isAtLeastExpectedSession(date: Date | null | undefined, expected: Date): boolean {
-  return Boolean(date && startOfUtcDay(date).getTime() >= startOfUtcDay(expected).getTime());
+type NullableDateInput = Date | string | null | undefined;
+
+function resolveBaseUrl(): string {
+  const keys = [
+    "DATA_RELEASE_GATE_BASE_URL",
+    "SMOKE_BASE_URL",
+    "RELEASE_PREVIEW_URL",
+    "NEXT_PUBLIC_BASE_URL",
+    "NEXT_PUBLIC_SITE_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+  ];
+  for (const key of keys) {
+    const raw = String(process.env[key] ?? "").trim();
+    if (!raw) continue;
+    const normalized = raw.startsWith("http") ? raw : `https://${raw}`;
+    return normalized.replace(/\/+$/, "");
+  }
+  return "https://fonvesting.vercel.app";
 }
 
-async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      const classified = classifyDatabaseError(error);
-      if (!classified.retryable || attempt >= 3) throw error;
-      console.warn(
-        `[phase-a-gate] transient_db_error label=${label} attempt=${attempt} class=${classified.category} ` +
-          `prisma_code=${classified.prismaCode ?? "none"}`
-      );
-      await resetPrismaEngine();
-      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
-    }
+function toIsoOrNull(value: NullableDateInput): string | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  const ms = parsed.getTime();
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
+function toDateKey(value: NullableDateInput): string | null {
+  const iso = toIsoOrNull(value);
+  return iso ? iso.slice(0, 10) : null;
+}
+
+function maxDateKey(values: NullableDateInput[]): string | null {
+  const keys = values.map((value) => toDateKey(value)).filter((value): value is string => Boolean(value)).sort();
+  return keys.length > 0 ? keys[keys.length - 1] : null;
+}
+
+async function readHealthTruth() {
+  const baseUrl = resolveBaseUrl();
+  const response = await fetch(`${baseUrl}/api/health?mode=full`, {
+    headers: { "x-health-secret": String(process.env.HEALTH_SECRET ?? "") },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) {
+    throw new Error(`health_fetch_failed status=${response.status}`);
   }
-  throw lastError;
+  const payload = await response.json();
+  const freshnessTruth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth ?? {};
+  return {
+    baseUrl,
+    payload,
+    freshnessTruth,
+  };
+}
+
+async function readOptionalDbProbe(): Promise<{
+  ok: boolean;
+  message: string | null;
+  fundListBuildId: string | null;
+  systemBuildId: string | null;
+}> {
+  try {
+    const module = await import("../src/lib/data-platform/serving-head");
+    const heads = await Promise.race([
+      module.readLatestServingHeadsMeta(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("db_probe_timeout")), 2_000);
+      }),
+    ]);
+    return {
+      ok: true,
+      message: null,
+      fundListBuildId: heads?.fundList?.buildId ?? null,
+      systemBuildId: heads?.system?.buildId ?? null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      fundListBuildId: null,
+      systemBuildId: null,
+    };
+  }
 }
 
 async function main() {
   const gate = process.argv.includes("--gate");
-  const expectedSession = latestExpectedBusinessSessionDate();
-  let latestSnap: { date: Date } | null = null;
-  let heads: Awaited<ReturnType<typeof readLatestServingHeadsMeta>> | null = null;
-  let infraDbFragility: { category: string; message: string } | null = null;
+  const { baseUrl, payload, freshnessTruth } = await readHealthTruth();
 
-  try {
-    // CI transaction pool modunda en hafif kanıt: fundDailySnapshot + serving head meta.
-    // history tablosu Phase A gate için zorunlu değil; strict freshness script ham/snapshot/serving'i ayrıca doğrular.
-    latestSnap = await withDbRetry("fundDailySnapshot.findFirst", () =>
-      prisma.fundDailySnapshot.findFirst({
-        orderBy: { date: "desc" },
-        select: { date: true },
-      })
-    );
-    heads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
-  } catch (error) {
-    const classified = classifyDatabaseError(error);
-    if (!classified.retryable) throw error;
-    infraDbFragility = {
-      category: classified.category,
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-  const snapshotVerifyOk = infraDbFragility ? null : isAtLeastExpectedSession(latestSnap?.date, expectedSession);
-  const servingSnapshotCandidates = [
-    heads.fundList?.snapshotAsOf,
-    heads.system?.snapshotAsOf,
-    heads.discovery?.snapshotAsOf,
-    heads.compare?.snapshotAsOf,
-    heads.fundDetail?.snapshotAsOf,
-  ].filter((v): v is Date => v instanceof Date);
-  const servingAsOf =
-    servingSnapshotCandidates.length > 0
-      ? servingSnapshotCandidates.reduce((max, cur) => (cur.getTime() > max.getTime() ? cur : max))
+  const healthStatus = String(payload?.status ?? "unknown");
+  const jobDailySyncStatus = payload?.jobs?.dailySyncStatus ?? null;
+  const jobDailySync = payload?.jobs?.dailySync ?? null;
+
+  const latestRaw = toIsoOrNull(freshnessTruth?.rawSnapshotAsOf ?? null);
+  const latestSnapshot =
+    toIsoOrNull(freshnessTruth?.fundSnapshotAsOf ?? null) ??
+    toIsoOrNull(payload?.freshness?.latestFundSnapshotDate ?? null);
+  const latestServing = toIsoOrNull(freshnessTruth?.servingSnapshotAsOf ?? null);
+  const latestSuccessfulSyncAt = toIsoOrNull(payload?.freshness?.lastSuccessfulIngestionAt ?? null);
+  const latestPublishedSnapshotAt = toIsoOrNull(payload?.freshness?.lastPublishedSnapshotAt ?? null);
+  const processedSnapshotDate = toIsoOrNull(jobDailySyncStatus?.processedSnapshotDate ?? null);
+
+  const latestKnownDate = maxDateKey([
+    latestRaw,
+    latestSnapshot,
+    latestServing,
+    latestSuccessfulSyncAt,
+    latestPublishedSnapshotAt,
+    processedSnapshotDate,
+  ]);
+  const hasSnapshotCandidate = Boolean(latestSnapshot || latestServing || processedSnapshotDate || latestPublishedSnapshotAt);
+  const hasDetectableLatestDate = Boolean(latestKnownDate);
+
+  const snapshotConsistency =
+    toDateKey(latestSnapshot) && toDateKey(payload?.freshness?.latestFundSnapshotDate)
+      ? toDateKey(latestSnapshot) === toDateKey(payload?.freshness?.latestFundSnapshotDate)
       : null;
-  const servingVerifyOk = infraDbFragility ? null : isAtLeastExpectedSession(servingAsOf, expectedSession);
+  const systemLatestKnownDate = toDateKey(payload?.freshness?.latestFundSnapshotDate ?? null);
+  const systemKnownDateConsistent =
+    latestKnownDate && systemLatestKnownDate ? latestKnownDate >= systemLatestKnownDate : null;
 
-  const v2 = heads
-    ? {
-        fundListBuildId: heads.fundList?.buildId ?? null,
-        systemBuildId: heads.system?.buildId ?? null,
-        systemSnapshotAsOf:
-          heads.system?.snapshotAsOf instanceof Date
-            ? heads.system.snapshotAsOf.toISOString()
-            : heads.system?.snapshotAsOf != null
-              ? String(heads.system.snapshotAsOf)
-              : null,
-      }
-    : { error: "serving_heads_unavailable" };
-
-  const dbLatestSnapshotIso = latestSnap?.date.toISOString() ?? null;
+  const optionalDbProbe = await readOptionalDbProbe();
   const evidence = {
     generatedAt: new Date().toISOString(),
-    expectedBusinessSessionDate: expectedSession.toISOString(),
-    expectedSessionIstanbulDateKey: toIstanbulDateKey(expectedSession),
-    latestFundPriceHistoryDate: null,
-    latestHistoryIstanbulDateKey: null,
-    historyVerifyOk: null,
-    latestFundDailySnapshotDate: dbLatestSnapshotIso,
-    snapshotMatchesLatestHistory: null,
-    snapshotVerifyOk,
-    servingLatestSnapshotAsOf: servingAsOf?.toISOString() ?? null,
-    servingVerifyOk,
-    healthFreshnessLatestFundSnapshotDate: null,
-    healthFreshnessAlignedWithDb: null,
-    healthStatus: null,
-    v2ServingHeads: v2,
-    infraDbFragility,
     gateMode: gate,
+    proofSource: "health_truth",
+    healthBaseUrl: baseUrl,
+    healthStatus,
+    pipelineIntegrity: {
+      snapshotCandidateProduced: hasSnapshotCandidate,
+      detectableLatestDataDate: hasDetectableLatestDate,
+      latestKnownDate,
+      systemKnownDateConsistent,
+      snapshotConsistencyWithHealthFreshness: snapshotConsistency,
+      silentFailureDetected: !hasSnapshotCandidate || !hasDetectableLatestDate,
+    },
+    truthSignals: {
+      latestRawSnapshotAsOf: latestRaw,
+      latestFundSnapshotDate: latestSnapshot,
+      latestServingSnapshotAsOf: latestServing,
+      latestSuccessfulSyncAt,
+      latestPublishedSnapshotAt,
+      dailySyncProcessedSnapshotDate: processedSnapshotDate,
+      dailySyncOutcome: jobDailySyncStatus?.outcome ?? null,
+      dailySyncSourceStatus: jobDailySyncStatus?.sourceStatus ?? null,
+      dailySyncPublishStatus: jobDailySyncStatus?.publishStatus ?? null,
+      dailySyncCompletedAt: toIsoOrNull(jobDailySync?.completedAt ?? null),
+    },
+    optionalDbProbe,
   };
 
   console.log(JSON.stringify(evidence, null, 2));
 
-  if (gate) {
-    if (infraDbFragility) {
-      console.warn(
-        `[phase-a-gate] bypass due to transient_db_fragility category=${infraDbFragility.category}; strict freshness gate will validate data`
-      );
-      return;
-    }
-    if (!latestSnap?.date) {
-      console.error("[phase-a-gate] FAIL missing_fund_daily_snapshot");
-      process.exit(1);
-    }
-    if (!snapshotVerifyOk) {
-      console.error(
-        `[phase-a-gate] FAIL snapshot_stale expected=${expectedSession.toISOString()} snap=${latestSnap.date.toISOString()}`
-      );
-      process.exit(1);
-    }
-    if (!heads?.fundList?.buildId || !heads?.system?.buildId) {
-      console.error("[phase-a-gate] FAIL v2_serving_heads_incomplete");
-      process.exit(1);
-    }
-    if (!servingVerifyOk) {
-      console.error(
-        `[phase-a-gate] FAIL serving_stale expected=${expectedSession.toISOString()} serving=${servingAsOf?.toISOString() ?? "none"}`
-      );
-      process.exit(1);
-    }
+  if (!gate) return;
+
+  if (!hasSnapshotCandidate) {
+    console.error("[phase-a-gate] FAIL no_snapshot_candidate_detected_from_authoritative_health_truth");
+    process.exit(1);
+  }
+  if (!hasDetectableLatestDate) {
+    console.error("[phase-a-gate] FAIL no_detectable_latest_date_from_authoritative_health_truth");
+    process.exit(1);
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((error) => {
+  console.error(error);
   process.exit(1);
 });

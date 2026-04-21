@@ -68,6 +68,7 @@
 - `compare-series` request yolunda `serving_fund_detail` full-universe `findMany({ buildId })` sorgusu kullanıcı akışında 5-8sn gecikme üretiyor; güvenli desen requested codes + serving_compare category peers ile sınırlı hedefli sorgu.
 - Serving **world meta** yolu için `readLatestServingHeads()` (tam satır + büyük `payload` JSON) gereksiz ağırlıktır; `buildId`/`snapshotAsOf` yeterliyse `readLatestServingHeadsMeta()` kullanılmalı. Aynı istekte birden fazla `readServing*Primary` varsa kısa TTL + in-flight dedupe (`readUiServingWorldMetaCached`) tekrarlayan head okumalarını keser. Tam satır gerektiren health/operasyon yolları `readLatestServingHeads()` ile kalabilir.
 - Regression firewall için homepage/compare yüzeylerinde "tek semantik owner" zorunlu: filtresiz total sadece `canonicalUniverseTotal`, filtreli total sadece scoped `matchedTotal`; UI satır sayısı/preview sayısından total türetemez. Compare/detail tarafında `ready` render yalnız typed state + renderable payload birlikte sağlanır; aksi durumda explicit degraded state ve reason attribute zorunlu.
+- Phase A chain evidence CI’da DB checkout timeout etkisinden çıkarılmalı: gate kararı `/api/health?mode=full` canonical truth (freshness + daily sync status) üzerinden verilmeli; direct DB/serving head okumaları yalnız best-effort telemetri olmalı.
 
 ## Do-Not-Repeat
 
@@ -83,6 +84,7 @@
 - [2026-04-17] Bu projede test runner override parametreleri (`pnpm test -- --runInBand`) güvenilir değil; tek dosya testlerinde doğrudan `pnpm exec tsx --test` komutunu kullan.
 - [2026-04-17] `next dev` açıkken production `build:clean` çalıştırmak `.next/server/*` modül bulunamadı kırılmasına yol açabiliyor; önce dev sürecini durdur, sonra build al.
 - [2026-04-17] Serving rebuild adımında deterministik `buildId` ile aynı snapshot tekrar çalıştırıldığında `build_id` unique hatası alınabilir; rebuild fonksiyonları idempotent replace semantics kullanmalı (delete+create/upsert).
+- [2026-04-21] Phase A gate içinde doğrudan Prisma sorgusu (history/snapshot/head) CI transaction pool altında deterministik değil; gate asla DB checkout’a bağlı olmamalı, yalnız health truth ile pipeline integrity doğrulanmalı.
 
 ## Decision Log
 

@@ -2672,3 +2672,23 @@
 | 20:55 | Created src/app/api/funds/scores/route.ts | — | ~14084 |
 | 20:55 | Created scripts/smoke-data.mjs | — | ~2046 |
 | 21:06 | Session end: 43 writes across 5 files (route.ts, compare-path-instrumentation.ts, compare-reliability-guards.test.ts, ScoredFundsTable.tsx, smoke-data.mjs) | 17 reads | ~585578 tok |
+| 00:45 | Session end: 76 writes across 16 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 10 reads | ~700811 tok |
+| 06:52 | Created scripts/critical-path-contracts.mjs | — | ~2287 |
+| 06:56 | Session end: 77 writes across 17 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 33 reads | ~708799 tok |
+| 10:56 | Session end: 77 writes across 17 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 34 reads | ~708799 tok |
+| 11:05 | Created src/lib/services/tefas-sync.service.ts | — | ~7947 |
+| 11:05 | Created src/lib/services/tefas-sync.service.ts | — | ~7992 |
+| 11:21 | Created src/lib/services/tefas-sync.service.ts | — | ~8053 |
+| 11:21 | Created .github/workflows/daily-tefas-sync.yml | — | ~1694 |
+| 11:35 | Created .github/workflows/daily-tefas-sync.yml | — | ~1822 |
+| 12:29 | Created scripts/phase-a-chain-evidence.ts | — | ~1468 |
+| 12:34 | Session end: 83 writes across 20 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 40 reads | ~747461 tok |
+| 12:52 | Session end: 83 writes across 20 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 42 reads | ~747461 tok |
+| 12:54 | Session end: 83 writes across 20 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 44 reads | ~748929 tok |
+| 12:57 | Created scripts/phase-a-chain-evidence.ts | — | ~1380 |
+| 12:57 | Created scripts/report-data-lag.ts | — | ~1256 |
+| 12:57 | Created scripts/check-freshness-target.ts | — | ~1422 |
+| 13:19 | Created scripts/phase-a-chain-evidence.ts | — | ~1602 |
+| 13:19 | Created scripts/check-freshness-target.ts | — | ~2101 |
+| 13:21 | Created scripts/phase-a-chain-evidence.ts | — | ~1773 |
+| 13:21 | Refactored Phase A to health-truth authority; DB probe now optional/non-blocking | scripts/phase-a-chain-evidence.ts | done | ~1500 |

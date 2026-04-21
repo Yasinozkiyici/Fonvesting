@@ -880,6 +880,18 @@
       "related_bugs": [],
       "occurrences": 1,
       "last_seen": "2026-04-18T17:45:00.000Z"
+    },
+    {
+      "id": "bug-049",
+      "timestamp": "2026-04-21T10:21:59Z",
+      "error_message": "Phase A chain evidence CI'da en hafif sorgularda bile ECHECKOUTTIMEOUT veriyor; transaction pool checkout yapılamadığı için gate yanlış fail oluyor.",
+      "file": "scripts/phase-a-chain-evidence.ts",
+      "root_cause": "Phase A gate doğrudan DB sorgularını (snapshot + serving head) birincil kanıt kaynağı yapıyordu; CI pool starvation altyapı sorunu data-freshness sorunu gibi ele alınıyordu.",
+      "fix": "Phase A authority health canonical truth'a taşındı (/api/health?mode=full); gate yalnız pipeline integrity sinyallerini doğruluyor. DB erişimi dinamik import ile optional/non-blocking probe'a indirildi ve gate kararından ayrıldı.",
+      "tags": ["phase-a", "ci", "pool-exhaustion", "checkout-timeout", "health-truth"],
+      "related_bugs": ["bug-001"],
+      "occurrences": 1,
+      "last_seen": "2026-04-21T10:21:59Z"
     }
   ]
 }
