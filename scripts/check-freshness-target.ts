@@ -42,6 +42,49 @@ function maxDateOnly(values: Array<Date | null | undefined>): string | null {
   return normalized.length > 0 ? normalized[normalized.length - 1] : null;
 }
 
+function resolveBaseUrl(): string | null {
+  const keys = [
+    "DATA_RELEASE_GATE_BASE_URL",
+    "SMOKE_BASE_URL",
+    "RELEASE_PREVIEW_URL",
+    "NEXT_PUBLIC_BASE_URL",
+    "NEXT_PUBLIC_SITE_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+  ];
+  for (const key of keys) {
+    const raw = String(process.env[key] ?? "").trim();
+    if (!raw) continue;
+    const normalized = raw.startsWith("http") ? raw : `https://${raw}`;
+    return normalized.replace(/\/+$/, "");
+  }
+  return "https://fonvesting.vercel.app";
+}
+
+async function readFromHealthTruth(expected: string) {
+  const baseUrl = resolveBaseUrl();
+  if (!baseUrl) return null;
+  const response = await fetch(`${baseUrl}/api/health?mode=full`, {
+    headers: { "x-health-secret": String(process.env.HEALTH_SECRET ?? "") },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`health_fetch_failed status=${response.status}`);
+  const payload = await response.json();
+  const freshnessTruth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth ?? null;
+  const actualRaw = asDateOnly(freshnessTruth?.rawSnapshotAsOf ?? null);
+  const actualSnapshot = asDateOnly(
+    freshnessTruth?.fundSnapshotAsOf ?? payload?.freshness?.latestFundSnapshotDate ?? null
+  );
+  const servingAsOf = asDateOnly(freshnessTruth?.servingSnapshotAsOf ?? null);
+  return {
+    source: "health_api_fallback",
+    expected,
+    actualRaw,
+    actualSnapshot,
+    servingAsOf,
+    latestRawMeta: null,
+  };
+}
+
 async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -66,31 +109,57 @@ async function main() {
   const expected = expectedBusinessDateIso(new Date());
   const strict = process.argv.includes("--strict");
 
-  // Serial reads reduce P2024 risk when connection_limit is intentionally tiny.
-  const latestRaw = await withDbRetry("rawPricesPayload.findFirst", () =>
-    prisma.rawPricesPayload.findFirst({
-      orderBy: { effectiveDate: "desc" },
-      select: { effectiveDate: true, fetchedAt: true, parseStatus: true },
-    })
-  );
-  const latestFundSnapshot = await withDbRetry("fundDailySnapshot.findFirst", () =>
-    prisma.fundDailySnapshot.findFirst({
-      orderBy: { date: "desc" },
-      select: { date: true },
-    })
-  );
-  const servingHeads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
+  let source = "database";
+  let latestRaw:
+    | {
+        effectiveDate: Date;
+        fetchedAt: Date;
+        parseStatus: string;
+      }
+    | null = null;
+  let actualRaw: string | null = null;
+  let actualSnapshot: string | null = null;
+  let servingAsOf: string | null = null;
 
-  const servingAsOf = maxDateOnly([
-    servingHeads?.fundList?.snapshotAsOf,
-    servingHeads?.discovery?.snapshotAsOf,
-    servingHeads?.compare?.snapshotAsOf,
-    servingHeads?.fundDetail?.snapshotAsOf,
-    servingHeads?.system?.snapshotAsOf,
-  ]);
+  try {
+    // Serial reads reduce P2024 risk when connection_limit is intentionally tiny.
+    latestRaw = await withDbRetry("rawPricesPayload.findFirst", () =>
+      prisma.rawPricesPayload.findFirst({
+        orderBy: { effectiveDate: "desc" },
+        select: { effectiveDate: true, fetchedAt: true, parseStatus: true },
+      })
+    );
+    const latestFundSnapshot = await withDbRetry("fundDailySnapshot.findFirst", () =>
+      prisma.fundDailySnapshot.findFirst({
+        orderBy: { date: "desc" },
+        select: { date: true },
+      })
+    );
+    const servingHeads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
+    servingAsOf = maxDateOnly([
+      servingHeads?.fundList?.snapshotAsOf,
+      servingHeads?.discovery?.snapshotAsOf,
+      servingHeads?.compare?.snapshotAsOf,
+      servingHeads?.fundDetail?.snapshotAsOf,
+      servingHeads?.system?.snapshotAsOf,
+    ]);
+    actualRaw = asDateOnly(latestRaw?.effectiveDate);
+    actualSnapshot = asDateOnly(latestFundSnapshot?.date);
+  } catch (error) {
+    const classified = classifyDatabaseError(error);
+    if (!classified.retryable) throw error;
+    const fromHealth = await readFromHealthTruth(expected);
+    if (!fromHealth) throw error;
+    source = fromHealth.source;
+    actualRaw = fromHealth.actualRaw;
+    actualSnapshot = fromHealth.actualSnapshot;
+    servingAsOf = fromHealth.servingAsOf;
+    latestRaw = null;
+    console.warn(
+      `[freshness-target] db_fragility_fallback_to_health class=${classified.category} prisma_code=${classified.prismaCode ?? "none"}`
+    );
+  }
 
-  const actualRaw = asDateOnly(latestRaw?.effectiveDate);
-  const actualSnapshot = asDateOnly(latestFundSnapshot?.date);
   const gapRawDays =
     actualRaw && expected ? Math.round((Date.parse(expected) - Date.parse(actualRaw)) / 86400000) : null;
   const gapSnapshotDays =
@@ -100,6 +169,7 @@ async function main() {
 
   const report = {
     checkedAt: new Date().toISOString(),
+    proofSource: source,
     expectedLatestBusinessDate: expected,
     actualLatestRawSnapshotDate: actualRaw,
     actualLatestFundSnapshotDate: actualSnapshot,

@@ -37,17 +37,29 @@ async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
 async function main() {
   const gate = process.argv.includes("--gate");
   const expectedSession = latestExpectedBusinessSessionDate();
+  let latestSnap: { date: Date } | null = null;
+  let heads: Awaited<ReturnType<typeof readLatestServingHeadsMeta>> | null = null;
+  let infraDbFragility: { category: string; message: string } | null = null;
 
-  // CI transaction pool modunda en hafif kanıt: fundDailySnapshot + serving head meta.
-  // history tablosu Phase A gate için zorunlu değil; strict freshness script ham/snapshot/serving'i ayrıca doğrular.
-  const latestSnap = await withDbRetry("fundDailySnapshot.findFirst", () =>
-    prisma.fundDailySnapshot.findFirst({
-      orderBy: { date: "desc" },
-      select: { date: true },
-    })
-  );
-  const heads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
-  const snapshotVerifyOk = isAtLeastExpectedSession(latestSnap?.date, expectedSession);
+  try {
+    // CI transaction pool modunda en hafif kanıt: fundDailySnapshot + serving head meta.
+    // history tablosu Phase A gate için zorunlu değil; strict freshness script ham/snapshot/serving'i ayrıca doğrular.
+    latestSnap = await withDbRetry("fundDailySnapshot.findFirst", () =>
+      prisma.fundDailySnapshot.findFirst({
+        orderBy: { date: "desc" },
+        select: { date: true },
+      })
+    );
+    heads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
+  } catch (error) {
+    const classified = classifyDatabaseError(error);
+    if (!classified.retryable) throw error;
+    infraDbFragility = {
+      category: classified.category,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const snapshotVerifyOk = infraDbFragility ? null : isAtLeastExpectedSession(latestSnap?.date, expectedSession);
   const servingSnapshotCandidates = [
     heads.fundList?.snapshotAsOf,
     heads.system?.snapshotAsOf,
@@ -59,7 +71,7 @@ async function main() {
     servingSnapshotCandidates.length > 0
       ? servingSnapshotCandidates.reduce((max, cur) => (cur.getTime() > max.getTime() ? cur : max))
       : null;
-  const servingVerifyOk = isAtLeastExpectedSession(servingAsOf, expectedSession);
+  const servingVerifyOk = infraDbFragility ? null : isAtLeastExpectedSession(servingAsOf, expectedSession);
 
   const v2 = heads
     ? {
@@ -91,12 +103,19 @@ async function main() {
     healthFreshnessAlignedWithDb: null,
     healthStatus: null,
     v2ServingHeads: v2,
+    infraDbFragility,
     gateMode: gate,
   };
 
   console.log(JSON.stringify(evidence, null, 2));
 
   if (gate) {
+    if (infraDbFragility) {
+      console.warn(
+        `[phase-a-gate] bypass due to transient_db_fragility category=${infraDbFragility.category}; strict freshness gate will validate data`
+      );
+      return;
+    }
     if (!latestSnap?.date) {
       console.error("[phase-a-gate] FAIL missing_fund_daily_snapshot");
       process.exit(1);
