@@ -105,37 +105,59 @@ function readHistoryHeartbeat(details: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function isStateStoreTransientFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECHECKOUTTIMEOUT|pool after|connection: Error \{ kind: Closed|timeout/i.test(message);
+}
+
 async function mergeHistorySyncDetails(details: HistorySyncDetails, options?: {
   status?: string;
   startedAt?: Date | null;
   completedAt?: Date | null;
 }): Promise<void> {
-  const current = await prisma.historySyncState.findUnique({
-    where: { key: HISTORY_SYNC_KEY },
-    select: { details: true },
-  });
+  let current: { details: unknown } | null = null;
+  try {
+    current = await prisma.historySyncState.findUnique({
+      where: { key: HISTORY_SYNC_KEY },
+      select: { details: true },
+    });
+  } catch (error) {
+    if (!isStateStoreTransientFailure(error)) throw error;
+    console.warn("[tefas-history] history_sync_state_read_skipped", {
+      reason: "transient_state_store_failure",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
   const merged = {
     ...asDetailsRecord(current?.details),
     ...details,
     lastHeartbeatAt: new Date().toISOString(),
   };
 
-  await prisma.historySyncState.upsert({
-    where: { key: HISTORY_SYNC_KEY },
-    create: {
-      key: HISTORY_SYNC_KEY,
-      status: options?.status ?? "RUNNING",
-      lastStartedAt: options?.startedAt ?? new Date(),
-      lastCompletedAt: options?.completedAt ?? null,
-      details: toJson(merged),
-    },
-    update: {
-      ...(options?.status ? { status: options.status } : {}),
-      ...(options?.startedAt !== undefined ? { lastStartedAt: options.startedAt } : {}),
-      ...(options?.completedAt !== undefined ? { lastCompletedAt: options.completedAt } : {}),
-      details: toJson(merged),
-    },
-  });
+  try {
+    await prisma.historySyncState.upsert({
+      where: { key: HISTORY_SYNC_KEY },
+      create: {
+        key: HISTORY_SYNC_KEY,
+        status: options?.status ?? "RUNNING",
+        lastStartedAt: options?.startedAt ?? new Date(),
+        lastCompletedAt: options?.completedAt ?? null,
+        details: toJson(merged),
+      },
+      update: {
+        ...(options?.status ? { status: options.status } : {}),
+        ...(options?.startedAt !== undefined ? { lastStartedAt: options.startedAt } : {}),
+        ...(options?.completedAt !== undefined ? { lastCompletedAt: options.completedAt } : {}),
+        details: toJson(merged),
+      },
+    });
+  } catch (error) {
+    if (!isStateStoreTransientFailure(error)) throw error;
+    console.warn("[tefas-history] history_sync_state_write_skipped", {
+      reason: "transient_state_store_failure",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function patchFundHistorySyncStateDetails(details: HistorySyncDetails): Promise<void> {
@@ -309,14 +331,20 @@ export async function refreshFundHistorySyncState(details?: Record<string, unkno
 }
 
 export async function recoverStaleHistorySyncState(staleAfterMinutes: number = DEFAULT_STALE_RUN_MINUTES): Promise<HistorySyncRecoveryResult> {
-  const state = await prisma.historySyncState.findUnique({
-    where: { key: HISTORY_SYNC_KEY },
-    select: {
-      status: true,
-      lastStartedAt: true,
-      details: true,
-    },
-  });
+  let state: { status: string; lastStartedAt: Date | null; details: unknown } | null = null;
+  try {
+    state = await prisma.historySyncState.findUnique({
+      where: { key: HISTORY_SYNC_KEY },
+      select: {
+        status: true,
+        lastStartedAt: true,
+        details: true,
+      },
+    });
+  } catch (error) {
+    if (!isStateStoreTransientFailure(error)) throw error;
+    return { recovered: false, previousStatus: null, reason: "state_store_unavailable" };
+  }
 
   if (!state || state.status !== "RUNNING" || !state.lastStartedAt) {
     return { recovered: false, previousStatus: state?.status ?? null };
