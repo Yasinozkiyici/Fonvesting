@@ -1,6 +1,7 @@
 import "./load-env";
 import { prisma, resetPrismaEngine } from "../src/lib/prisma";
 import { classifyDatabaseError } from "../src/lib/database-error-classifier";
+import { latestExpectedBusinessSessionDate } from "../src/lib/daily-sync-policy";
 import {
   appendRecentFundHistory,
   backfillFundHistoryDays,
@@ -91,7 +92,18 @@ async function main() {
 
   let result;
   if (append) {
-    result = await appendRecentFundHistory(appendOverlapDays);
+    try {
+      result = await appendRecentFundHistory(appendOverlapDays);
+    } catch (error) {
+      const classified = classifyDatabaseError(error);
+      if (!classified.retryable) throw error;
+      // append mode reads latest history date first; on pool fragility fallback to fixed window.
+      const anchor = latestExpectedBusinessSessionDate();
+      console.warn(
+        `[sync-tefas-history] append_fallback_to_backfill_window class=${classified.category} prisma_code=${classified.prismaCode ?? "none"}`
+      );
+      result = await backfillFundHistoryDays(30, anchor, chunkDays);
+    }
   } else if (fromRaw && toRaw) {
     result = await syncFundHistoryRange({
       startDate: parseDateArg(fromRaw),
