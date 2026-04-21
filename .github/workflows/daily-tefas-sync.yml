@@ -71,15 +71,38 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+          POSTGRES_DIRECT_URL: ${{ secrets.POSTGRES_DIRECT_URL }}
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::DATABASE_URL Actions secret tanımlı değil. Repo ayarlarından ekleyin."
             exit 1
           fi
-          if [ -z "$DIRECT_URL" ]; then
-            echo "::error::DIRECT_URL Actions secret tanımlı değil. Write-heavy canonical sync için gerekli."
+          resolved_direct_url=""
+          resolved_direct_source=""
+          if [ -n "$DIRECT_URL" ]; then
+            resolved_direct_url="$DIRECT_URL"
+            resolved_direct_source="DIRECT_URL"
+          elif [ -n "$POSTGRES_URL_NON_POOLING" ]; then
+            resolved_direct_url="$POSTGRES_URL_NON_POOLING"
+            resolved_direct_source="POSTGRES_URL_NON_POOLING"
+          elif [ -n "$POSTGRES_DIRECT_URL" ]; then
+            resolved_direct_url="$POSTGRES_DIRECT_URL"
+            resolved_direct_source="POSTGRES_DIRECT_URL"
+          elif [ -n "$POSTGRES_URL" ]; then
+            # Vercel/Supabase convention: POSTGRES_URL çoğu kurulumda non-pooling doğrudan host olur.
+            resolved_direct_url="$POSTGRES_URL"
+            resolved_direct_source="POSTGRES_URL"
+          fi
+          if [ -z "$resolved_direct_url" ]; then
+            echo "::error::Direct DB URL bulunamadı. Checked: DIRECT_URL, POSTGRES_URL_NON_POOLING, POSTGRES_DIRECT_URL, POSTGRES_URL"
+            echo "::error::Write-heavy canonical sync pooled DATABASE_URL'a düşmeyecek."
             exit 1
           fi
+          echo "direct_url_source=$resolved_direct_source" >> "$GITHUB_OUTPUT"
+          echo "direct_url_source=$resolved_direct_source"
+          export RESOLVED_DIRECT_URL="$resolved_direct_url"
           normalized_url="$(
             node <<'NODE'
           const raw = (process.env.DATABASE_URL || "").trim().replace(/\\n/g, "");
@@ -109,12 +132,12 @@ jobs:
           echo "database_url=$normalized_url" >> "$GITHUB_OUTPUT"
           direct_url="$(
             node <<'NODE'
-          const raw = (process.env.DIRECT_URL || "").trim().replace(/\\n/g, "");
+          const raw = (process.env.RESOLVED_DIRECT_URL || "").trim().replace(/\\n/g, "");
           if (!raw) process.exit(2);
           process.stdout.write(raw);
           NODE
           )" || {
-            echo "::error::DIRECT_URL normalize edilemedi."
+            echo "::error::Direct DB URL normalize edilemedi (source=$resolved_direct_source)."
             exit 1
           }
           echo "::add-mask::$direct_url"
