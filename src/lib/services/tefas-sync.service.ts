@@ -749,6 +749,10 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
   if (lastError && totalRows === 0) {
     return { ok: false, skipped: true, updated: 0, message: lastError, types };
   }
+  if (totalRows === 0) {
+    console.warn("[tefas-sync] full sync yeni satır üretmedi; ağır post-process adımları atlanıyor.");
+    return { ok: true, skipped: true, updated: 0, message: "no_new_rows", types };
+  }
 
   const postErrors: string[] = [];
 
