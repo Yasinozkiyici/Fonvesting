@@ -135,7 +135,14 @@ jobs:
           DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
-          pnpm exec tsx scripts/phase-a-chain-evidence.ts --gate
+          for attempt in 1 2 3; do
+            if pnpm exec tsx scripts/phase-a-chain-evidence.ts --gate; then
+              exit 0
+            fi
+            echo "[phase-a-gate] retry attempt=${attempt} failed"
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Report raw vs snapshot vs serving lag (ops signal)
         env:
@@ -149,4 +156,12 @@ jobs:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "60"
-        run: pnpm exec tsx scripts/check-freshness-target.ts --strict
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm exec tsx scripts/check-freshness-target.ts --strict; then
+              exit 0
+            fi
+            echo "[freshness-target] retry attempt=${attempt} failed"
+            sleep $((attempt * 10))
+          done
+          exit 1
