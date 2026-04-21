@@ -72,6 +72,17 @@ function getPrisma(): PrismaClient {
 }
 
 /**
+ * Uzun süren batch job'larda pooler bağlantısı koptuğunda Prisma engine'i sıfırlamak için.
+ * (Global singleton yeniden oluşturulur; bir sonraki sorgu yeni engine açar.)
+ */
+export async function resetPrismaEngine(): Promise<void> {
+  const cached = globalForPrisma.prisma;
+  globalForPrisma.prisma = undefined;
+  if (!cached) return;
+  await cached.$disconnect().catch(() => {});
+}
+
+/**
  * İlk özellik erişiminde engine oluşturulur; modül import’u sırasında gereksiz erken init azaltılır.
  */
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {

@@ -60,7 +60,10 @@ export function classifyDatabaseError(error: unknown): DatabaseFailureClassifica
     prismaCode === "P1017" ||
     msg.includes("server has closed the connection") ||
     msg.includes("connection terminated unexpectedly") ||
-    msg.includes("error in postgresql connection: error { kind: closed")
+    msg.includes("error in postgresql connection: error { kind: closed") ||
+    // Supavisor / pooler bazen connector fatal ile bağlantıyı kapatır; kısa backoff + prisma reset ile toparlanabilir.
+    msg.includes("edbhandlerexited") ||
+    msg.includes("dbhandler exited")
   ) {
     return { category: "connection_closed", prismaCode, message, retryable: true };
   }

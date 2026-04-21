@@ -286,7 +286,20 @@ export class TefasBrowserClient {
       Object.defineProperty(navigator, "languages", { get: () => ["tr-TR", "tr", "en-US", "en"] });
       Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
     });
-    await this.page.goto(TEFAS_PAGE_URL, { waitUntil: "domcontentloaded", timeout: PAGE_TIMEOUT_MS });
+    let lastNavError: Error | null = null;
+    for (let attempt = 1; attempt <= DEFAULT_RETRY_COUNT; attempt += 1) {
+      try {
+        await this.page.goto(TEFAS_PAGE_URL, { waitUntil: "domcontentloaded", timeout: PAGE_TIMEOUT_MS });
+        lastNavError = null;
+        break;
+      } catch (error) {
+        lastNavError = error instanceof Error ? error : new Error(String(error));
+        await sleep(750 * attempt);
+      }
+    }
+    if (lastNavError) {
+      throw lastNavError;
+    }
     const title = await this.page.title();
     if (title.toLowerCase().includes("request rejected")) {
       throw new Error("TEFAS WAF isteği reddetti.");

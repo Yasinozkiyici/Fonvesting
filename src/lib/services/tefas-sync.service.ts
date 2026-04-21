@@ -715,6 +715,8 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
     return { ok: false, skipped: true, updated: 0, message: lastError, types };
   }
 
+  const postErrors: string[] = [];
+
   try {
     const meta = await runTefasMetadataPass(prisma);
     console.log("[tefas-sync] full sync metadata:", meta);
@@ -738,10 +740,14 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
         console.log("[tefas-sync] fund detail core serving rebuilt:", detailCore);
       } catch (e) {
         console.error("[tefas-sync] fund detail core serving rebuild failed:", e);
+        postErrors.push(`detail_core:${e instanceof Error ? e.message : String(e)}`);
       }
+    } else if (totalRows > 0) {
+      postErrors.push("history_missing_latest_session");
     }
   } catch (e) {
     console.error("[tefas-sync] daily snapshot rebuild failed:", e);
+    postErrors.push(`snapshot_pipeline:${e instanceof Error ? e.message : String(e)}`);
   }
 
   try {
@@ -749,6 +755,7 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
     console.log("[tefas-sync] fund derived metrics:", derived);
   } catch (e) {
     console.error("[tefas-sync] fund derived metrics failed:", e);
+    postErrors.push(`derived:${e instanceof Error ? e.message : String(e)}`);
   }
 
   try {
@@ -756,6 +763,17 @@ export async function runFullTefasSync(): Promise<TefasSyncResult & { types?: nu
     console.log("[tefas-sync] scores API cache warmed:", warm);
   } catch (e) {
     console.error("[tefas-sync] scores API cache warm failed:", e);
+    postErrors.push(`scores_warm:${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  if (postErrors.length) {
+    return {
+      ok: false,
+      skipped: false,
+      updated: totalRows,
+      types,
+      message: `post_process_failed: ${postErrors.join(" | ")}`,
+    };
   }
 
   return { ok: true, skipped: false, updated: totalRows, types };

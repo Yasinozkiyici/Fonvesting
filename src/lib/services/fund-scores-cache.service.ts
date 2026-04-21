@@ -1,6 +1,7 @@
-import { prisma } from "@/lib/prisma";
+import { prisma, resetPrismaEngine } from "@/lib/prisma";
 import type { RankingMode } from "@/lib/scoring";
 import { Prisma } from "@prisma/client";
+import { classifyDatabaseError } from "@/lib/database-error-classifier";
 import {
   computeScoresPayload,
   filterScoresPayloadByQuery,
@@ -18,6 +19,32 @@ import type { ScoredFundRow } from "@/lib/services/fund-scores-types";
 const KEY_PREFIX = "scores:v9";
 const DB_SCORES_STALE_MS = 23 * 60 * 60 * 1000;
 const MEMORY_SCORES_TTL_MS = 5 * 60 * 1000;
+
+async function sleepMs(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTransientPrismaRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      last = error;
+      const classified = classifyDatabaseError(error);
+      if (!classified.retryable || attempt >= 3) {
+        throw error;
+      }
+      console.warn(
+        `[scores-cache] transient_db_error attempt=${attempt} label=${label} class=${classified.category} ` +
+          `prisma_code=${classified.prismaCode ?? "none"}`
+      );
+      await resetPrismaEngine();
+      await sleepMs(500 * attempt);
+    }
+  }
+  throw last;
+}
 
 type ScoresMemoryCacheEntry = {
   updatedAt: number;
@@ -391,14 +418,18 @@ export async function warmAllScoresApiCaches(): Promise<{ written: number }> {
   let written = 0;
   for (const mode of modes) {
     for (const cat of categoryKeys) {
-      const payload = await computeScoresPayload(mode, cat, "");
       const cacheKey = scoresApiCacheKey(mode, cat, "");
+      const payload = await withTransientPrismaRetry(`compute:${cacheKey}`, () =>
+        computeScoresPayload(mode, cat, "")
+      );
       const json = JSON.parse(JSON.stringify(payload)) as Prisma.InputJsonValue;
-      await prisma.scoresApiCache.upsert({
-        where: { cacheKey },
-        create: { cacheKey, payload: json },
-        update: { payload: json },
-      });
+      await withTransientPrismaRetry(`upsert:${cacheKey}`, () =>
+        prisma.scoresApiCache.upsert({
+          where: { cacheKey },
+          create: { cacheKey, payload: json },
+          update: { payload: json },
+        })
+      );
       written++;
     }
   }

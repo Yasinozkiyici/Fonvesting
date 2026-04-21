@@ -20,3 +20,9 @@ test("PrismaClientInitializationError P1012 → invalid_datasource", () => {
   assert.equal(c.category, "invalid_datasource");
   assert.equal(c.prismaCode, "P1012");
 });
+
+test("Supavisor DbHandler exited → connection_closed (retryable)", () => {
+  const c = classifyDatabaseError(new Error("FATAL: (EDBHANDLEREXITED) DbHandler exited"));
+  assert.equal(c.category, "connection_closed");
+  assert.equal(c.retryable, true);
+});
