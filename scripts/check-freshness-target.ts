@@ -1,6 +1,7 @@
 import "./load-env";
-import { prisma } from "../src/lib/prisma";
+import { prisma, resetPrismaEngine } from "../src/lib/prisma";
 import { readLatestServingHeadsMeta } from "../src/lib/data-platform/serving-head";
+import { classifyDatabaseError } from "../src/lib/database-error-classifier";
 
 const ISTANBUL_TZ = "Europe/Istanbul";
 
@@ -41,24 +42,44 @@ function maxDateOnly(values: Array<Date | null | undefined>): string | null {
   return normalized.length > 0 ? normalized[normalized.length - 1] : null;
 }
 
+async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const classified = classifyDatabaseError(error);
+      if (!classified.retryable || attempt >= 3) throw error;
+      console.warn(
+        `[freshness-target] transient_db_error label=${label} attempt=${attempt} class=${classified.category} ` +
+          `prisma_code=${classified.prismaCode ?? "none"}`
+      );
+      await resetPrismaEngine();
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 async function main() {
   const expected = expectedBusinessDateIso(new Date());
   const strict = process.argv.includes("--strict");
 
   // Serial reads reduce P2024 risk when connection_limit is intentionally tiny.
-  const latestRaw = await prisma.rawPricesPayload
-    .findFirst({
+  const latestRaw = await withDbRetry("rawPricesPayload.findFirst", () =>
+    prisma.rawPricesPayload.findFirst({
       orderBy: { effectiveDate: "desc" },
       select: { effectiveDate: true, fetchedAt: true, parseStatus: true },
     })
-    .catch(() => null);
-  const latestFundSnapshot = await prisma.fundDailySnapshot
-    .findFirst({
+  );
+  const latestFundSnapshot = await withDbRetry("fundDailySnapshot.findFirst", () =>
+    prisma.fundDailySnapshot.findFirst({
       orderBy: { date: "desc" },
       select: { date: true },
     })
-    .catch(() => null);
-  const servingHeads = await readLatestServingHeadsMeta().catch(() => null);
+  );
+  const servingHeads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
 
   const servingAsOf = maxDateOnly([
     servingHeads?.fundList?.snapshotAsOf,
