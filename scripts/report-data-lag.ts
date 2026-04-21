@@ -1,30 +1,28 @@
 /**
- * CI/ops: raw ingest → DB history → daily snapshot → serving head snapshotAsOf hizasını tek JSON'da özetler.
- * Amaç: "hangi katmanda takıldık?" sorusunu hızlıca cevaplamak.
+ * CI/ops lag raporu:
+ * - Otorite: /api/health?mode=full canonical freshness truth
+ * - DB erişimi: yalnız opsiyonel best-effort probe (default kapalı)
  */
 import "./load-env";
-import { prisma, resetPrismaEngine } from "../src/lib/prisma";
-import { readLatestServingHeadsMeta } from "../src/lib/data-platform/serving-head";
-import { classifyDatabaseError } from "../src/lib/database-error-classifier";
 
-function isoDay(d: Date | null | undefined): string | null {
-  if (!d) return null;
-  const t = d.getTime();
-  if (!Number.isFinite(t)) return null;
-  return new Date(t).toISOString();
+type NullableDateInput = Date | string | null | undefined;
+
+function toIsoOrNull(value: NullableDateInput): string | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  const ms = parsed.getTime();
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
 }
 
-function dayMs(d: Date | null | undefined): number | null {
-  if (!d) return null;
-  const t = d.getTime();
-  return Number.isFinite(t) ? t : null;
+function toDateKey(value: NullableDateInput): string | null {
+  const iso = toIsoOrNull(value);
+  return iso ? iso.slice(0, 10) : null;
 }
 
-function lagDays(a: Date | null, b: Date | null): number | null {
-  const am = dayMs(a);
-  const bm = dayMs(b);
-  if (am == null || bm == null) return null;
-  return Math.round((am - bm) / 86400000);
+function lagDaysDateKey(a: string | null, b: string | null): number | null {
+  if (!a || !b) return null;
+  return Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 }
 
 function resolveBaseUrl(): string {
@@ -45,7 +43,7 @@ function resolveBaseUrl(): string {
   return "https://fonvesting.vercel.app";
 }
 
-async function readHealthLagFallback() {
+async function readHealthLagTruth() {
   const baseUrl = resolveBaseUrl();
   const response = await fetch(`${baseUrl}/api/health?mode=full`, {
     headers: { "x-health-secret": String(process.env.HEALTH_SECRET ?? "") },
@@ -54,17 +52,22 @@ async function readHealthLagFallback() {
   if (!response.ok) throw new Error(`health_fetch_failed status=${response.status}`);
   const payload = await response.json();
   const truth = payload?.freshnessTruth ?? payload?.freshness?.canonicalTruth ?? {};
+  const latestRaw = toDateKey(truth?.rawSnapshotAsOf ?? null);
+  const latestSnapshot = toDateKey(truth?.fundSnapshotAsOf ?? payload?.freshness?.latestFundSnapshotDate ?? null);
+  const latestServing = toDateKey(truth?.servingSnapshotAsOf ?? null);
   return {
     generatedAt: new Date().toISOString(),
-    proofSource: "health_api_fallback",
+    proofSource: "health_truth",
+    healthBaseUrl: baseUrl,
+    healthStatus: String(payload?.status ?? "unknown"),
     rawPrices: {
-      latestEffectiveDate: isoDay(truth?.rawSnapshotAsOf ?? null),
+      latestEffectiveDate: latestRaw,
       latestFetchedAt: null,
     },
     fundPriceHistory: { latestDate: null },
-    fundDailySnapshot: { latestDate: isoDay(truth?.fundSnapshotAsOf ?? payload?.freshness?.latestFundSnapshotDate ?? null) },
+    fundDailySnapshot: { latestDate: latestSnapshot },
     serving: {
-      latestSnapshotAsOf: isoDay(truth?.servingSnapshotAsOf ?? null),
+      latestSnapshotAsOf: latestServing,
       heads: {
         fundList: null,
         fundDetail: null,
@@ -76,122 +79,73 @@ async function readHealthLagFallback() {
     lagDays: {
       rawEffectiveToHistory: null,
       historyToSnapshot: null,
-      snapshotToServing: null,
+      snapshotToServing: lagDaysDateKey(latestSnapshot, latestServing),
     },
-    latestSyncLog: null,
-    fallbackReason: "db_pool_fragility",
+    latestSyncLog: {
+      syncType: "daily_sync",
+      status: payload?.jobs?.dailySync?.status ?? null,
+      startedAt: toIsoOrNull(payload?.jobs?.dailySync?.startedAt ?? null),
+      completedAt: toIsoOrNull(payload?.jobs?.dailySync?.completedAt ?? null),
+      errorMessage: payload?.jobs?.dailySync?.errorMessage ?? null,
+    },
+    truthSignals: {
+      freshnessStatus: truth?.freshnessStatus ?? null,
+      degradedReason: truth?.degradedReason ?? null,
+      latestSuccessfulSyncAt: toIsoOrNull(truth?.latestSuccessfulSyncAt ?? payload?.freshness?.lastSuccessfulIngestionAt ?? null),
+    },
   };
 }
 
-async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      const classified = classifyDatabaseError(error);
-      if (!classified.retryable || attempt >= 3) throw error;
-      console.warn(
-        `[report-data-lag] transient_db_error label=${label} attempt=${attempt} class=${classified.category} ` +
-          `prisma_code=${classified.prismaCode ?? "none"}`
-      );
-      await resetPrismaEngine();
-      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
-    }
+async function readOptionalDbProbe() {
+  try {
+    const module = await import("../src/lib/data-platform/serving-head");
+    const heads = await Promise.race([
+      module.readLatestServingHeadsMeta(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("db_probe_timeout")), 2_000)),
+    ]);
+    return {
+      ok: true,
+      message: null,
+      heads: {
+        fundList: toIsoOrNull(heads?.fundList?.snapshotAsOf ?? null),
+        fundDetail: toIsoOrNull(heads?.fundDetail?.snapshotAsOf ?? null),
+        compare: toIsoOrNull(heads?.compare?.snapshotAsOf ?? null),
+        discovery: toIsoOrNull(heads?.discovery?.snapshotAsOf ?? null),
+        system: toIsoOrNull(heads?.system?.snapshotAsOf ?? null),
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      heads: null,
+    };
   }
-  throw lastError;
 }
 
 async function main() {
-  try {
-    const latestSnapshot = await withDbRetry("fundDailySnapshot.findFirst", () =>
-      prisma.fundDailySnapshot.findFirst({
-        orderBy: { date: "desc" },
-        select: { date: true },
-      })
-    );
-
-    const rawPricesOk = await withDbRetry("rawPricesPayload.aggregate", () =>
-      prisma.rawPricesPayload.aggregate({
-        where: { source: "tefas_browser", parseStatus: "OK" },
-        _max: { effectiveDate: true, fetchedAt: true },
-      })
-    );
-
-    const latestSync = await withDbRetry("syncLog.findFirst", () =>
-      prisma.syncLog.findFirst({
-        orderBy: { startedAt: "desc" },
-        select: { syncType: true, status: true, completedAt: true, startedAt: true, errorMessage: true },
-      })
-    );
-
-    const heads = await withDbRetry("readLatestServingHeadsMeta", () => readLatestServingHeadsMeta());
-    const servingCandidates = [
-      heads.fundDetail?.snapshotAsOf,
-      heads.discovery?.snapshotAsOf,
-      heads.compare?.snapshotAsOf,
-      heads.fundList?.snapshotAsOf,
-      heads.system?.snapshotAsOf,
-    ].filter((d): d is Date => Boolean(d));
-
-    const latestServingAsOf =
-      servingCandidates.length === 0
-        ? null
-        : servingCandidates.reduce((max, cur) => (cur.getTime() > max.getTime() ? cur : max));
-
-    const out = {
-      generatedAt: new Date().toISOString(),
-      proofSource: "database",
-      rawPrices: {
-        latestEffectiveDate: isoDay(rawPricesOk._max.effectiveDate),
-        latestFetchedAt: isoDay(rawPricesOk._max.fetchedAt),
+  const out = await readHealthLagTruth();
+  const enableOptionalDbProbe = String(process.env.REPORT_DATA_LAG_ENABLE_DB_PROBE ?? "").trim() === "1";
+  const optionalDbProbe = enableOptionalDbProbe
+    ? await readOptionalDbProbe()
+    : {
+        ok: false,
+        message: "disabled_by_default",
+        heads: null,
+      };
+  console.log(
+    JSON.stringify(
+      {
+        ...out,
+        optionalDbProbe,
       },
-      fundPriceHistory: { latestDate: null },
-      fundDailySnapshot: { latestDate: isoDay(latestSnapshot?.date) },
-      serving: {
-        latestSnapshotAsOf: isoDay(latestServingAsOf),
-        heads: {
-          fundList: heads.fundList ? isoDay(heads.fundList.snapshotAsOf) : null,
-          fundDetail: heads.fundDetail ? isoDay(heads.fundDetail.snapshotAsOf) : null,
-          compare: heads.compare ? isoDay(heads.compare.snapshotAsOf) : null,
-          discovery: heads.discovery ? isoDay(heads.discovery.snapshotAsOf) : null,
-          system: heads.system ? isoDay(heads.system.snapshotAsOf) : null,
-        },
-      },
-      lagDays: {
-        rawEffectiveToHistory: null,
-        historyToSnapshot: null,
-        snapshotToServing: lagDays(latestSnapshot?.date ?? null, latestServingAsOf),
-      },
-      latestSyncLog: latestSync
-        ? {
-            syncType: latestSync.syncType,
-            status: latestSync.status,
-            startedAt: isoDay(latestSync.startedAt),
-            completedAt: isoDay(latestSync.completedAt),
-            errorMessage: latestSync.errorMessage,
-          }
-        : null,
-    };
-
-    console.log(JSON.stringify(out, null, 2));
-  } catch (error) {
-    const classified = classifyDatabaseError(error);
-    if (!classified.retryable) throw error;
-    console.warn(
-      `[report-data-lag] db_fragility_fallback_to_health class=${classified.category} prisma_code=${classified.prismaCode ?? "none"}`
-    );
-    const fallback = await readHealthLagFallback();
-    console.log(JSON.stringify(fallback, null, 2));
-  }
+      null,
+      2
+    )
+  );
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect().catch(() => {});
-  });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
