@@ -107,7 +107,7 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           # Canonical pipeline: source -> raw ingest -> snapshot -> serving -> chart -> comparison -> freshness
-          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_CONNECTION_LIMIT: "5"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:sync:daily
@@ -115,7 +115,7 @@ jobs:
       - name: Daily ledger strict evidence
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_CONNECTION_LIMIT: "5"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:daily:ledger-evidence -- --strict --limit 10
@@ -123,7 +123,7 @@ jobs:
       - name: Canonical health report strict
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_CONNECTION_LIMIT: "5"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:health:report -- --strict
@@ -131,7 +131,7 @@ jobs:
       - name: Phase A chain evidence (health-truth integrity)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_CONNECTION_LIMIT: "5"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           for attempt in 1 2 3; do
@@ -146,7 +146,7 @@ jobs:
       - name: Report raw vs snapshot vs serving lag (ops signal)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_CONNECTION_LIMIT: "5"
           DATABASE_POOL_TIMEOUT: "60"
         run: pnpm exec tsx scripts/report-data-lag.ts
 
