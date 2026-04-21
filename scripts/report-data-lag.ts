@@ -2,6 +2,7 @@
  * CI/ops lag raporu:
  * - Otorite: /api/health?mode=full canonical freshness truth
  * - DB erişimi: yalnız opsiyonel best-effort probe (default kapalı)
+ *   (workflow continuity için rapor üretimi DB-hard-fail yapmaz)
  */
 import "./load-env";
 

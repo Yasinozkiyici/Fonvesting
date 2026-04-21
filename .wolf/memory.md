@@ -2697,3 +2697,6 @@
 | 13:55 | Added health-truth fallback to report-data-lag so workflow can continue under DB pool fragility | scripts/report-data-lag.ts | done | ~900 |
 | 13:42 | Session end: 90 writes across 22 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 53 reads | ~783417 tok |
 | 13:55 | Created scripts/report-data-lag.ts | — | ~1927 |
+| 14:10 | Finalized report-data-lag as health-truth-first non-blocking evidence path | scripts/report-data-lag.ts | done | ~300 |
+| 13:57 | Created scripts/report-data-lag.ts | — | ~1383 |
+| 14:11 | Created scripts/report-data-lag.ts | — | ~1402 |
