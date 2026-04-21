@@ -1,6 +1,8 @@
 import "../load-env";
 import { runDailyPipeline } from "../../src/lib/pipeline/runDailyPipeline";
 import { prisma } from "../../src/lib/prisma";
+import { classifyDatabaseError } from "../../src/lib/database-error-classifier";
+import { fingerprintConnectionUrl, resolveDbConnectionProfile } from "../../src/lib/db/db-connection-profile";
 import { toLedgerString, type PipelineRunLedger } from "../../src/lib/pipeline/run-ledger";
 import {
   recordCanonicalChartPublish,
@@ -26,6 +28,14 @@ function resolveStatuses(steps: Array<{ step: string; status: string }>) {
 }
 
 async function main() {
+  const dbProfile = resolveDbConnectionProfile();
+  const dbFp = fingerprintConnectionUrl(dbProfile.effectiveDatasourceUrl);
+  console.info(
+    `[daily-sync-infra] datasource_env=${dbProfile.prismaRuntimeEnvKey} mode=${dbProfile.connectionMode} ` +
+      `pgbouncer=${dbProfile.tuning.pgbouncer ? 1 : 0} connection_limit=${dbProfile.tuning.connectionLimit ?? "na"} ` +
+      `pool_timeout_s=${dbProfile.tuning.poolTimeoutSec ?? "na"} connect_timeout_s=${dbProfile.tuning.connectTimeoutSec ?? "na"} ` +
+      `host_hash=${dbFp.hostHash ?? "none"} db_hash=${dbFp.dbHash ?? "none"}`
+  );
   const startedAt = new Date().toISOString();
   const runKey = new Date().toISOString().slice(0, 10);
   const runId = `daily-${Date.now()}`;
@@ -210,6 +220,11 @@ async function main() {
     const failed = result.firstFailedStep !== null || result.failureKind !== "none";
     process.exit(failed ? 1 : 0);
   } catch (error) {
+    const classified = classifyDatabaseError(error);
+    console.error(
+      `[daily-sync-infra-failure] class=${classified.category} prisma_code=${classified.prismaCode ?? "none"} ` +
+        `retryable=${classified.retryable ? 1 : 0} env=${dbProfile.prismaRuntimeEnvKey} mode=${dbProfile.connectionMode}`
+    );
     if (syncLog?.id) {
       const message = error instanceof Error ? error.message : String(error);
       await recordCanonicalRawIngest({

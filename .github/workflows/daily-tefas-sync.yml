@@ -70,9 +70,14 @@ jobs:
         id: normalize_db
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo "::error::DATABASE_URL Actions secret tanımlı değil. Repo ayarlarından ekleyin."
+            exit 1
+          fi
+          if [ -z "$DIRECT_URL" ]; then
+            echo "::error::DIRECT_URL Actions secret tanımlı değil. Write-heavy canonical sync için gerekli."
             exit 1
           fi
           normalized_url="$(
@@ -102,12 +107,26 @@ jobs:
           }
           echo "::add-mask::$normalized_url"
           echo "database_url=$normalized_url" >> "$GITHUB_OUTPUT"
+          direct_url="$(
+            node <<'NODE'
+          const raw = (process.env.DIRECT_URL || "").trim().replace(/\\n/g, "");
+          if (!raw) process.exit(2);
+          process.stdout.write(raw);
+          NODE
+          )" || {
+            echo "::error::DIRECT_URL normalize edilemedi."
+            exit 1
+          }
+          echo "::add-mask::$direct_url"
+          echo "direct_url=$direct_url" >> "$GITHUB_OUTPUT"
 
       - name: Run canonical daily sync pipeline
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
+          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
           # Canonical pipeline: source -> raw ingest -> snapshot -> serving -> chart -> comparison -> freshness
-          DATABASE_CONNECTION_LIMIT: "5"
+          DATABASE_CONNECTION_LIMIT: "3"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:sync:daily
@@ -115,7 +134,9 @@ jobs:
       - name: Daily ledger strict evidence
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "5"
+          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          DATABASE_CONNECTION_LIMIT: "3"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:daily:ledger-evidence -- --strict --limit 10
@@ -123,7 +144,9 @@ jobs:
       - name: Canonical health report strict
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "5"
+          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          DATABASE_CONNECTION_LIMIT: "3"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:health:report -- --strict
@@ -131,7 +154,9 @@ jobs:
       - name: Phase A chain evidence (health-truth integrity)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "5"
+          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          DATABASE_CONNECTION_LIMIT: "3"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           for attempt in 1 2 3; do
@@ -146,13 +171,17 @@ jobs:
       - name: Report raw vs snapshot vs serving lag (ops signal)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DATABASE_CONNECTION_LIMIT: "5"
+          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          DATABASE_CONNECTION_LIMIT: "3"
           DATABASE_POOL_TIMEOUT: "60"
         run: pnpm exec tsx scripts/report-data-lag.ts
 
       - name: Verify freshness target date reached
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
+          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
           DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
