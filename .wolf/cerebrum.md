@@ -70,6 +70,7 @@
 - Regression firewall için homepage/compare yüzeylerinde "tek semantik owner" zorunlu: filtresiz total sadece `canonicalUniverseTotal`, filtreli total sadece scoped `matchedTotal`; UI satır sayısı/preview sayısından total türetemez. Compare/detail tarafında `ready` render yalnız typed state + renderable payload birlikte sağlanır; aksi durumda explicit degraded state ve reason attribute zorunlu.
 - Phase A chain evidence CI’da DB checkout timeout etkisinden çıkarılmalı: gate kararı `/api/health?mode=full` canonical truth (freshness + daily sync status) üzerinden verilmeli; direct DB/serving head okumaları yalnız best-effort telemetri olmalı.
 - Node/Prisma'da Promise.race timeout’u tek başına yeterli değil; yarıştan düşen DB sorgusu process handle’ı açık bırakabilir. CI scriptlerinde opsiyonel DB probe default kapalı olmalı veya explicit env ile açılmalı.
+- `report-data-lag` gibi ops/diagnostic adımlar gate zincirinde hard-fail olmamalı; DB fragility halinde health canonical truth fallback ile rapor üretip akışı `check-freshness-target` adımına taşımak gerekli.
 
 ## Do-Not-Repeat
 

@@ -2694,3 +2694,6 @@
 | 13:21 | Refactored Phase A to health-truth authority; DB probe now optional/non-blocking | scripts/phase-a-chain-evidence.ts | done | ~1500 |
 | 13:39 | Disabled Phase A DB probe by default to prevent CI hang from lingering Prisma handles | scripts/phase-a-chain-evidence.ts | done | ~400 |
 | 13:39 | Created scripts/phase-a-chain-evidence.ts | — | ~1848 |
+| 13:55 | Added health-truth fallback to report-data-lag so workflow can continue under DB pool fragility | scripts/report-data-lag.ts | done | ~900 |
+| 13:42 | Session end: 90 writes across 22 files (chart-monotone-path.ts, globals.css, SitePageShell.tsx, page.tsx, FundDetailTrends.tsx) | 53 reads | ~783417 tok |
+| 13:55 | Created scripts/report-data-lag.ts | — | ~1927 |
