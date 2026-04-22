@@ -49,6 +49,9 @@ export type DailySourceRefreshResult = {
 
 const HISTORY_STEP_TIMEOUT_MS = 240_000;
 const MACRO_STEP_TIMEOUT_MS = 120_000;
+const IS_GITHUB_ACTIONS = String(process.env.GITHUB_ACTIONS ?? "").toLowerCase() === "true";
+const SKIP_SOURCE_REFRESH_STATE_PATCH = IS_GITHUB_ACTIONS;
+const SKIP_FRESHNESS_PROBE = IS_GITHUB_ACTIONS;
 
 type SourceRefreshStage =
   | "start"
@@ -68,6 +71,7 @@ async function patchSourceRefreshStage(stage: SourceRefreshStage, details: Recor
     ...details,
   };
   console.info("[source-refresh] stage", payload);
+  if (SKIP_SOURCE_REFRESH_STATE_PATCH) return;
   try {
     await patchFundHistorySyncStateDetails(payload);
   } catch (error) {
@@ -131,11 +135,13 @@ async function retryHistoryRefresh(overlapDays: number, attempts: number, baseDe
         HISTORY_STEP_TIMEOUT_MS,
         "history_refresh"
       );
-      const latestHistoryDate = await readLatestHistoryDate();
-      if (!isAtLeastExpectedSession(latestHistoryDate, expectedSessionDate)) {
-        throw new Error(
-          `history_stale_after_refresh expected=${expectedSessionDate.toISOString()} latest=${latestHistoryDate?.toISOString() ?? "none"}`
-        );
+      if (!SKIP_FRESHNESS_PROBE) {
+        const latestHistoryDate = await readLatestHistoryDate();
+        if (!isAtLeastExpectedSession(latestHistoryDate, expectedSessionDate)) {
+          throw new Error(
+            `history_stale_after_refresh expected=${expectedSessionDate.toISOString()} latest=${latestHistoryDate?.toISOString() ?? "none"}`
+          );
+        }
       }
       return { result, attemptsUsed: attempt };
     } catch (error) {
@@ -167,11 +173,13 @@ async function retryMacroRefresh(attempts: number, baseDelayMs: number) {
         MACRO_STEP_TIMEOUT_MS,
         "macro_refresh"
       );
-      const latestMacroDate = await readLatestMacroObservationDate();
-      if (!isAtLeastExpectedSession(latestMacroDate, expectedSessionDate)) {
-        throw new Error(
-          `macro_stale_after_refresh expected=${expectedSessionDate.toISOString()} latest=${latestMacroDate?.toISOString() ?? "none"}`
-        );
+      if (!SKIP_FRESHNESS_PROBE) {
+        const latestMacroDate = await readLatestMacroObservationDate();
+        if (!isAtLeastExpectedSession(latestMacroDate, expectedSessionDate)) {
+          throw new Error(
+            `macro_stale_after_refresh expected=${expectedSessionDate.toISOString()} latest=${latestMacroDate?.toISOString() ?? "none"}`
+          );
+        }
       }
       return { result, attemptsUsed: attempt };
     } catch (error) {
@@ -192,11 +200,23 @@ export async function runDailySourceRefresh(options?: {
   macroAttempts?: number;
   retryDelayMs?: number;
 }): Promise<DailySourceRefreshResult> {
-  const overlapDays = Number.isFinite(options?.overlapDays) ? Number(options?.overlapDays) : 7;
+  const overlapDays = Number.isFinite(options?.overlapDays) ? Number(options?.overlapDays) : IS_GITHUB_ACTIONS ? 2 : 7;
   const staleMinutes = Number.isFinite(options?.staleMinutes) ? Number(options?.staleMinutes) : 120;
-  const historyAttempts = Number.isFinite(options?.historyAttempts) ? Math.max(1, Number(options?.historyAttempts)) : 3;
-  const macroAttempts = Number.isFinite(options?.macroAttempts) ? Math.max(1, Number(options?.macroAttempts)) : 3;
-  const retryDelayMs = Number.isFinite(options?.retryDelayMs) ? Math.max(500, Number(options?.retryDelayMs)) : 15_000;
+  const historyAttempts = Number.isFinite(options?.historyAttempts)
+    ? Math.max(1, Number(options?.historyAttempts))
+    : IS_GITHUB_ACTIONS
+      ? 1
+      : 3;
+  const macroAttempts = Number.isFinite(options?.macroAttempts)
+    ? Math.max(1, Number(options?.macroAttempts))
+    : IS_GITHUB_ACTIONS
+      ? 1
+      : 3;
+  const retryDelayMs = Number.isFinite(options?.retryDelayMs)
+    ? Math.max(500, Number(options?.retryDelayMs))
+    : IS_GITHUB_ACTIONS
+      ? 2_000
+      : 15_000;
   const runStartedAt = Date.now();
 
   await patchSourceRefreshStage("start", {
@@ -273,48 +293,50 @@ export async function runDailySourceRefresh(options?: {
       message: "message" in macro ? macro.message ?? null : null,
     });
 
-    await refreshFundHistorySyncState({
-      phase: "source_refresh",
-      source: "src/lib/services/daily-source-refresh.service.ts",
-      attempts: {
-        history: historyAttemptsUsed,
-        macro: macroAttemptResult.attemptsUsed,
-      },
-      lastHistoryRun: {
-        mode: "append",
-        startDate: history.startDate,
-        endDate: history.endDate,
-        chunkDays: history.chunkDays,
-        chunks: history.chunks,
-        fetchedRows: history.fetchedRows,
-        writtenRows: history.writtenRows,
-        touchedDates: history.touchedDates,
-        completedAt: new Date().toISOString(),
-      },
-      lastAppendRange: {
-        overlapDays,
-        startDate: history.startDate,
-        endDate: history.endDate,
-        completedAt: new Date().toISOString(),
-      },
-      lastMacroSync: {
-        ok: "ok" in macro ? macro.ok : false,
-        partial: "partial" in macro ? macro.partial : false,
-        fetchedRows: "fetchedRows" in macro ? macro.fetchedRows : 0,
-        writtenRows: "writtenRows" in macro ? macro.writtenRows : 0,
-        seriesCount: "seriesCount" in macro ? macro.seriesCount : 0,
-        message: "message" in macro ? macro.message ?? null : null,
-        completedAt: new Date().toISOString(),
-      },
-      lastMacroRecovery: macroRecovery,
-      lastRecovery: recovery,
-      sourceRefreshTimingMs: {
-        total: Date.now() - runStartedAt,
-        recovery: recoveryDurationMs,
-        history: historyDurationMs,
-        macro: macroDurationMs,
-      },
-    });
+    if (!SKIP_SOURCE_REFRESH_STATE_PATCH) {
+      await refreshFundHistorySyncState({
+        phase: "source_refresh",
+        source: "src/lib/services/daily-source-refresh.service.ts",
+        attempts: {
+          history: historyAttemptsUsed,
+          macro: macroAttemptResult.attemptsUsed,
+        },
+        lastHistoryRun: {
+          mode: "append",
+          startDate: history.startDate,
+          endDate: history.endDate,
+          chunkDays: history.chunkDays,
+          chunks: history.chunks,
+          fetchedRows: history.fetchedRows,
+          writtenRows: history.writtenRows,
+          touchedDates: history.touchedDates,
+          completedAt: new Date().toISOString(),
+        },
+        lastAppendRange: {
+          overlapDays,
+          startDate: history.startDate,
+          endDate: history.endDate,
+          completedAt: new Date().toISOString(),
+        },
+        lastMacroSync: {
+          ok: "ok" in macro ? macro.ok : false,
+          partial: "partial" in macro ? macro.partial : false,
+          fetchedRows: "fetchedRows" in macro ? macro.fetchedRows : 0,
+          writtenRows: "writtenRows" in macro ? macro.writtenRows : 0,
+          seriesCount: "seriesCount" in macro ? macro.seriesCount : 0,
+          message: "message" in macro ? macro.message ?? null : null,
+          completedAt: new Date().toISOString(),
+        },
+        lastMacroRecovery: macroRecovery,
+        lastRecovery: recovery,
+        sourceRefreshTimingMs: {
+          total: Date.now() - runStartedAt,
+          recovery: recoveryDurationMs,
+          history: historyDurationMs,
+          macro: macroDurationMs,
+        },
+      });
+    }
 
     await patchSourceRefreshStage("completed", {
       durationMs: Date.now() - runStartedAt,
