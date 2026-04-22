@@ -111,15 +111,8 @@ jobs:
           let out = raw;
           try {
             const u = new URL(raw);
-            const host = (u.hostname || "").toLowerCase();
-            if (host.includes("pooler.supabase.com")) {
-              // GitHub runners cannot reliably reach session pooler (:5432) in this project.
-              // Force transaction pooler port and enable Prisma pgbouncer mode.
-              if (!u.port || u.port === "5432") u.port = "6543";
-              u.searchParams.set("pgbouncer", "true");
-              if (!(u.searchParams.get("sslmode") || "").trim()) u.searchParams.set("sslmode", "require");
-              out = u.toString();
-            }
+            if (!(u.searchParams.get("sslmode") || "").trim()) u.searchParams.set("sslmode", "require");
+            out = u.toString();
           } catch {
             out = raw;
           }
