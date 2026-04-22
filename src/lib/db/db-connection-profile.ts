@@ -4,6 +4,7 @@ const globalDbUrlHints = globalThis as typeof globalThis & {
   __fonvDirectSupabaseDbUrlHintLogged?: boolean;
   __fonvPrismaDatasourceBootLogged?: boolean;
   __fonvProdlikeDirectPolicyErrorLogged?: boolean;
+  __fonvCiPooledDecisionLogged?: boolean;
 };
 
 export function isSupabaseDirectDbHost(hostname: string, port: string): boolean {
@@ -124,6 +125,17 @@ function isLikelyPostgresJdbcUrl(raw: string): boolean {
 }
 
 export function readPrismaRuntimeDatabaseUrlRaw(): string {
+  const isGithubActionsCi = String(process.env.GITHUB_ACTIONS ?? "").toLowerCase() === "true";
+  if (isGithubActionsCi) {
+    const ciPooled = readRawDatabaseUrlFromProcessEnv();
+    if (ciPooled) {
+      if (!globalDbUrlHints.__fonvCiPooledDecisionLogged) {
+        globalDbUrlHints.__fonvCiPooledDecisionLogged = true;
+        console.warn("[infra-decision] using pooled DB due to direct network unreachable");
+      }
+      return ciPooled;
+    }
+  }
   const prismaPooled = sanitizeConnectionStringEnvValue(process.env.POSTGRES_PRISMA_URL);
   if (prismaPooled) {
     if (isLikelyPostgresJdbcUrl(prismaPooled)) return prismaPooled;

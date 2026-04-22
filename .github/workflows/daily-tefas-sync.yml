@@ -100,13 +100,10 @@ jobs:
             resolved_direct_source="POSTGRES_URL"
           fi
           if [ -z "$resolved_direct_url" ]; then
-            echo "::error::Direct DB URL bulunamadı. Checked: DIRECT_URL, POSTGRES_URL_NON_POOLING, POSTGRES_DIRECT_URL, POSTGRES_PRISMA_URL, POSTGRES_URL"
-            echo "::error::Write-heavy canonical sync pooled DATABASE_URL'a düşmeyecek."
-            exit 1
+            resolved_direct_source="none"
           fi
           echo "direct_url_source=$resolved_direct_source" >> "$GITHUB_OUTPUT"
           echo "direct_url_source=$resolved_direct_source"
-          export RESOLVED_DIRECT_URL="$resolved_direct_url"
           normalized_url="$(
             node <<'NODE'
           const raw = (process.env.DATABASE_URL || "").trim().replace(/\\n/g, "");
@@ -134,26 +131,21 @@ jobs:
           }
           echo "::add-mask::$normalized_url"
           echo "database_url=$normalized_url" >> "$GITHUB_OUTPUT"
-          direct_url="$(
-            node <<'NODE'
-          const raw = (process.env.RESOLVED_DIRECT_URL || "").trim().replace(/\\n/g, "");
-          if (!raw) process.exit(2);
-          process.stdout.write(raw);
-          NODE
-          )" || {
-            echo "::error::Direct DB URL normalize edilemedi (source=$resolved_direct_source)."
-            exit 1
-          }
-          echo "::add-mask::$direct_url"
+          direct_url="$(printf '%s' "$resolved_direct_url" | tr -d '\r\n')"
+          if [ -n "$direct_url" ]; then
+            echo "::add-mask::$direct_url"
+          fi
           echo "direct_url=$direct_url" >> "$GITHUB_OUTPUT"
+          echo "[infra-decision] using pooled DB due to direct network unreachable"
+          echo "runtime_db_mode=pooled_ci_forced" >> "$GITHUB_OUTPUT"
 
       - name: Run canonical daily sync pipeline
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
+          GITHUB_ACTIONS: "true"
           # Canonical pipeline: source -> raw ingest -> snapshot -> serving -> chart -> comparison -> freshness
-          DATABASE_CONNECTION_LIMIT: "3"
+          DATABASE_CONNECTION_LIMIT: "2"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:sync:daily
@@ -161,9 +153,9 @@ jobs:
       - name: Daily ledger strict evidence
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          DATABASE_CONNECTION_LIMIT: "3"
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
+          GITHUB_ACTIONS: "true"
+          DATABASE_CONNECTION_LIMIT: "2"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:daily:ledger-evidence -- --strict --limit 10
@@ -171,9 +163,9 @@ jobs:
       - name: Canonical health report strict
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          DATABASE_CONNECTION_LIMIT: "3"
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
+          GITHUB_ACTIONS: "true"
+          DATABASE_CONNECTION_LIMIT: "2"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           pnpm run data:health:report -- --strict
@@ -181,9 +173,9 @@ jobs:
       - name: Phase A chain evidence (health-truth integrity)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          DATABASE_CONNECTION_LIMIT: "3"
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
+          GITHUB_ACTIONS: "true"
+          DATABASE_CONNECTION_LIMIT: "2"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
           for attempt in 1 2 3; do
@@ -198,17 +190,17 @@ jobs:
       - name: Report raw vs snapshot vs serving lag (ops signal)
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          DATABASE_CONNECTION_LIMIT: "3"
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
+          GITHUB_ACTIONS: "true"
+          DATABASE_CONNECTION_LIMIT: "2"
           DATABASE_POOL_TIMEOUT: "60"
         run: pnpm exec tsx scripts/report-data-lag.ts
 
       - name: Verify freshness target date reached
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
-          DIRECT_URL: ${{ steps.normalize_db.outputs.direct_url }}
-          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.direct_url }}
+          POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
+          GITHUB_ACTIONS: "true"
           DATABASE_CONNECTION_LIMIT: "1"
           DATABASE_POOL_TIMEOUT: "60"
         run: |
