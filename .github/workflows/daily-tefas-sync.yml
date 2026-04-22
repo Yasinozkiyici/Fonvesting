@@ -73,6 +73,7 @@ jobs:
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
           POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
           POSTGRES_DIRECT_URL: ${{ secrets.POSTGRES_DIRECT_URL }}
+          POSTGRES_PRISMA_URL: ${{ secrets.POSTGRES_PRISMA_URL }}
           POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
@@ -90,13 +91,16 @@ jobs:
           elif [ -n "$POSTGRES_DIRECT_URL" ]; then
             resolved_direct_url="$POSTGRES_DIRECT_URL"
             resolved_direct_source="POSTGRES_DIRECT_URL"
+          elif [ -n "$POSTGRES_PRISMA_URL" ]; then
+            resolved_direct_url="$POSTGRES_PRISMA_URL"
+            resolved_direct_source="POSTGRES_PRISMA_URL"
           elif [ -n "$POSTGRES_URL" ]; then
             # Vercel/Supabase convention: POSTGRES_URL çoğu kurulumda non-pooling doğrudan host olur.
             resolved_direct_url="$POSTGRES_URL"
             resolved_direct_source="POSTGRES_URL"
           fi
           if [ -z "$resolved_direct_url" ]; then
-            echo "::error::Direct DB URL bulunamadı. Checked: DIRECT_URL, POSTGRES_URL_NON_POOLING, POSTGRES_DIRECT_URL, POSTGRES_URL"
+            echo "::error::Direct DB URL bulunamadı. Checked: DIRECT_URL, POSTGRES_URL_NON_POOLING, POSTGRES_DIRECT_URL, POSTGRES_PRISMA_URL, POSTGRES_URL"
             echo "::error::Write-heavy canonical sync pooled DATABASE_URL'a düşmeyecek."
             exit 1
           fi
