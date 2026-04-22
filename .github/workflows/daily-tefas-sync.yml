@@ -145,8 +145,8 @@ jobs:
           POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
           GITHUB_ACTIONS: "true"
           # Canonical pipeline: source -> raw ingest -> snapshot -> serving -> chart -> comparison -> freshness
-          DATABASE_CONNECTION_LIMIT: "2"
-          DATABASE_POOL_TIMEOUT: "60"
+          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_POOL_TIMEOUT: "8"
         run: |
           pnpm run data:sync:daily
 
@@ -155,8 +155,8 @@ jobs:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
           GITHUB_ACTIONS: "true"
-          DATABASE_CONNECTION_LIMIT: "2"
-          DATABASE_POOL_TIMEOUT: "60"
+          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_POOL_TIMEOUT: "8"
         run: |
           pnpm run data:daily:ledger-evidence -- --strict --limit 10
 
@@ -165,8 +165,8 @@ jobs:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
           GITHUB_ACTIONS: "true"
-          DATABASE_CONNECTION_LIMIT: "2"
-          DATABASE_POOL_TIMEOUT: "60"
+          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_POOL_TIMEOUT: "8"
         run: |
           pnpm run data:health:report -- --strict
 
@@ -175,8 +175,8 @@ jobs:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
           GITHUB_ACTIONS: "true"
-          DATABASE_CONNECTION_LIMIT: "2"
-          DATABASE_POOL_TIMEOUT: "60"
+          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_POOL_TIMEOUT: "8"
         run: |
           for attempt in 1 2 3; do
             if pnpm exec tsx scripts/phase-a-chain-evidence.ts --gate; then
@@ -192,8 +192,8 @@ jobs:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
           POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
           GITHUB_ACTIONS: "true"
-          DATABASE_CONNECTION_LIMIT: "2"
-          DATABASE_POOL_TIMEOUT: "60"
+          DATABASE_CONNECTION_LIMIT: "1"
+          DATABASE_POOL_TIMEOUT: "8"
         run: pnpm exec tsx scripts/report-data-lag.ts
 
       - name: Verify freshness target date reached
@@ -202,7 +202,7 @@ jobs:
           POSTGRES_PRISMA_URL: ${{ steps.normalize_db.outputs.database_url }}
           GITHUB_ACTIONS: "true"
           DATABASE_CONNECTION_LIMIT: "1"
-          DATABASE_POOL_TIMEOUT: "60"
+          DATABASE_POOL_TIMEOUT: "8"
         run: |
           for attempt in 1 2 3; do
             if pnpm exec tsx scripts/check-freshness-target.ts --strict; then
