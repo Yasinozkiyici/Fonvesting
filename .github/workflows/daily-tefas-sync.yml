@@ -45,6 +45,9 @@ jobs:
       - name: Install Node deps
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright browser runtime
+        run: pnpm exec playwright install chromium
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -129,8 +132,20 @@ jobs:
             echo "::add-mask::$direct_url"
           fi
           echo "direct_url=$direct_url" >> "$GITHUB_OUTPUT"
+          migration_url="$normalized_url"
+          if [ -n "$direct_url" ]; then
+            migration_url="$direct_url"
+          fi
+          echo "::add-mask::$migration_url"
+          echo "migration_url=$migration_url" >> "$GITHUB_OUTPUT"
           echo "[infra-decision] using pooled DB due to direct network unreachable"
           echo "runtime_db_mode=pooled_ci_forced" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure schema is up to date
+        env:
+          DATABASE_URL: ${{ steps.normalize_db.outputs.migration_url }}
+        run: |
+          pnpm exec prisma migrate deploy
 
       - name: Run canonical daily sync pipeline
         env:
