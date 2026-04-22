@@ -133,9 +133,6 @@ jobs:
           fi
           echo "direct_url=$direct_url" >> "$GITHUB_OUTPUT"
           migration_url="$normalized_url"
-          if [ -n "$direct_url" ]; then
-            migration_url="$direct_url"
-          fi
           echo "::add-mask::$migration_url"
           echo "migration_url=$migration_url" >> "$GITHUB_OUTPUT"
           echo "[infra-decision] using pooled DB due to direct network unreachable"
