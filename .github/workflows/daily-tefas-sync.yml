@@ -138,12 +138,6 @@ jobs:
           echo "[infra-decision] using pooled DB due to direct network unreachable"
           echo "runtime_db_mode=pooled_ci_forced" >> "$GITHUB_OUTPUT"
 
-      - name: Ensure schema is up to date
-        env:
-          DATABASE_URL: ${{ steps.normalize_db.outputs.migration_url }}
-        run: |
-          pnpm exec prisma migrate deploy
-
       - name: Run canonical daily sync pipeline
         env:
           DATABASE_URL: ${{ steps.normalize_db.outputs.database_url }}
